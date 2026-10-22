@@ -118,6 +118,78 @@ public sealed class RewardsDemoTests
     }
 
     [Fact]
+    public void CustomizedMealLateSweetRewardAndExactTotals()
+    {
+        var order = NewOrder();
+        order.RewardsAction("check_in", "DEMO-PLUS");
+        order.HandleOrderUpdate("add", "3 Crunchy Tacos Combo", "standard", 1, 999m);
+        order.HandleOrderUpdate("remove", "3 Crunchy Tacos Combo", "standard", 1, null);
+        order.HandleOrderUpdate("add", "3 Soft Tacos Combo (No Tomatoes)", "standard", 1, 999m);
+        Add(order, "Chips and Nacho Cheese Sauce");
+        order.HandleOrderUpdate("add", "Mountain Dew Baja Blast", "large", 1, 999m);
+        Assert.Equal(2, order.Items.Count);
+        var meal = order.Items[0];
+        Assert.Equal("3 Soft Tacos Combo (No Tomatoes)", meal.Item);
+        Assert.Equal("standard", meal.Size);
+        Assert.Equal(9.49m, meal.Price);
+        Assert.Equal(["Large Mountain Dew Baja Blast"], meal.Components);
+        Assert.Equal("$12.94", order.Summary.FinalTotalDisplay);
+        Assert.False(Rewards(order)["completed"]!.GetValue<bool>());
+        Add(order, "Cinnamon Twists");
+        Assert.Equal("$14.55", order.Summary.FinalTotalDisplay);
+        Assert.Equal("Cinnamon Twists", Rewards(order)["rewardItem"]!.GetValue<string>());
+        order.RewardsAction("redeem", null);
+        Assert.Equal(1.49m, Rewards(order)["discount"]!.GetValue<decimal>());
+        Assert.Equal("$11.98", order.Summary.TotalDisplay);
+        Assert.Equal("$0.96", order.Summary.TaxDisplay);
+        Assert.Equal("$12.94", order.Summary.FinalTotalDisplay);
+        order.RewardsAction("complete", null);
+        order.RewardsAction("complete", null);
+        Assert.Equal(369, Rewards(order)["balance"]!.GetValue<int>());
+        Assert.Equal(119, Rewards(order)["pointsAwarded"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public void ReservationCannotSilentlySwitchToAnotherReward()
+    {
+        var order = NewOrder();
+        Add(order);
+        order.RewardsAction("check_in", "DEMO-PLUS");
+        order.RewardsAction("redeem", null);
+        Add(order, "Cinnamon Twists");
+        Assert.Equal("Crunchy Taco", Rewards(order)["rewardItem"]!.GetValue<string>());
+        Assert.Equal(1.99m, Rewards(order)["discount"]!.GetValue<decimal>());
+        order.HandleOrderUpdate("remove", "Crunchy Taco", "standard", 1, null);
+        Assert.False(Rewards(order)["redeemed"]!.GetValue<bool>());
+        Assert.Equal(0m, Rewards(order)["discount"]!.GetValue<decimal>());
+        Assert.Equal(500, Rewards(order)["balance"]!.GetValue<int>());
+        Assert.Equal("Cinnamon Twists", Rewards(order)["rewardItem"]!.GetValue<string>());
+        order.RewardsAction("redeem", null);
+        Assert.Equal(1.49m, Rewards(order)["discount"]!.GetValue<decimal>());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void MealDrinkUpgradeIsPathIndependentAndResizeDoesNotDuplicate(bool drinkFirst)
+    {
+        var order = NewOrder();
+        void Drink() => order.HandleOrderUpdate("add", "Mountain Dew Baja Blast", "large", 1, 999m);
+        if (drinkFirst) Drink();
+        Add(order, "3 Soft Tacos Combo (No Tomatoes)");
+        if (!drinkFirst) Drink();
+        Assert.Single(order.Items);
+        Assert.Equal(9.49m, order.Items[0].Price);
+        order.HandleOrderUpdate("modify", "Mountain Dew Baja Blast", "medium", 1, 999m);
+        Assert.Equal(8.99m, order.Items[0].Price);
+        order.HandleOrderUpdate("modify", "Mountain Dew Baja Blast", "large", 1, 999m);
+        Assert.Single(order.Items);
+        Assert.Equal(9.49m, order.Items[0].Price);
+        Assert.Equal(["Large Mountain Dew Baja Blast"], order.Items[0].Components);
+        Assert.Equal([0.5m], order.Items[0].ComponentUpcharges);
+    }
+
+    [Fact]
     public void ExtensionReturnsExistingTicketContractAndOtherPersonasRemainDisabled()
     {
         var order = NewOrder();

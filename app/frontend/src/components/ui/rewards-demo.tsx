@@ -21,11 +21,12 @@ export interface RewardsDemoSnapshot {
 }
 
 export default function RewardsDemo({
-    snapshot, connected, onAction
+    snapshot, connected, onAction, onReconnect
 }: {
     snapshot?: RewardsDemoSnapshot | null;
     connected: boolean;
     onAction: (action: RewardsDemoAction, code?: string) => void;
+    onReconnect?: () => void;
 }) {
     const [code, setCode] = useState("");
     const [error, setError] = useState("");
@@ -40,7 +41,12 @@ export default function RewardsDemo({
             <h2 className="mt-4 text-2xl font-black">Check in. Earn. Enjoy.</h2>
             <p className="mt-2 text-sm">Simulated drive-thru / kiosk check-in. No real account, payment or purchase. Never enter real member information.</p>
             <p className="mt-2 text-xs">All menu prices and 8% tax are illustrative samples, not restaurant 036309 quotes.</p>
-            {!connected && <p role="status" className="mt-3 text-sm">Rewards are offline. Reconnect the ordering session to continue.</p>}
+            {!connected && (
+                <div className="mt-3">
+                    <p role="status" className="text-sm">Rewards are offline. Reconnect before entering a demo code. An expired session starts with a fresh ticket and balance.</p>
+                    {onReconnect && <Button onClick={onReconnect} className="mt-2 bg-white text-brand-primary-strong hover:bg-white/90">Reconnect demo rewards</Button>}
+                </div>
+            )}
             {connected && !snapshot && (
                 <Button className="mt-3 bg-white text-brand-primary-strong hover:bg-white/90" onClick={() => onAction("status")}>Load demo rewards</Button>
             )}

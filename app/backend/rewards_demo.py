@@ -9,21 +9,31 @@ class RewardsDemo:
         self.checked_in = False
         self.balance = 0
         self.redeemed = False
+        self.reserved_item = None
         self.completed = False
         self.awarded = 0
         self.message = "Use a fictional demo code. Never enter real member information."
 
     def reset_order(self):
         self.redeemed = False
+        self.reserved_item = None
         self.completed = False
         self.awarded = 0
         self.message = "New demo order. Check-in and points remain in this session only."
 
+    def reward_item(self, items):
+        if self.reserved_item:
+            return self.reserved_item
+        return next((name for name in self.config.preferredRewardItems
+                     if any(i.item == name and i.quantity > 0 and i.price > 0 for i in items)),
+                    self.config.rewardItem)
+
     def discount(self, items) -> Decimal:
         eligible = [Decimal(str(i.price)) for i in items
-                    if i.item == self.config.rewardItem and i.quantity > 0 and i.price > 0]
+                    if i.item == self.reward_item(items) and i.quantity > 0 and i.price > 0]
         if not eligible:
             self.redeemed = False
+            self.reserved_item = None
         return min(eligible) if self.redeemed else Decimal("0")
 
     def projected(self, net_total: Decimal) -> int:
@@ -45,14 +55,16 @@ class RewardsDemo:
                 self.balance = self.config.codes[code]
                 self.message = "Demo check-in linked to this order. No Taco Bell account was accessed."
         elif action == "redeem":
-            eligible = any(i.item == self.config.rewardItem and i.quantity > 0 and i.price > 0 for i in items)
+            eligible = any(i.item == self.reward_item(items) and i.quantity > 0 and i.price > 0 for i in items)
             if self.checked_in and self.balance >= self.config.rewardCost and eligible and not self.redeemed:
                 self.redeemed = True
+                self.reserved_item = self.reward_item(items)
                 self.message = "Demo reward reserved. Points are spent only when you complete this demo order."
             else:
                 self.message = "Reward unavailable: check in, have enough points, and add the eligible item."
         elif action == "unredeem":
             self.redeemed = False
+            self.reserved_item = None
             self.message = "Demo reward removed. No points spent."
         elif action == "complete":
             if not self.checked_in or not items:
@@ -66,10 +78,11 @@ class RewardsDemo:
             self.message = "Unsupported demo rewards action."
 
     def snapshot(self, items, net_total, discount):
-        eligible = any(i.item == self.config.rewardItem and i.quantity > 0 and i.price > 0 for i in items)
+        reward_item = self.reward_item(items)
+        eligible = any(i.item == reward_item and i.quantity > 0 and i.price > 0 for i in items)
         return {
             "checkedIn": self.checked_in, "balance": self.balance,
-            "rewardItem": self.config.rewardItem, "rewardCost": self.config.rewardCost,
+            "rewardItem": reward_item, "rewardCost": self.config.rewardCost,
             "pointsPerDollar": self.config.pointsPerDollar,
             "demoCodes": list(self.config.codes),
             "redeemed": self.redeemed, "completed": self.completed,

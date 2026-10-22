@@ -463,6 +463,7 @@ class RewardsDemoConfig(BaseModel):
     codes: dict[str, int]
     pointsPerDollar: int
     rewardItem: str
+    preferredRewardItems: list[str] = []
     rewardCost: int
 
 

@@ -68,6 +68,7 @@ internal sealed record RewardsDemoConfig
     [JsonPropertyName("codes")] public required IReadOnlyDictionary<string, int> Codes { get; init; }
     [JsonPropertyName("pointsPerDollar")] public required int PointsPerDollar { get; init; }
     [JsonPropertyName("rewardItem")] public required string RewardItem { get; init; }
+    [JsonPropertyName("preferredRewardItems")] public IReadOnlyList<string> PreferredRewardItems { get; init; } = [];
     [JsonPropertyName("rewardCost")] public required int RewardCost { get; init; }
 }
 

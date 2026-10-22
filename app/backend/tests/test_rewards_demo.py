@@ -141,6 +141,75 @@ def test_status_snapshot_and_rejected_actions_do_not_spend_or_award(session):
     assert result["message"] == "Unsupported demo rewards action."
 
 
+def test_customized_meal_late_sweet_reward_and_exact_totals(session):
+    orders.rewards_action(session, "check_in", "DEMO-PLUS")
+    orders.handle_order_update(session, "add", "3 Crunchy Tacos Combo", "standard", 1, 999)
+    orders.handle_order_update(session, "remove", "3 Crunchy Tacos Combo", "standard", 1, 0)
+    orders.handle_order_update(session, "add", "3 Soft Tacos Combo (No Tomatoes)", "standard", 1, 999)
+    add(session, "Chips and Nacho Cheese Sauce")
+    orders.handle_order_update(session, "add", "Mountain Dew Baja Blast", "large", 1, 999)
+    first = summary(session)
+    assert len(first["items"]) == 2
+    meal = first["items"][0]
+    assert meal["item"] == "3 Soft Tacos Combo (No Tomatoes)"
+    assert meal["size"] == "standard"
+    assert meal["price"] == 9.49
+    assert meal["components"] == ["Large Mountain Dew Baja Blast"]
+    assert first["finalTotalDisplay"] == "$12.94"
+    assert not first["rewardsDemo"]["completed"]
+    add(session, "Cinnamon Twists")
+    assert summary(session)["finalTotalDisplay"] == "$14.55"
+    assert summary(session)["rewardsDemo"]["rewardItem"] == "Cinnamon Twists"
+    orders.rewards_action(session, "redeem")
+    rewarded = summary(session)
+    assert rewarded["rewardsDemo"]["discount"] == 1.49
+    assert rewarded["totalDisplay"] == "$11.98"
+    assert rewarded["taxDisplay"] == "$0.96"
+    assert rewarded["finalTotalDisplay"] == "$12.94"
+    orders.rewards_action(session, "complete")
+    orders.rewards_action(session, "complete")
+    assert summary(session)["rewardsDemo"]["balance"] == 369
+    assert summary(session)["rewardsDemo"]["pointsAwarded"] == 119
+
+
+def test_reward_reservation_keeps_its_item_and_releases_if_that_item_is_removed(session):
+    add(session)
+    orders.rewards_action(session, "check_in", "DEMO-PLUS")
+    orders.rewards_action(session, "redeem")
+    add(session, "Cinnamon Twists")
+    assert summary(session)["rewardsDemo"]["rewardItem"] == "Crunchy Taco"
+    assert summary(session)["rewardsDemo"]["discount"] == 1.99
+    orders.handle_order_update(session, "remove", "Crunchy Taco", "standard", 1, 0)
+    released = summary(session)["rewardsDemo"]
+    assert not released["redeemed"]
+    assert released["discount"] == 0
+    assert released["balance"] == 500
+    assert released["rewardItem"] == "Cinnamon Twists"
+    orders.rewards_action(session, "redeem")
+    assert summary(session)["rewardsDemo"]["discount"] == 1.49
+
+
+@pytest.mark.parametrize("drink_first", [True, False])
+def test_meal_drink_upgrade_is_path_independent_and_resize_does_not_duplicate(session, drink_first):
+    def drink():
+        orders.handle_order_update(session, "add", "Mountain Dew Baja Blast", "large", 1, 999)
+
+    if drink_first:
+        drink()
+    add(session, "3 Soft Tacos Combo (No Tomatoes)")
+    if not drink_first:
+        drink()
+    assert len(summary(session)["items"]) == 1
+    assert summary(session)["items"][0]["price"] == 9.49
+    orders.handle_order_update(session, "modify", "Mountain Dew Baja Blast", "medium", 1, 999)
+    assert summary(session)["items"][0]["price"] == 8.99
+    orders.handle_order_update(session, "modify", "Mountain Dew Baja Blast", "large", 1, 999)
+    meal = summary(session)["items"][0]
+    assert meal["price"] == 9.49
+    assert meal["components"] == ["Large Mountain Dew Baja Blast"]
+    assert meal["componentUpcharges"] == [0.5]
+
+
 def test_extension_pushes_same_ticket_without_model_tool_followup(session):
     ws = AsyncMock()
     asyncio.run(handle_rewards_frame(ws, session, {"action": "check_in", "code": "DEMO-PLUS"}))
@@ -167,6 +236,9 @@ def test_pack_brand_menu_and_exact_theme_tokens(session):
     ("codes", {"DEMO-PLUS": -1}),
     ("pointsPerDollar", 0),
     ("rewardCost", 0),
+    ("preferredRewardItems", [""]),
+    ("preferredRewardItems", ["Cinnamon Twists", "Cinnamon Twists"]),
+    ("preferredRewardItems", [123]),
 ])
 def test_mutated_real_pack_rejects_nonfictional_codes_and_invalid_points(tmp_path, field, value):
     source = Path(__file__).resolve().parents[3] / "personas"

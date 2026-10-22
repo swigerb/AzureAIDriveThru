@@ -32,6 +32,43 @@ but retains the session-only balance; ending the session discards it.
 For branding, source dates, authorized-logo provenance, font substitutions, sample pricing
 and actual-program versus simulation limits, see [the Taco Bell source note](personas/tacobell/SOURCES.md).
 
+### Customization and forgotten-item scenario
+
+Try a **3 Crunchy Tacos Combo**, change it to **3 Soft Tacos Combo**, then request
+**No Tomatoes** on all three. Add **Chips and Nacho Cheese Sauce** and a **Large
+Mountain Dew Baja Blast**. The sample meal is $8.99 plus the $0.50 drink upgrade;
+the separate chips are $2.49. Subtotal **$11.98**, sample tax **$0.96**, total **$12.94**.
+The large drink is included in the meal, not charged again as a standalone item.
+
+After that total, add **Cinnamon Twists** ($1.49 sample): subtotal **$13.47**, tax
+**$1.08**, total **$14.55**. With `DEMO-PLUS`, the panel offers Cinnamon Twists as the
+fictional 250-point reward. Redeem it to cover the $1.49 item; payable total returns to
+**$12.94**. Complete once to spend 250 and earn 119 points, leaving **369 demo points**.
+Reading the first total does not freeze the ticket; explicit completion does.
+If the session expires, rewards controls disable and **Reconnect demo rewards** starts
+a fresh session without requiring microphone permission. Enter a demo code again.
+
+### Post-deployment live-model acceptance (not yet executed)
+
+After deployment **and explicit authorization for paid model/audio calls**, run the same
+conversation above against each deployed supported backend/pipeline using a fresh session
+and `DEMO-PLUS`. Local synthetic-upstream results do not establish live model understanding.
+Use the actual microphone and record the recognized guest turns, assistant audio/transcript,
+model `search`/`update_order`/`get_order` arguments and results, and visible ticket/rewards state.
+Do not seed a ticket or substitute scripted model calls in this acceptance run.
+
+Require the crunchy-to-soft replacement to remove the old meal, preserve `No Tomatoes`,
+retain a single Large Baja Blast inside the Standard meal with a $0.50 upgrade, and retain
+chips as a separate side. After the first spoken full-ticket closing/$12.94 total, request
+the forgotten twists before completion. Require the revised full-ticket closing/$14.55
+total, a proactive eligible-demo-reward offer, a single $1.49 twists discount after the
+real panel's Redeem click, and a final spoken full-ticket closing/$12.94 total consistent
+with the screen. Complete once: 119 earned points, 369 remaining. Repeat completion and
+verify no second discount/debit/award. Capture actual tool evidence and screenshots at
+each boundary; report any recognition, tool-selection, spoken-closing or ledger mismatch
+as a failure, not as a passing offline equivalent. This checklist authorizes no deployment,
+merge, paid calls, real accounts or real purchase by itself.
+
 ## Sample talk track
 
 - Hey what's up.

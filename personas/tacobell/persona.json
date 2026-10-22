@@ -15,8 +15,9 @@
     "spokenAs": {}, "hidden": ["", "standard", "n/a"], "default": null
   },
   "bundles": {
-    "nameMarkers": [], "convertStandalone": false,
-    "missingPartText": { "sides": "a side", "drinks": "a drink" }
+    "nameMarkers": ["combo"], "convertStandalone": false,
+    "missingPartText": { "sides": "a side", "drinks": "a drink" },
+    "resizeRule": "componentUpcharge", "includedSize": "Medium"
   },
   "extras": { "allowedBaseCategories": [], "blockedBaseCategories": [], "splitCombinedNames": false },
   "invalidModifiers": { "drink": ["beef", "lettuce", "cheese"], "taco": ["whipped cream", "espresso"] },
@@ -29,7 +30,7 @@
   "features": { "dayparts": false },
   "rewardsDemo": {
     "codes": { "DEMO-PLUS": 500, "DEMO-NEW": 0 },
-    "pointsPerDollar": 10, "rewardItem": "Crunchy Taco", "rewardCost": 250
+    "pointsPerDollar": 10, "rewardItem": "Crunchy Taco", "preferredRewardItems": ["Cinnamon Twists"], "rewardCost": 250
   },
   "ui": {
     "title": "Taco Bell Voice Ordering Demo",
@@ -86,7 +87,7 @@
         }
       ]
     },
-    "categoryIcons": { "Tacos": "🌮", "Burritos": "🌯", "Specialties": "⭐", "Nachos": "🧀", "Value Favorites": "✨", "Drinks": "🥤" },
+    "categoryIcons": { "Tacos": "🌮", "Combos": "🌮", "Burritos": "🌯", "Specialties": "⭐", "Nachos": "🧀", "Value Favorites": "✨", "Sweets": "✨", "Drinks": "🥤" },
     "legal": "Unofficial demo, not an official Taco Bell ordering or rewards service. Taco Bell logo used for this demo with user-reported permission from Yum! Brands; no endorsement is implied. TACO BELL, the Bell logo and Live Más belong to their respective trademark owners. All prices, tax, check-in codes, balances and reward eligibility are illustrative. No real accounts, payments, purchases or rewards."
   }
 }

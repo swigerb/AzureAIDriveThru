@@ -9,6 +9,7 @@ internal sealed class RewardsDemo(RewardsDemoConfig config)
     private bool _checkedIn;
     private int _balance;
     private bool _redeemed;
+    private string? _reservedItem;
     public bool Completed { get; private set; }
     private int _awarded;
     private string _message = "Use a fictional demo code. Never enter real member information.";
@@ -16,18 +17,27 @@ internal sealed class RewardsDemo(RewardsDemoConfig config)
     public void ResetOrder()
     {
         _redeemed = false;
+        _reservedItem = null;
         Completed = false;
         _awarded = 0;
         _message = "New demo order. Check-in and points remain in this session only.";
     }
 
+    private string RewardItem(IReadOnlyList<OrderItem> items) => _reservedItem ??
+        config.PreferredRewardItems.FirstOrDefault(name => items.Any(i => i.Item == name && i.Quantity > 0 && i.Price > 0)) ??
+        config.RewardItem;
+
     private IEnumerable<decimal> EligiblePrices(IReadOnlyList<OrderItem> items) =>
-        items.Where(i => i.Item == config.RewardItem && i.Quantity > 0 && i.Price > 0).Select(i => i.Price);
+        items.Where(i => i.Item == RewardItem(items) && i.Quantity > 0 && i.Price > 0).Select(i => i.Price);
 
     public decimal Discount(IReadOnlyList<OrderItem> items)
     {
         var prices = EligiblePrices(items).ToList();
-        if (prices.Count == 0) _redeemed = false;
+        if (prices.Count == 0)
+        {
+            _redeemed = false;
+            _reservedItem = null;
+        }
         return _redeemed ? prices.Min() : 0m;
     }
 
@@ -59,6 +69,7 @@ internal sealed class RewardsDemo(RewardsDemoConfig config)
                 if (_checkedIn && _balance >= config.RewardCost && EligiblePrices(items).Any() && !_redeemed)
                 {
                     _redeemed = true;
+                    _reservedItem = RewardItem(items);
                     _message = "Demo reward reserved. Points are spent only when you complete this demo order.";
                 }
                 else
@@ -66,6 +77,7 @@ internal sealed class RewardsDemo(RewardsDemoConfig config)
                 break;
             case "unredeem":
                 _redeemed = false;
+                _reservedItem = null;
                 _message = "Demo reward removed. No points spent.";
                 break;
             case "complete":
@@ -88,7 +100,7 @@ internal sealed class RewardsDemo(RewardsDemoConfig config)
     public JsonObject Snapshot(IReadOnlyList<OrderItem> items, decimal netTotal, decimal discount) => new()
     {
         ["checkedIn"] = _checkedIn, ["balance"] = _balance,
-        ["rewardItem"] = config.RewardItem, ["rewardCost"] = config.RewardCost,
+        ["rewardItem"] = RewardItem(items), ["rewardCost"] = config.RewardCost,
         ["pointsPerDollar"] = config.PointsPerDollar,
         ["demoCodes"] = new JsonArray(config.Codes.Keys.Select(c => (JsonNode?)JsonValue.Create(c)).ToArray()),
         ["redeemed"] = _redeemed, ["completed"] = Completed,

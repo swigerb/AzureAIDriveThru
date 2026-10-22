@@ -57,11 +57,22 @@ describe("simulated rewards", () => {
 
     it("prevents mutations while disconnected and exposes recovery before state arrives", () => {
         const onAction = vi.fn();
-        const { rerender } = render(<RewardsDemo snapshot={snapshot} connected={false} onAction={onAction} />);
+        const onReconnect = vi.fn();
+        const { rerender } = render(<RewardsDemo snapshot={snapshot} connected={false} onAction={onAction} onReconnect={onReconnect} />);
         expect(screen.getByLabelText("Demo rewards / check-in code")).toBeDisabled();
         expect(screen.getByText(/Rewards are offline/)).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Check in to demo order" })).toBeDisabled();
+        fireEvent.click(screen.getByRole("button", { name: "Reconnect demo rewards" }));
+        expect(onReconnect).toHaveBeenCalledOnce();
+        expect(onAction).not.toHaveBeenCalled();
         rerender(<RewardsDemo connected onAction={onAction} />);
         fireEvent.click(screen.getByRole("button", { name: "Load demo rewards" }));
         expect(onAction).toHaveBeenCalledWith("status");
+    });
+
+    it("offers the server-selected late-added sweet reward without inventing eligibility", () => {
+        render(<RewardsDemo snapshot={{ ...snapshot, rewardItem: "Cinnamon Twists", checkedIn: true, canRedeem: true }} connected onAction={vi.fn()} />);
+        expect(screen.getByText(/Cinnamon Twists · 250 demo points/)).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Redeem demo reward" })).toBeEnabled();
     });
 });
