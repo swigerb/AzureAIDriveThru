@@ -14,6 +14,7 @@ import MenuPanel from "@/components/ui/menu-panel";
 import OrderSummary, { calculateOrderSummary, OrderItem, OrderSummaryProps } from "@/components/ui/order-summary";
 import TranscriptPanel from "@/components/ui/transcript-panel";
 import PersonaPicker from "@/components/ui/persona-picker";
+import RewardsDemo from "@/components/ui/rewards-demo";
 import PersonaSwitchConfirmDialog from "@/components/ui/persona-switch-confirm-dialog";
 import BackendPicker from "@/components/ui/backend-picker";
 const Settings = lazy(() => import("@/components/ui/settings"));
@@ -534,6 +535,7 @@ function SonicApp() {
         onReceivedSessionMetadata: message => {
             resumedSessionRef.current = false;
             handleSessionIdentifiers(message);
+            if (current.features.demoRewards) realtime.sendDemoRewards("status");
         },
         onReceivedSessionResumed: (message: ExtensionSessionResumed) => {
             // Same shape as a tool result: the ticket comes back exactly as it was.
@@ -1326,6 +1328,10 @@ function SonicApp() {
                     <Card className="p-6 md:overflow-auto" data-testid="center-panel">
                         <div className="space-y-8">
                             <OrderSummary order={useDummyData ? dummyOrder : order} taxRate={current.taxRate} />
+                            {current.features.demoRewards && !useDummyData && (
+                                <RewardsDemo snapshot={order.rewardsDemo} connected={realtime.isConnected} onAction={realtime.sendDemoRewards}
+                                    onReconnect={realtime.reconnect} />
+                            )}
                             <div className="mb-4 flex flex-col items-center justify-center" data-testid="conversation-controls">
                                 <Button
                                     onClick={onToggleListening}

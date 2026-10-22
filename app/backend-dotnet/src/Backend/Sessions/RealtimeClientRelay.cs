@@ -255,6 +255,13 @@ internal sealed class RealtimeClientRelay(RealtimeSessionContext context)
     private async Task HandleExtensionMessageAsync(string msgType, JsonObject message)
     {
         context.SessionManager?.TouchActivity(context.State.EffectiveSessionId);
+        if (msgType == "extension.demo_rewards")
+        {
+            await FramePump.SendTextAsync(context.BrowserSocket,
+                RewardsDemoFrames.Handle(context.State.ToolExecutor, message).ToJsonString(), context.CancellationToken)
+                .ConfigureAwait(false);
+            return;
+        }
         if (msgType == "extension.resume")
         {
             if (context.SessionManager is not null)

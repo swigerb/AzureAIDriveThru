@@ -458,6 +458,15 @@ class _Ui(BaseModel):
     textRoles: _TextRoles | None = None
 
 
+class RewardsDemoConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    codes: dict[str, int]
+    pointsPerDollar: int
+    rewardItem: str
+    preferredRewardItems: list[str] = []
+    rewardCost: int
+
+
 class PersonaManifest(BaseModel):
     """Typed view of ``persona.json`` -- the same contract as ``personas/persona.schema.json``."""
 
@@ -487,6 +496,7 @@ class PersonaManifest(BaseModel):
     strategies: _Strategies
     features: _Features
     ui: _Ui
+    rewardsDemo: RewardsDemoConfig | None = None
 
     @model_validator(mode="after")
     def _validate_pronunciations(self) -> PersonaManifest:

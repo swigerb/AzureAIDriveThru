@@ -1,0 +1,5 @@
+[
+  { "text": "Welcome to the Taco Bell demo! All prices are samples. What can I get started for you?", "isUser": false, "timestamp": "2026-10-22T12:00:00Z" },
+  { "text": "One Crunchy Taco and one Crunchwrap Supreme, please.", "isUser": true, "timestamp": "2026-10-22T12:00:05Z" },
+  { "text": "I have one Crunchy Taco and one Crunchwrap Supreme. Your sample total is $8.62.", "isUser": false, "timestamp": "2026-10-22T12:00:10Z" }
+]

@@ -1,0 +1,14 @@
+version: "1.0.0"
+upsell_hints:
+  taco:
+    trigger_categories: ["tacos", "burritos", "specialties"]
+    hint: "Ask if the guest wants a drink or a side from the demo menu. Mention only server-confirmed demo reward eligibility."
+  generic:
+    trigger_categories: []
+    hint: "Ask if the guest would like anything else from the demo menu."
+system_hints:
+  combo_incomplete: "SYSTEM HINT: {{prompt_hint}}"
+  out_of_stock: "OOS: {{oos_reason}}"
+delta_templates:
+  item_added: "Added {{quantity}} {{display_name}} - your total is now {{total}}"
+  item_removed: "Removed {{quantity}} {{display_name}} - your total is now {{total}}"

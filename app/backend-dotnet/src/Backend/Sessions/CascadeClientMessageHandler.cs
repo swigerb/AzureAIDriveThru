@@ -13,9 +13,16 @@ internal sealed class CascadeClientMessageHandler(CascadeSessionContext context)
             "input_audio_buffer.append" => HandleAudioAppendAsync(data),
             "input_audio_buffer.clear" => ClearAudioBufferAsync(),
             "extension.set_voice" => SetVoiceAsync(data),
+            "extension.demo_rewards" => HandleRewardsAsync(data),
             "extension.resume" => RejectLateResumeAsync(),
             _ => Task.CompletedTask,
         };
+
+    private Task HandleRewardsAsync(JsonObject data)
+    {
+        context.SessionManager?.TouchActivity(context.SessionId);
+        return context.NotifyClientAsync(RewardsDemoFrames.Handle(context.ToolExecutor, data), context.CancellationToken);
+    }
 
     private async Task HandleAudioAppendAsync(JsonObject data)
     {

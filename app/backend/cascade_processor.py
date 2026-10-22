@@ -714,7 +714,14 @@ class CascadeProcessor:
 
     async def _handle_client_message(self, ws, session_id, state, detector, data, prompt_loader) -> None:
         msg_type = data.get("type")
-        if msg_type == "input_audio_buffer.append":
+        if msg_type == "extension.demo_rewards":
+            from rewards_demo import handle_rewards_frame
+            self._sessions.touch_activity(session_id)
+            if order_state_singleton.sessions[session_id].get("_rewards_demo") is None:
+                await ws.send_json({"type": "error", "error": {"message": "Demo rewards unavailable."}})
+            else:
+                await handle_rewards_frame(ws, session_id, data)
+        elif msg_type == "input_audio_buffer.append":
             try:
                 pcm = base64.b64decode(data.get("audio", ""))
             except (ValueError, TypeError):

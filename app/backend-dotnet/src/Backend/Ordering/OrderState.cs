@@ -79,6 +79,9 @@ internal sealed class OrderState
     private readonly string _happyHourBanner;
     private readonly Dictionary<string, string> _machineOverrides = new(StringComparer.Ordinal);
     private string _happyHourMode = "auto";
+    private readonly RewardsDemo? _rewardsDemo;
+    private readonly object _mutationLock = new();
+    public bool RewardsCompleted => _rewardsDemo?.Completed == true;
 
     public OrderSummary Summary { get; private set; } = OrderSummary.Empty();
 
@@ -105,7 +108,8 @@ internal sealed class OrderState
         (int StartHour, int EndHour)? happyHourWindow,
         decimal happyHourDiscount,
         bool happyHourAnnounce,
-        string happyHourBanner)
+        string happyHourBanner,
+        RewardsDemoConfig? rewardsDemo = null)
     {
         _menu = menu;
         _timeZone = timeZone;
@@ -114,6 +118,7 @@ internal sealed class OrderState
         _happyHourDiscount = happyHourDiscount;
         _happyHourAnnounce = happyHourAnnounce;
         _happyHourBanner = happyHourBanner;
+        _rewardsDemo = rewardsDemo is null ? null : new RewardsDemo(rewardsDemo);
         UpdateSummary();
     }
 
@@ -244,6 +249,16 @@ internal sealed class OrderState
     /// (#104) and never trusting <paramref name="callerPrice"/> except as a fallback when the menu
     /// has no price on file at all, and always ending by recomputing <see cref="Summary"/>.</summary>
     public OrderUpdateResult HandleOrderUpdate(
+        string action, string itemName, string size, int quantity, decimal? callerPrice)
+    {
+        lock (_mutationLock)
+        {
+            if (RewardsCompleted) throw new InvalidOperationException("Reset the completed demo order before changing it.");
+            return HandleOrderUpdateCore(action, itemName, size, quantity, callerPrice);
+        }
+    }
+
+    private OrderUpdateResult HandleOrderUpdateCore(
         string action, string itemName, string size, int quantity, decimal? callerPrice)
     {
         var result = new OrderUpdateResult();
@@ -1287,9 +1302,12 @@ internal sealed class OrderState
             }
             total += itemTotal;
         }
+        var discount = _rewardsDemo?.Discount(_items) ?? 0m;
+        total -= discount;
         var tax = total * _taxRate;
         var finalTotal = total + tax;
-        Summary = OrderSummary.Build(_items.ToList(), total, tax, finalTotal, ComposeSpokenReadBack(_items, finalTotal));
+        Summary = OrderSummary.Build(_items.ToList(), total, tax, finalTotal, ComposeSpokenReadBack(_items, finalTotal))
+            with { RewardsDemo = _rewardsDemo?.Snapshot(_items, total, discount) };
     }
 
     /// <summary>Ports order_state.py's <c>get_combo_requirements</c>: scans the order for bundles
@@ -1394,7 +1412,26 @@ internal sealed class OrderState
     /// filled-slot display into a fresh combo.</summary>
     public void ResetOrder()
     {
-        _items.Clear();
-        UpdateSummary();
+        lock (_mutationLock)
+        {
+            _rewardsDemo?.ResetOrder();
+            _items.Clear();
+            UpdateSummary();
+        }
+    }
+
+    public bool RewardsAction(string? action, string? code)
+    {
+        lock (_mutationLock)
+        {
+            if (_rewardsDemo is null) return false;
+            if (action == "reset") ResetOrder();
+            else
+            {
+                _rewardsDemo.Act(action, code, _items, Summary.Total);
+                UpdateSummary();
+            }
+            return true;
+        }
     }
 }

@@ -11,7 +11,7 @@ namespace Backend.Tools;
 /// comment points at. Like both of the tools it wraps, one instance is owned by exactly one
 /// session's actor; it holds no state of its own beyond the two composed tools.
 /// </summary>
-internal sealed class SessionToolExecutor : IToolExecutor, IOrderTicketSource, IOrderSessionSettings
+internal sealed class SessionToolExecutor : IToolExecutor, IOrderTicketSource, IOrderSessionSettings, IRewardsDemoControl
 {
     private readonly OrderToolExecutor _orderTools;
     private readonly SearchTool _search;
@@ -38,6 +38,7 @@ internal sealed class SessionToolExecutor : IToolExecutor, IOrderTicketSource, I
     public bool SetHappyHourMode(string mode) => _orderTools.SetHappyHourMode(mode);
 
     public string GetHappyHourMode() => _orderTools.GetHappyHourMode();
+    public bool RewardsAction(string? action, string? code) => _orderTools.RewardsAction(action, code);
 
     public Task<ToolResult> ExecuteAsync(string toolName, JsonElement arguments, CancellationToken cancellationToken = default) =>
         toolName == "search"

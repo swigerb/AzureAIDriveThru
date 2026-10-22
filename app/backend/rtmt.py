@@ -2634,6 +2634,15 @@ class RTMiddleTier:
                                 self._sessions.end_session(session_id, "guest ended the session")
                                 await ws.close(code=SESSION_ENDED_CLOSE_CODE, message=SESSION_ENDED_CLOSE_REASON.encode())
                                 break
+                            if _extension_type(msg.data, "extension.demo_rewards") == "extension.demo_rewards":
+                                ext_msg = json.loads(msg.data)
+                                from rewards_demo import handle_rewards_frame
+                                self._sessions.touch_activity(session_id)
+                                if order_state_singleton.sessions[session_id].get("_rewards_demo") is None:
+                                    await ws.send_json({"type": "error", "error": {"message": "Demo rewards unavailable."}})
+                                else:
+                                    await handle_rewards_frame(ws, session_id, ext_msg)
+                                continue
                             # Intercept extension messages — don't forward to OpenAI
                             if _MARKER_VERBOSE_LOGGING in msg.data:
                                 try:

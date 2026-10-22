@@ -262,7 +262,7 @@ def _persona_detail_body(persona: Persona, model_catalog: ModelCatalog) -> dict:
         **manifest.ui.model_dump(exclude_none=True),
         "voice": {"default": manifest.voice.default},
         "locales": manifest.locales.model_dump(exclude_none=True),
-        "features": {"dayparts": manifest.features.dayparts},
+        "features": {"dayparts": manifest.features.dayparts, **({"demoRewards": True} if manifest.rewardsDemo else {})},
         "menuUrl": _persona_menu_url(persona),
         "models": _model_pipelines_body(manifest.models, model_catalog),
         "taxRate": manifest.pricing.taxRate,

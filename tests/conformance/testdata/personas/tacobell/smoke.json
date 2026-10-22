@@ -1,0 +1,9 @@
+{
+  "greetingSubstring": "Welcome to the Taco Bell demo!",
+  "instructionsSubstring": "You are a friendly crew associate in an unofficial Taco Bell ordering demo.",
+  "toolDescriptionSubstring": "Search Taco Bell demo menu",
+  "searchableOwnItem": "Crunchy Taco",
+  "orderableItemName": "Crunchy Taco",
+  "orderableItemSize": "standard",
+  "orderableItemPrice": "1.99"
+}

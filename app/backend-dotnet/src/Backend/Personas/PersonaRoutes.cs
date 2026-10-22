@@ -203,7 +203,9 @@ internal static class PersonaRoutes
 
         result["voice"] = new JsonObject { ["default"] = persona.Voice.Default };
         result["locales"] = ToJsonObject(persona.Locales);
-        result["features"] = new JsonObject { ["dayparts"] = persona.Features.Dayparts };
+        var features = new JsonObject { ["dayparts"] = persona.Features.Dayparts };
+        if (persona.RewardsDemo is not null) features["demoRewards"] = true;
+        result["features"] = features;
         result["menuUrl"] = BuildMenuUrl(persona);
         result["models"] = BuildModelPipelinesBody(persona.Models, modelCatalog);
         result["machines"] = BuildMachinesBody(persona.Machines);

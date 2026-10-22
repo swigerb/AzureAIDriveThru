@@ -94,7 +94,7 @@ export interface PersonaDetail {
     legal: string;
     voice: { default: string };
     locales: { default: string; supported: string[] };
-    features: { dayparts: boolean };
+    features: { dayparts: boolean; demoRewards?: boolean };
     menuUrl: string;
     models: PersonaModels;
     /** Issue 164 E2: the pack's own `pricing.taxRate` (e.g. "0.08"), forwarded here so the

@@ -1,0 +1,63 @@
+{
+  "menuItems": [
+    {
+      "category": "Tacos", "icon": "🌮",
+      "items": [
+        { "name": "Crunchy Taco", "sizes": [{ "size": "standard", "price": 1.99 }], "description": "Crunchy shell taco. Illustrative demo price, not a store quote.", "aliases": ["Hard Taco"], "comboSlot": "none" },
+        { "name": "Soft Taco", "sizes": [{ "size": "standard", "price": 1.99 }], "description": "Soft tortilla taco. Illustrative demo price, not a store quote.", "comboSlot": "none" },
+        { "name": "Crunchy Taco Supreme", "sizes": [{ "size": "standard", "price": 2.99 }], "description": "Supreme-style crunchy taco. Illustrative demo price, not a store quote.", "comboSlot": "none" },
+        { "name": "Nacho Cheese Doritos Locos Tacos", "sizes": [{ "size": "standard", "price": 2.99 }], "description": "Nacho cheese-flavored shell taco. Illustrative demo price, not a store quote.", "aliases": ["Doritos Locos Taco", "Nacho Cheese Doritos Locos Taco"], "comboSlot": "none" }
+      ]
+    },
+    {
+      "category": "Combos", "icon": "🌮",
+      "items": [
+        { "name": "3 Crunchy Tacos Combo", "sizes": [{ "size": "standard", "price": 8.99 }], "description": "Demo three-taco meal with crunchy shells and one medium drink; large drink adds a sample $0.50. Illustrative inclusions and prices, not a store quote.", "aliases": ["3 Taco Meal", "Three Taco Meal", "3 Taco Combo"], "bundle": { "slots": ["drinks"], "defaultSize": "Standard" } },
+        { "name": "3 Soft Tacos Combo", "sizes": [{ "size": "standard", "price": 8.99 }], "description": "Demo three-taco meal with soft tortillas and one medium drink; large drink adds a sample $0.50. Illustrative inclusions and prices, not a store quote.", "bundle": { "slots": ["drinks"], "defaultSize": "Standard" } }
+      ]
+    },
+    {
+      "category": "Burritos", "icon": "🌯",
+      "items": [
+        { "name": "Bean Burrito", "sizes": [{ "size": "standard", "price": 1.99 }], "description": "Bean-filled burrito. Illustrative demo price, not a store quote.", "comboSlot": "none" },
+        { "name": "Burrito Supreme", "sizes": [{ "size": "standard", "price": 4.99 }], "description": "Supreme-style burrito. Illustrative demo price, not a store quote.", "comboSlot": "none" },
+        { "name": "Beefy 5-Layer Burrito", "sizes": [{ "size": "standard", "price": 3.99 }], "description": "Layered beef burrito. Illustrative demo price, not a store quote.", "aliases": ["Beefy Five Layer Burrito"], "comboSlot": "none" }
+      ]
+    },
+    {
+      "category": "Specialties", "icon": "⭐",
+      "items": [
+        { "name": "Crunchwrap Supreme", "sizes": [{ "size": "standard", "price": 5.99 }], "description": "Folded specialty with a crunchy center. Illustrative demo price, not a store quote.", "aliases": ["Crunchwrap"], "comboSlot": "none" },
+        { "name": "Chalupa Supreme", "sizes": [{ "size": "standard", "price": 4.99 }], "description": "Supreme-style chalupa. Illustrative demo price, not a store quote.", "comboSlot": "none" },
+        { "name": "Mexican Pizza", "sizes": [{ "size": "standard", "price": 5.99 }], "description": "Layered tortilla specialty. Illustrative demo price, not a store quote.", "comboSlot": "none" }
+      ]
+    },
+    {
+      "category": "Nachos", "icon": "🧀",
+      "items": [
+        { "name": "Chips and Nacho Cheese Sauce", "sizes": [{ "size": "standard", "price": 2.49 }], "description": "Chips with a cheese sauce side. Illustrative demo price, not a store quote.", "aliases": ["Chips and Cheese"], "comboSlot": "none" },
+        { "name": "Nachos BellGrande", "sizes": [{ "size": "standard", "price": 5.99 }], "description": "Topped nachos. Illustrative demo price, not a store quote.", "comboSlot": "none" }
+      ]
+    },
+    {
+      "category": "Value Favorites", "icon": "✨",
+      "items": [
+        { "name": "Spicy Potato Soft Taco", "sizes": [{ "size": "standard", "price": 1.49 }], "description": "Potato-filled soft taco. Illustrative demo price, not a store quote.", "comboSlot": "none" },
+        { "name": "Cheesy Bean & Rice Burrito", "sizes": [{ "size": "standard", "price": 1.49 }], "description": "Bean and rice burrito. Illustrative demo price, not a store quote.", "aliases": ["Cheesy Bean and Rice Burrito"], "comboSlot": "none" }
+      ]
+    },
+    {
+      "category": "Sweets", "icon": "✨",
+      "items": [
+        { "name": "Cinnamon Twists", "sizes": [{ "size": "standard", "price": 1.49 }], "description": "Cinnamon sugar snack. Illustrative demo price and reward eligibility, not a store quote or real reward.", "comboSlot": "none" }
+      ]
+    },
+    {
+      "category": "Drinks", "icon": "🥤",
+      "items": [
+        { "name": "Mountain Dew Baja Blast", "sizes": [{ "size": "small", "price": 1.99 }, { "size": "medium", "price": 2.49 }, { "size": "large", "price": 2.99 }], "description": "Baja Blast fountain drink. Illustrative demo sizes and prices, not a store quote.", "aliases": ["Baja Blast", "Mtn Dew Baja Blast"], "comboSlot": "drinks" },
+        { "name": "Mountain Dew Baja Blast Freeze", "sizes": [{ "size": "standard", "price": 3.99 }], "description": "Frozen Baja Blast drink. Illustrative demo size and price, not a store quote.", "aliases": ["Baja Blast Freeze"], "comboSlot": "none" }
+      ]
+    }
+  ]
+}

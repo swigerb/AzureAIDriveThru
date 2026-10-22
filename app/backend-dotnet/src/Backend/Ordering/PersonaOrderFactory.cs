@@ -39,6 +39,6 @@ internal static class PersonaOrderFactory
         var announce = happyHour?.Announce ?? false;
         var banner = happyHour?.Banner ?? "";
 
-        return new OrderState(menu, timeZone, taxRate, window, discount, announce, banner);
+        return new OrderState(menu, timeZone, taxRate, window, discount, announce, banner, persona.RewardsDemo);
     }
 }
