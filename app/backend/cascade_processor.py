@@ -888,17 +888,18 @@ class CascadeProcessor:
         if not transcript.strip():
             _release_untranscribed_audio(state, turn_audio)
             return
-        await ws.send_json({
-            "type": "conversation.item.input_audio_transcription.completed",
-            "transcript": transcript,
-        })
+        # Commit point: no await between here and the history/carry update, so a barge-in
+        # cancel lands either before it (audio stays carried, no transcript emitted) or after it
+        # (carry released, transcript frame still delivered via shield). Never both.
         state.messages.append(UserMessage(content=transcript))
         _release_untranscribed_audio(state, turn_audio)
         # #126: feeds this session's own rehydration/resume history -- see
-        # `SessionManager.rehydration_text`/`recent_turns`. Never called before this issue (a
-        # cascade session's `recent_turns()` was always empty), so a resumed cascade session had
-        # nothing real to rehydrate with.
+        # `SessionManager.rehydration_text`/`recent_turns`.
         self._sessions.record_turn(session_id, "guest", transcript)
+        await asyncio.shield(ws.send_json({
+            "type": "conversation.item.input_audio_transcription.completed",
+            "transcript": transcript,
+        }))
         await self._run_turn_and_speak(ws, session_id, state)
 
     async def _send_greeting(self, ws: web.WebSocketResponse, session_id: str, state: _CascadeSessionState, prompt_loader) -> None:

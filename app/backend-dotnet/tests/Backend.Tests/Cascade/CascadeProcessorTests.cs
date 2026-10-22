@@ -242,6 +242,14 @@ internal sealed class DelayedFakeWebSocket(
 
     public List<(byte[] Data, WebSocketMessageType MessageType, bool EndOfMessage)> SentMessages { get; } = [];
 
+    /// <summary>Optional barrier awaited before the Nth queued message is handed to the reader.</summary>
+    public Func<int, Task>? BeforeReceive { get; init; }
+
+    /// <summary>Optional barrier awaited before a text frame is recorded as sent.</summary>
+    public Func<string, CancellationToken, Task>? BeforeSendText { get; init; }
+
+    private int _dequeued;
+
     public override WebSocketCloseStatus? CloseStatus => null;
     public override string? CloseStatusDescription => null;
     public override WebSocketState State => _state;
@@ -274,6 +282,11 @@ internal sealed class DelayedFakeWebSocket(
             {
                 throw new InvalidOperationException("DelayedFakeWebSocket has no more messages queued -- the reader kept reading past what the test expected.");
             }
+            if (BeforeReceive is not null)
+            {
+                await BeforeReceive(_dequeued).ConfigureAwait(false);
+            }
+            _dequeued++;
             (_currentData, _currentType) = _messages.Dequeue();
             _currentOffset = 0;
         }
@@ -291,10 +304,17 @@ internal sealed class DelayedFakeWebSocket(
         return new WebSocketReceiveResult(toCopy, messageType, endOfMessage);
     }
 
-    public override Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken)
+    public override async Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken)
     {
-        SentMessages.Add((buffer.ToArray(), messageType, endOfMessage));
-        return Task.CompletedTask;
+        var data = buffer.ToArray();
+        if (BeforeSendText is not null && messageType == WebSocketMessageType.Text)
+        {
+            await BeforeSendText(Encoding.UTF8.GetString(data), cancellationToken).ConfigureAwait(false);
+        }
+        lock (SentMessages)
+        {
+            SentMessages.Add((data, messageType, endOfMessage));
+        }
     }
 }
 
@@ -749,6 +769,86 @@ public sealed class CascadeProcessorTests
         var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
         var transcribed = frames.Single(f => f["type"]!.GetValue<string>() == "conversation.item.input_audio_transcription.completed");
         Assert.Equal("No, that'll be it.", transcribed["transcript"]!.GetValue<string>());
+    }
+
+    /// <summary>Barrier race: turn 1's transcript commit is in flight (its transcription.completed
+    /// send stalled) when the guest barges in and the next fragment's speech_stopped merges the
+    /// carry. The commit must be atomic with the carry: turn 1 commits exactly once and its audio
+    /// is not replayed into turn 2. Mutation seam: committing after the send (the pre-fix order)
+    /// leaves turn 1's audio in the merged carry, so turn 2's upload starts with it.</summary>
+    [Fact]
+    public async Task RunSessionAsync_TranscriptSendStalledAcrossBargeIn_CommitsOnceWithoutReplayingAudio()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Welcome!")
+            .EnqueueSpeech([1, 2])
+            .EnqueueTranscript("A double cheeseburger.")
+            .EnqueueTranscript("That's all.")
+            .EnqueueChatMessage("assistant", "Your carhop will be right out.")
+            .EnqueueSpeech([3, 4]);
+        var processor = NewProcessor(handler, new RecordingToolExecutor([]), loader);
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+
+        var sendReached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseSend = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var testCt = TestContext.Current.CancellationToken;
+        var secondFragment = Pcm16(10000, count: 10);
+        var silentChunk = Pcm16(0, count: 4800);
+        var socket = new DelayedFakeWebSocket(
+            [
+                (AppendFrame(Pcm16(20000, count: 10)), WebSocketMessageType.Text),
+                (AppendFrame(silentChunk), WebSocketMessageType.Text), // turn 1: STT returns, transcript send stalls
+                (AppendFrame(secondFragment), WebSocketMessageType.Text), // barge-in cancels turn 1
+                (AppendFrame(silentChunk), WebSocketMessageType.Text), // speech_stopped merges the carry
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay)
+        {
+            BeforeSendText = async (payload, ct) =>
+            {
+                if (payload.Contains("input_audio_transcription.completed", StringComparison.Ordinal)
+                    && payload.Contains("cheeseburger", StringComparison.Ordinal))
+                {
+                    sendReached.TrySetResult();
+                    await releaseSend.Task.WaitAsync(ct).ConfigureAwait(false);
+                }
+            },
+            BeforeReceive = async index =>
+            {
+                if (index == 2)
+                {
+                    await sendReached.Task.WaitAsync(TimeSpan.FromSeconds(10), testCt).ConfigureAwait(false);
+                }
+                else if (index == 4)
+                {
+                    releaseSend.TrySetResult();
+                    var deadline = DateTime.UtcNow.AddSeconds(10);
+                    while (handler.TranscribeRequestCount < 2 && DateTime.UtcNow < deadline)
+                    {
+                        await Task.Delay(20, testCt).ConfigureAwait(false);
+                    }
+                    await Task.Delay(200, testCt).ConfigureAwait(false);
+                }
+            },
+        };
+
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-commit-race", testCt);
+
+        Assert.Equal(2, handler.TranscribeRequestCount);
+        var firstUpload = WavData(handler.TranscribeRequestBodies[0]);
+        var secondUpload = WavData(handler.TranscribeRequestBodies[1]);
+        Assert.True(secondUpload.AsSpan().StartsWith(secondFragment));
+        Assert.Equal(firstUpload.Length, secondUpload.Length);
+
+        var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
+        var transcripts = frames
+            .Where(f => f["type"]!.GetValue<string>() == "conversation.item.input_audio_transcription.completed")
+            .Select(f => f["transcript"]!.GetValue<string>())
+            .ToList();
+        Assert.Equal(["A double cheeseburger.", "That's all."], transcripts);
+        var lastMessages = JsonNode.Parse(handler.ChatRequestBodies[^1])!["messages"]!.AsArray();
+        Assert.Single(lastMessages, m => m!["role"]!.GetValue<string>() == "user" && m["content"]!.GetValue<string>() == "A double cheeseburger.");
     }
 
     [Fact]

@@ -348,14 +348,25 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
             ReleaseUntranscribedAudio(turnAudio);
             return;
         }
+        // Commit point: decided under the same lock speech_stopped uses to merge carried audio.
+        // Barge-in cancels this turn before the next speech_stopped can merge, so either the
+        // turn commits here (carry cleared, merge sees only new audio) or it was already
+        // cancelled (audio stays carried, no transcript emitted). Never both.
+        lock (context.TurnRegistryLock)
+        {
+            turnCt.ThrowIfCancellationRequested();
+            if (ReferenceEquals(context.State.UntranscribedAudio, turnAudio))
+            {
+                context.State.UntranscribedAudio = [];
+            }
+        }
+        context.State.Messages.Add(CascadeChatMessage.User(transcript));
+        context.SessionManager?.RecordTurn(context.SessionId, "guest", transcript);
         await CascadeProcessor.SendTextAsync(context.BrowserSocket, new JsonObject
         {
             ["type"] = "conversation.item.input_audio_transcription.completed",
             ["transcript"] = transcript,
-        }.ToJsonString(), turnCt, context.CancellationToken).ConfigureAwait(false);
-        context.State.Messages.Add(CascadeChatMessage.User(transcript));
-        ReleaseUntranscribedAudio(turnAudio);
-        context.SessionManager?.RecordTurn(context.SessionId, "guest", transcript);
+        }.ToJsonString(), CancellationToken.None, context.CancellationToken).ConfigureAwait(false);
         await RunTurnAndSpeakAsync(turnCt).ConfigureAwait(false);
     }
 

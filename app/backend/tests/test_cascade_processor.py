@@ -717,6 +717,43 @@ class SplitUtteranceCarryForwardTests(unittest.IsolatedAsyncioTestCase):
                      if c.args[0]["type"] == "conversation.item.input_audio_transcription.completed"]
         self.assertEqual(committed, ["a double cheeseburger", "no that'll be it"])
 
+    async def test_barge_in_while_the_transcript_frame_is_sending_commits_it_exactly_once(self):
+        """Barrier race: turn 1's transcription.completed send is stalled when the guest barges
+        in and the next fragment merges the carry. The commit must happen before that send, so
+        turn 1 is committed once and its audio is not replayed into turn 2. Mutation seam:
+        appending history after the send leaves turn 1's audio carried into turn 2."""
+        transcripts = iter(["a double cheeseburger", "that's all"])
+
+        async def _transcribe(pcm16_bytes):
+            self.uploads.append(pcm16_bytes)
+            return next(transcripts)
+
+        send_reached = asyncio.Event()
+        release_send = asyncio.Event()
+
+        async def _send_json(payload):
+            if payload.get("transcript") == "a double cheeseburger":
+                send_reached.set()
+                await release_send.wait()
+
+        self.ws.send_json = AsyncMock(side_effect=_send_json)
+        self.processor._transcribe = _transcribe
+        await self._utterance(amplitude=8000)
+        await asyncio.wait_for(send_reached.wait(), timeout=2)
+
+        await self._feed(_loud_tone(2400, 16000), 0.1)  # barge-in cancels turn 1 mid-send
+        release_send.set()
+        for _ in range(4):
+            await self._feed(_silence(2400), 0.1)
+        await asyncio.wait_for(self.state.current_turn_task, timeout=2)
+
+        self.assertEqual(len(self.uploads), 2)
+        self.assertNotIn(_loud_tone(2400, 8000), self.uploads[1])
+        committed = [c.args[0]["transcript"] for c in self.ws.send_json.await_args_list
+                     if c.args[0]["type"] == "conversation.item.input_audio_transcription.completed"]
+        self.assertEqual(committed, ["a double cheeseburger", "that's all"])
+        self.assertEqual([m.content for m in self.state.messages], ["a double cheeseburger", "that's all"])
+
     async def test_overflowing_carried_audio_keeps_the_newest_bytes_and_logs_a_warning(self):
         self.state.untranscribed_audio = b"\x01\x00" * (_MAX_CARRIED_TURN_AUDIO_BYTES // 2)
         self.processor._transcribe = AsyncMock(return_value="")
