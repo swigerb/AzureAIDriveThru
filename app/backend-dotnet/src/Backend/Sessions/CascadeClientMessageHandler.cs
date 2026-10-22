@@ -51,16 +51,24 @@ internal sealed class CascadeClientMessageHandler(CascadeSessionContext context)
             var fragment = context.Detector.TakeBuffer();
             context.Detector.Reset();
             byte[] turnAudio;
+            int dropped;
             lock (context.TurnRegistryLock)
             {
-                turnAudio = CarryForward(context.State.UntranscribedAudio, fragment);
+                var carried = context.State.UntranscribedAudio;
+                dropped = carried.Length == 0 ? 0 : Math.Max(0, carried.Length + fragment.Length - MaxCarriedTurnAudioBytes);
+                turnAudio = CarryForward(carried, fragment);
                 context.State.UntranscribedAudio = turnAudio;
+            }
+            if (dropped > 0)
+            {
+                context.Logger.CascadeCarriedAudioTruncated(MaxCarriedTurnAudioBytes, dropped, context.SessionId);
             }
             ScheduleTurn(turnAudio);
         }
     }
 
-    /// <summary>Upper bound on carried guest audio: 30 s of PCM16 at 24 kHz.</summary>
+    /// <summary>Upper bound on audio carried across barge-in-cancelled turns: 30 s of PCM16 at
+    /// 24 kHz. Applies only when carried audio is prepended; a single utterance is never capped.</summary>
     internal const int MaxCarriedTurnAudioBytes = 30 * CascadeProcessor.AudioSampleRate * 2;
 
     internal static byte[] CarryForward(byte[] carried, byte[] fragment)

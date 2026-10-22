@@ -132,7 +132,8 @@ def _cascade_energy_threshold(value: object) -> float:
 
 _AUDIO_SAMPLE_WIDTH = 2  # PCM16, matches both mic input and speaker output (confirmed against
                           # useAudioRecorder.tsx/useAudioPlayer.tsx -- no resampling needed).
-# Upper bound on guest audio carried across barge-in-cancelled turns (30 s of PCM16 @ 24 kHz).
+# Upper bound on guest audio carried across barge-in-cancelled turns (30 s of PCM16 @ 24 kHz);
+# applies only when carried audio is prepended -- a single utterance is never capped.
 _MAX_CARRIED_TURN_AUDIO_BYTES = 30 * _AUDIO_SAMPLE_RATE * _AUDIO_SAMPLE_WIDTH
 # Rick's #82 infra notes: the Foundry chat endpoint (and the audio endpoint we reuse for
 # STT/TTS) is a Cognitive Services resource -- the same bearer-token scope rtmt.py already uses
@@ -387,6 +388,17 @@ def _release_untranscribed_audio(state: _CascadeSessionState, turn_audio: bytes)
     has since replaced it with a longer combined buffer."""
     if state.untranscribed_audio is turn_audio:
         state.untranscribed_audio = b""
+
+
+def _completed_response_done(response_id: str, final_text: str) -> dict:
+    """The Realtime API's `response.done` shape: the frontend renders the assistant's line from
+    `output[].content[].transcript`, exactly as it does for realtime turns."""
+    output = [{
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "audio", "transcript": final_text}],
+    }] if final_text else []
+    return {"type": "response.done", "response": {"id": response_id, "status": "completed", "output": output}}
 
 def _resolve_persona_voice(persona, default_voice: str, allowed_voices: frozenset[str]) -> str:
     """#248: the per-persona default-voice lookup `RTMiddleTier._forward_messages` already does
@@ -729,7 +741,13 @@ class CascadeProcessor:
                 await ws.send_json({"type": "input_audio_buffer.speech_started"})
             elif event == "speech_stopped":
                 self._cancel_nudge(state, "guest turn started")
-                turn_audio = (state.untranscribed_audio + detector.take_buffer())[-_MAX_CARRIED_TURN_AUDIO_BYTES:]
+                combined = state.untranscribed_audio + detector.take_buffer()
+                if state.untranscribed_audio and len(combined) > _MAX_CARRIED_TURN_AUDIO_BYTES:
+                    logger.warning(
+                        "Cascade carried guest audio exceeded %d bytes; dropped the oldest %d bytes (session=%s)",
+                        _MAX_CARRIED_TURN_AUDIO_BYTES, len(combined) - _MAX_CARRIED_TURN_AUDIO_BYTES, session_id)
+                    combined = combined[-_MAX_CARRIED_TURN_AUDIO_BYTES:]
+                turn_audio = combined
                 state.untranscribed_audio = turn_audio
                 detector.reset()
                 self._start_turn(ws, session_id, state, turn_audio)
@@ -946,7 +964,7 @@ class CascadeProcessor:
         try:
             final_text = await self._run_chat_tool_loop(ws, session_id, state)
         except CascadeRateLimitExhausted:
-            await ws.send_json({"type": "response.done", "response": {"id": response_id}})
+            await ws.send_json(_completed_response_done(response_id, ""))
             return
         except asyncio.CancelledError:
             raise  # barge-in: `_cancel_current_turn` owns this turn's cleanup, not us.
@@ -1004,7 +1022,7 @@ class CascadeProcessor:
                 await self._send_failed_response_done(ws, response_id, "text-to-speech failed")
                 return
 
-        await ws.send_json({"type": "response.done", "response": {"id": response_id}})
+        await ws.send_json(_completed_response_done(response_id, final_text))
 
         identifiers = order_state_singleton.advance_round_trip(session_id)
         await self._sessions.emit_session_identifiers(ws, "extension.round_trip_token", identifiers)

@@ -699,6 +699,9 @@ public sealed class CascadeProcessorTests
             m!["role"]?.GetValue<string>() == "tool" && m["tool_call_id"]?.GetValue<string>() == "call_1");
         // The two REAL turns' own content is present, proving history otherwise continued normally.
         Assert.Contains(lastMessages, m => m!["role"]!.GetValue<string>() == "user" && m["content"]!.GetValue<string>() == "second query");
+        // Turn 1's transcript was already committed before the barge-in, so its audio must not be
+        // replayed into turn 2's upload (both turns' own audio is the same size here).
+        Assert.Equal(WavData(handler.TranscribeRequestBodies[0]).Length, WavData(handler.TranscribeRequestBodies[1]).Length);
     }
 
     /// <summary>Live repro (cascade post-fix runs): "No, [0.48 s] that'll be it" split into two
@@ -780,6 +783,38 @@ public sealed class CascadeProcessorTests
 
         Assert.Equal(2, handler.TranscribeRequestCount);
         Assert.True(WavData(handler.TranscribeRequestBodies[1]).AsSpan().StartsWith(secondFragment));
+    }
+
+    [Fact]
+    public async Task RunSessionAsync_CarriedAudioOverTheCap_IsTruncatedToTheNewestBytesWithAWarning()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Welcome!")
+            .EnqueueSpeech([1, 2])
+            .EnqueueTranscriptUntilCancelled()
+            .EnqueueTranscript("");
+        var logger = new RecordingLogger();
+        var processor = NewProcessor(handler, new RecordingToolExecutor([]), loader, logger: logger);
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+
+        var halfCapSamples = CascadeClientMessageHandler.MaxCarriedTurnAudioBytes / 4;
+        var silentChunk = Pcm16(0, count: 4800);
+        var socket = new DelayedFakeWebSocket(
+            [
+                (AppendFrame(Pcm16(20000, count: halfCapSamples)), WebSocketMessageType.Text),
+                (AppendFrame(silentChunk), WebSocketMessageType.Text), // turn 1 blocks in STT
+                (AppendFrame(Pcm16(10000, count: halfCapSamples)), WebSocketMessageType.Text), // barge-in
+                (AppendFrame(silentChunk), WebSocketMessageType.Text), // carried + new > cap
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay);
+
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-carry-cap", TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, handler.TranscribeRequestCount);
+        Assert.Equal(CascadeClientMessageHandler.MaxCarriedTurnAudioBytes, WavData(handler.TranscribeRequestBodies[1]).Length);
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("dropped the oldest", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -870,6 +905,12 @@ public sealed class CascadeProcessorTests
         var types = frames.Select(f => f["type"]!.GetValue<string>()).ToList();
         Assert.Equal(2, types.Count(t => t == "response.done")); // greeting + guest turn
         Assert.Equal("Sorry, something went wrong.", frames.Last(f => f["type"]!.GetValue<string>() == "response.audio_transcript.delta")["delta"]!.GetValue<string>());
+        // Realtime-shaped completion: the frontend renders the assistant line only from
+        // output[].content[].transcript (an id-only frame left cascade turns invisible).
+        var guestDone = frames.Last(f => f["type"]!.GetValue<string>() == "response.done")["response"]!;
+        Assert.Equal("completed", guestDone["status"]!.GetValue<string>());
+        Assert.Equal("assistant", guestDone["output"]![0]!["role"]!.GetValue<string>());
+        Assert.Equal("Sorry, something went wrong.", guestDone["output"]![0]!["content"]![0]!["transcript"]!.GetValue<string>());
     }
 
     /// <summary>#262: an `OperationCanceledException` whose OWN token is cancelled (an

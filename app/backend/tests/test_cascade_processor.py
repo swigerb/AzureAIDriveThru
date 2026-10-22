@@ -58,6 +58,7 @@ from cascade_processor import (
     _CascadeSessionState,
     _pcm16_to_wav_bytes,
     _resolve_persona_voice,
+    _MAX_CARRIED_TURN_AUDIO_BYTES,
     _tool_definitions,
     _TurnDetector,
 )
@@ -486,6 +487,15 @@ class SendGreetingTests(unittest.IsolatedAsyncioTestCase):
             ws, "Welcome to the drive-thru! What can I get started for you today?", state
         )
         self.assertEqual(_sent_types(ws), ["response.created", "response.audio_transcript.delta", "response.done"])
+        # Realtime-shaped completion: the frontend renders the assistant line only from
+        # `output[].content[].transcript` (an id-only frame left cascade turns invisible).
+        done = ws.send_json.await_args_list[-1].args[0]["response"]
+        self.assertEqual(done["status"], "completed")
+        self.assertEqual(
+            done["output"][0]["content"][0]["transcript"],
+            "Welcome to the drive-thru! What can I get started for you today?",
+        )
+        self.assertEqual(done["output"][0]["role"], "assistant")
         processor._sessions.mark_greeting_sent.assert_called_once_with("s1")
 
     async def test_greeting_is_a_noop_without_a_bound_prompt_loader(self):
@@ -666,6 +676,52 @@ class SplitUtteranceCarryForwardTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(self.uploads), 2)
         self.assertNotIn(_loud_tone(2400, 8000), self.uploads[1])
+
+    async def test_barge_in_after_transcript_commit_carries_nothing_and_commits_each_transcript_once(self):
+        """Cancellation after the transcript was committed (here: mid chat) must not replay the
+        already-committed guest audio into the next turn."""
+        transcripts = iter(["a sonic double cheeseburger", "no that'll be it"])
+
+        async def _transcribe(pcm16_bytes):
+            self.uploads.append(pcm16_bytes)
+            return next(transcripts)
+
+        chat_started = asyncio.Event()
+        chat_calls = 0
+
+        async def _chat(*_args):
+            nonlocal chat_calls
+            chat_calls += 1
+            if chat_calls == 1:
+                chat_started.set()
+                await asyncio.Event().wait()
+
+        self.processor._transcribe = _transcribe
+        self.processor._run_turn_and_speak = _chat
+        await self._utterance(amplitude=8000)
+        await asyncio.wait_for(chat_started.wait(), timeout=2)
+        self.assertEqual(self.state.untranscribed_audio, b"")
+
+        await self._utterance(amplitude=16000)
+        await asyncio.wait_for(self.state.current_turn_task, timeout=2)
+
+        self.assertEqual(len(self.uploads), 2)
+        self.assertNotIn(_loud_tone(2400, 8000), self.uploads[1])
+        committed = [c.args[0]["transcript"] for c in self.ws.send_json.await_args_list
+                     if c.args[0]["type"] == "conversation.item.input_audio_transcription.completed"]
+        self.assertEqual(committed, ["a sonic double cheeseburger", "no that'll be it"])
+
+    async def test_overflowing_carried_audio_keeps_the_newest_bytes_and_logs_a_warning(self):
+        self.state.untranscribed_audio = b"\x01\x00" * (_MAX_CARRIED_TURN_AUDIO_BYTES // 2)
+        self.processor._transcribe = AsyncMock(return_value="")
+        with self.assertLogs("cascade_processor", level="WARNING") as logs:
+            await self._utterance(amplitude=16000)
+        self.assertTrue(any("dropped the oldest" in line for line in logs.output))
+        await asyncio.wait_for(self.state.current_turn_task, timeout=2)
+        uploaded = self.processor._transcribe.await_args.args[0]
+        self.assertEqual(len(uploaded), _MAX_CARRIED_TURN_AUDIO_BYTES)
+        self.assertTrue(uploaded.endswith(_silence(2400)))
+        self.assertIn(_loud_tone(2400, 16000), uploaded)
 
     async def test_clear_drops_carried_audio(self):
         self.state.untranscribed_audio = b"\x01\x02"

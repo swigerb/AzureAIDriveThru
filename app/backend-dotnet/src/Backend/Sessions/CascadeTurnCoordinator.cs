@@ -207,7 +207,7 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         }
         catch (CascadeRateLimitExhaustedException)
         {
-            await SendResponseDoneAsync(responseId, turnCt).ConfigureAwait(false);
+            await SendResponseDoneAsync(responseId, finalText: null, turnCt).ConfigureAwait(false);
             return;
         }
         catch (OperationCanceledException) when (turnCt.IsCancellationRequested)
@@ -245,7 +245,7 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         {
             return;
         }
-        await SendResponseDoneAsync(responseId, turnCt).ConfigureAwait(false);
+        await SendResponseDoneAsync(responseId, finalText, turnCt).ConfigureAwait(false);
         context.Identifiers.AdvanceRoundTrip();
         await CascadeProcessor.SendTextAsync(
             context.BrowserSocket,
@@ -284,11 +284,25 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         }
     }
 
-    private Task SendResponseDoneAsync(string responseId, CancellationToken turnCt) =>
+    /// <summary>The Realtime API's <c>response.done</c> shape: the frontend renders the assistant's
+    /// line from <c>output[].content[].transcript</c>, exactly as it does for realtime turns.</summary>
+    private Task SendResponseDoneAsync(string responseId, string? finalText, CancellationToken turnCt) =>
         CascadeProcessor.SendTextAsync(context.BrowserSocket, new JsonObject
         {
             ["type"] = "response.done",
-            ["response"] = new JsonObject { ["id"] = responseId },
+            ["response"] = new JsonObject
+            {
+                ["id"] = responseId,
+                ["status"] = "completed",
+                ["output"] = string.IsNullOrEmpty(finalText)
+                    ? new JsonArray()
+                    : new JsonArray(new JsonObject
+                    {
+                        ["type"] = "message",
+                        ["role"] = "assistant",
+                        ["content"] = new JsonArray(new JsonObject { ["type"] = "audio", ["transcript"] = finalText }),
+                    }),
+            },
         }.ToJsonString(), turnCt, context.CancellationToken);
 
     private void ReleaseUntranscribedAudio(byte[] turnAudio)
