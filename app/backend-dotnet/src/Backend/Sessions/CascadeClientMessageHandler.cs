@@ -48,10 +48,33 @@ internal sealed class CascadeClientMessageHandler(CascadeSessionContext context)
         else if (vadEvent == "speech_stopped")
         {
             context.TurnCoordinator.CancelNudge("guest turn started");
-            var turnAudio = context.Detector.TakeBuffer();
+            var fragment = context.Detector.TakeBuffer();
             context.Detector.Reset();
+            byte[] turnAudio;
+            lock (context.TurnRegistryLock)
+            {
+                turnAudio = CarryForward(context.State.UntranscribedAudio, fragment);
+                context.State.UntranscribedAudio = turnAudio;
+            }
             ScheduleTurn(turnAudio);
         }
+    }
+
+    /// <summary>Upper bound on carried guest audio: 30 s of PCM16 at 24 kHz.</summary>
+    internal const int MaxCarriedTurnAudioBytes = 30 * CascadeProcessor.AudioSampleRate * 2;
+
+    internal static byte[] CarryForward(byte[] carried, byte[] fragment)
+    {
+        if (carried.Length == 0)
+        {
+            return fragment;
+        }
+        var combined = new byte[carried.Length + fragment.Length];
+        carried.CopyTo(combined, 0);
+        fragment.CopyTo(combined, carried.Length);
+        return combined.Length <= MaxCarriedTurnAudioBytes
+            ? combined
+            : combined[^MaxCarriedTurnAudioBytes..];
     }
 
     private void ScheduleTurn(byte[] turnAudio)
@@ -72,6 +95,10 @@ internal sealed class CascadeClientMessageHandler(CascadeSessionContext context)
     private Task ClearAudioBufferAsync()
     {
         context.Detector.Reset();
+        lock (context.TurnRegistryLock)
+        {
+            context.State.UntranscribedAudio = [];
+        }
         return Task.CompletedTask;
     }
 

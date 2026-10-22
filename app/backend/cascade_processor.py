@@ -132,6 +132,8 @@ def _cascade_energy_threshold(value: object) -> float:
 
 _AUDIO_SAMPLE_WIDTH = 2  # PCM16, matches both mic input and speaker output (confirmed against
                           # useAudioRecorder.tsx/useAudioPlayer.tsx -- no resampling needed).
+# Upper bound on guest audio carried across barge-in-cancelled turns (30 s of PCM16 @ 24 kHz).
+_MAX_CARRIED_TURN_AUDIO_BYTES = 30 * _AUDIO_SAMPLE_RATE * _AUDIO_SAMPLE_WIDTH
 # Rick's #82 infra notes: the Foundry chat endpoint (and the audio endpoint we reuse for
 # STT/TTS) is a Cognitive Services resource -- the same bearer-token scope rtmt.py already uses
 # (see rtmt.py's own `get_bearer_token_provider` call site) applies to both.
@@ -359,6 +361,10 @@ class _CascadeSessionState:
     # `CascadeProcessor._start_turn`/`_send_greeting`, cancelled by `_cancel_current_turn` on a
     # new `speech_started` (barge-in, Rick's #118 review item 5).
     current_turn_task: asyncio.Task | None = None
+    # Guest audio handed to a turn whose transcription hasn't returned yet. A natural pause
+    # longer than `silence_duration_ms` ends the turn early, and the guest resuming then cancels
+    # it (barge-in) mid-STT; this audio is carried into the next turn instead of being dropped.
+    untranscribed_audio: bytes = b""
     # #126: this connection's own local VAD -- lives on the state (not a bare `_run_session`
     # local) so `_speak` can reach it to arm the echo-suppression cooldown after every TTS turn.
     detector: _TurnDetector | None = None
@@ -375,6 +381,12 @@ class _CascadeSessionState:
     nudge_armed: bool = False
     nudge_task: asyncio.Task | None = None
 
+
+def _release_untranscribed_audio(state: _CascadeSessionState, turn_audio: bytes) -> None:
+    """Drop the carried guest audio once its own turn is resolved -- only if no newer turn
+    has since replaced it with a longer combined buffer."""
+    if state.untranscribed_audio is turn_audio:
+        state.untranscribed_audio = b""
 
 def _resolve_persona_voice(persona, default_voice: str, allowed_voices: frozenset[str]) -> str:
     """#248: the per-persona default-voice lookup `RTMiddleTier._forward_messages` already does
@@ -717,10 +729,12 @@ class CascadeProcessor:
                 await ws.send_json({"type": "input_audio_buffer.speech_started"})
             elif event == "speech_stopped":
                 self._cancel_nudge(state, "guest turn started")
-                turn_audio = detector.take_buffer()
+                turn_audio = (state.untranscribed_audio + detector.take_buffer())[-_MAX_CARRIED_TURN_AUDIO_BYTES:]
+                state.untranscribed_audio = turn_audio
                 detector.reset()
                 self._start_turn(ws, session_id, state, turn_audio)
         elif msg_type == "input_audio_buffer.clear":
+            state.untranscribed_audio = b""
             detector.reset()
         elif msg_type == "extension.set_voice":
             # Rick's #253 review item 1: mirror realtime's own extension.set_voice handler
@@ -847,17 +861,21 @@ class CascadeProcessor:
         try:
             transcript = await self._with_rate_limit_retry(ws, session_id, lambda: self._transcribe(turn_audio), "transcription")
         except CascadeRateLimitExhausted:
+            _release_untranscribed_audio(state, turn_audio)
             return  # the client already got the final extension.rate_limited notice
         except Exception:
+            _release_untranscribed_audio(state, turn_audio)
             logger.exception("Cascade transcription failed (session=%s)", session_id)
             return
         if not transcript.strip():
+            _release_untranscribed_audio(state, turn_audio)
             return
         await ws.send_json({
             "type": "conversation.item.input_audio_transcription.completed",
             "transcript": transcript,
         })
         state.messages.append(UserMessage(content=transcript))
+        _release_untranscribed_audio(state, turn_audio)
         # #126: feeds this session's own rehydration/resume history -- see
         # `SessionManager.rehydration_text`/`recent_turns`. Never called before this issue (a
         # cascade session's `recent_turns()` was always empty), so a resumed cascade session had

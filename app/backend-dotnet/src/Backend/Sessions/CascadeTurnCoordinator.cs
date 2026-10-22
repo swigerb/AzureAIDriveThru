@@ -291,6 +291,17 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
             ["response"] = new JsonObject { ["id"] = responseId },
         }.ToJsonString(), turnCt, context.CancellationToken);
 
+    private void ReleaseUntranscribedAudio(byte[] turnAudio)
+    {
+        lock (context.TurnRegistryLock)
+        {
+            if (ReferenceEquals(context.State.UntranscribedAudio, turnAudio))
+            {
+                context.State.UntranscribedAudio = [];
+            }
+        }
+    }
+
     public async Task ProcessTurnAsync(byte[] turnAudio, CancellationToken turnCt)
     {
         if (turnAudio.Length == 0)
@@ -304,6 +315,7 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         }
         catch (CascadeRateLimitExhaustedException)
         {
+            ReleaseUntranscribedAudio(turnAudio);
             return;
         }
         catch (OperationCanceledException) when (turnCt.IsCancellationRequested)
@@ -312,11 +324,13 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         }
         catch (Exception ex)
         {
+            ReleaseUntranscribedAudio(turnAudio);
             context.Logger.CascadeTranscriptionFailed(ex, context.SessionId);
             return;
         }
         if (string.IsNullOrWhiteSpace(transcript))
         {
+            ReleaseUntranscribedAudio(turnAudio);
             return;
         }
         await CascadeProcessor.SendTextAsync(context.BrowserSocket, new JsonObject
@@ -325,6 +339,7 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
             ["transcript"] = transcript,
         }.ToJsonString(), turnCt, context.CancellationToken).ConfigureAwait(false);
         context.State.Messages.Add(CascadeChatMessage.User(transcript));
+        ReleaseUntranscribedAudio(turnAudio);
         context.SessionManager?.RecordTurn(context.SessionId, "guest", transcript);
         await RunTurnAndSpeakAsync(turnCt).ConfigureAwait(false);
     }

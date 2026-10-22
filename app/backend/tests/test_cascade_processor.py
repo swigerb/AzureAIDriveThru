@@ -601,6 +601,84 @@ class BargeInEndToEndTests(unittest.IsolatedAsyncioTestCase):
         release_transcribe.set()  # let the (already-cancelled) coroutine's own await resolve harmlessly
 
 
+class SplitUtteranceCarryForwardTests(unittest.IsolatedAsyncioTestCase):
+    """Live repro (cascade post-fix runs): "No, [0.48 s] that'll be it" split into two turns at
+    the 200 ms silence window; the guest resuming then barge-in-cancelled the first fragment's
+    turn mid-STT and its audio was lost, so STT only ever heard "that'll be it". Mutation seam:
+    dropping the carry-forward makes the combined-upload assertion fail."""
+
+    def setUp(self):
+        self.processor = _make_processor({})
+        self.ws = _make_mock_ws()
+        self.state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+        self.detector = _TurnDetector(threshold=0.1, silence_duration_ms=200, sample_rate=24000)
+        self.clock = 0.0
+        self.uploads: list[bytes] = []
+        self.first_started = asyncio.Event()
+        self.processor._speak = AsyncMock()
+        self.processor._run_turn_and_speak = AsyncMock()
+
+    async def _feed(self, pcm: bytes, seconds: float):
+        self.clock += seconds
+        with patch("cascade_processor.time.monotonic", return_value=self.clock):
+            await self.processor._handle_client_message(
+                self.ws, "s1", self.state, self.detector,
+                {"type": "input_audio_buffer.append", "audio": base64.b64encode(pcm).decode("ascii")}, None)
+
+    async def _utterance(self, amplitude: int):
+        await self._feed(_loud_tone(2400, amplitude), 0.1)
+        for _ in range(4):
+            await self._feed(_silence(2400), 0.1)
+
+    async def test_fragment_cancelled_mid_transcription_is_prepended_to_the_next_turn(self):
+        async def _transcribe(pcm16_bytes):
+            self.uploads.append(pcm16_bytes)
+            if len(self.uploads) == 1:
+                self.first_started.set()
+                await asyncio.Event().wait()  # STT still in flight when the guest resumes
+            return "no that'll be it"
+
+        self.processor._transcribe = _transcribe
+        await self._utterance(amplitude=8000)
+        await asyncio.wait_for(self.first_started.wait(), timeout=2)
+        first_fragment = self.uploads[0]
+
+        await self._utterance(amplitude=16000)
+        await asyncio.wait_for(self.state.current_turn_task, timeout=2)
+
+        self.assertEqual(len(self.uploads), 2)
+        combined = self.uploads[1]
+        self.assertTrue(combined.startswith(first_fragment))
+        self.assertIn(_loud_tone(2400, 16000), combined)
+        self.processor._run_turn_and_speak.assert_awaited_once()
+        self.assertEqual(self.state.untranscribed_audio, b"")
+
+    async def test_committed_transcript_audio_is_not_carried_into_the_next_turn(self):
+        async def _transcribe(pcm16_bytes):
+            self.uploads.append(pcm16_bytes)
+            return "a sonic double cheeseburger"
+
+        self.processor._transcribe = _transcribe
+        await self._utterance(amplitude=8000)
+        await asyncio.wait_for(self.state.current_turn_task, timeout=2)
+        await self._utterance(amplitude=16000)
+        await asyncio.wait_for(self.state.current_turn_task, timeout=2)
+
+        self.assertEqual(len(self.uploads), 2)
+        self.assertNotIn(_loud_tone(2400, 8000), self.uploads[1])
+
+    async def test_clear_drops_carried_audio(self):
+        self.state.untranscribed_audio = b"\x01\x02"
+        await self.processor._handle_client_message(
+            self.ws, "s1", self.state, self.detector, {"type": "input_audio_buffer.clear"}, None)
+        self.assertEqual(self.state.untranscribed_audio, b"")
+
+    async def test_failed_transcription_drops_carried_audio(self):
+        self.processor._transcribe = AsyncMock(side_effect=RuntimeError("stt down"))
+        self.state.untranscribed_audio = audio = _loud_tone(2400)
+        await self.processor._process_turn(self.ws, "s1", self.state, audio)
+        self.assertEqual(self.state.untranscribed_audio, b"")
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Rick's PR #253 review item 1: `extension.set_voice` must go through the SAME
 # `_sanitize_voice` gate realtime's own handler (rtmt.py) already applies -- only a value
