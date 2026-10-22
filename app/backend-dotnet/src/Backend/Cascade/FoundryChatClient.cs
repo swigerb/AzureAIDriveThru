@@ -45,7 +45,8 @@ internal sealed class FoundryChatClient(HttpClient httpClient, string endpoint, 
         IReadOnlyList<JsonObject> messages,
         string deployment,
         IReadOnlyList<JsonObject>? toolDefinitions,
-        CancellationToken ct)
+        CancellationToken ct,
+        CascadeDiagnosticCapture? diagnostic = null)
     {
         var body = new JsonObject
         {
@@ -64,6 +65,7 @@ internal sealed class FoundryChatClient(HttpClient httpClient, string endpoint, 
         var token = await credential.GetTokenAsync(ct).ConfigureAwait(false);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
+        diagnostic?.Request(messages);
         using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, ct)
             .ConfigureAwait(false);
         var responseText = await ReadBodySafelyAsync(response, ct).ConfigureAwait(false);
@@ -78,6 +80,7 @@ internal sealed class FoundryChatClient(HttpClient httpClient, string endpoint, 
         var firstChoice = choices?.Count > 0 ? choices[0] as JsonObject : null;
         var message = firstChoice?["message"] as JsonObject
             ?? throw new InvalidOperationException("Foundry chat-completions response had no choices[0].message.");
+        diagnostic?.Choice(message, firstChoice?["finish_reason"]?.GetValue<string>());
         return message;
     }
 

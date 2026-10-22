@@ -401,6 +401,7 @@ app.UseWebSockets(new WebSocketOptions
 // same plain-text (not JSON) shape, distinct from the JSON 404s the HTTP persona routes above
 // return. The resolved processor's ProcessAsync (RealtimeProcessor is a stub this wave -- #13
 // lands the real upstream relay) then owns the session's mailbox loop as before.
+var cascadeDiagnosticGate = new CascadeDiagnosticGate(builder.Configuration, TimeProvider.System);
 app.MapGet("/realtime", async (HttpContext context) =>
 {
     if (!context.WebSockets.IsWebSocketRequest)
@@ -553,7 +554,13 @@ app.MapGet("/realtime", async (HttpContext context) =>
             // (greeting, local VAD-driven turn detection, STT -> chat-tool-loop -> TTS, barge-in,
             // rate-limit ladder) instead of draining the generic per-session mailbox -- see
             // CascadeProcessor.RunSessionAsync's own doc comment.
-            await cascadeProc.RunSessionAsync(socket, persona, resolvedModel, sessionId, context.RequestAborted, menuMode)
+            var diagnostic = cascadeDiagnosticGate.TryClaim(
+                entraSettings.Mode == EntraMode.Entra,
+                context.User.Identity?.IsAuthenticated == true,
+                context.User.FindFirst("oid")?.Value,
+                context.Request.Query["diagnostic_run"].ToString(),
+                persona.Id, pipelineName, sessionId, logger);
+            await cascadeProc.RunSessionAsync(socket, persona, resolvedModel, sessionId, context.RequestAborted, menuMode, diagnostic)
                 .ConfigureAwait(false);
         }
         else

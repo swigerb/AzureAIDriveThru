@@ -65,6 +65,59 @@ public sealed class CascadeToolCallDispatcherTests
     }
 
     [Fact]
+    public async Task Diagnostic_records_actual_tool_round_without_changing_history_or_returned_speech()
+    {
+        var call = new JsonObject
+        {
+            ["id"] = "synthetic-call",
+            ["function"] = new JsonObject { ["name"] = "get_order", ["arguments"] = "{}" },
+        };
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Adding your combo.", new JsonArray(call))
+            .EnqueueChatMessage("assistant", "What drink would you like?");
+        var state = NewState();
+        state.Messages.Add(CascadeChatMessage.User("NEVER-COPY-GUEST"));
+        var logger = new CascadeDiagnosticCaptureTests.RecordingLogger();
+        var capture = new CascadeDiagnosticCapture("session-1", DateTimeOffset.UtcNow.AddMinutes(10),
+            TimeProvider.System, logger) { ResponseId = "response-1" };
+        var dispatcher = NewDispatcher(handler, new RecordingToolExecutor(["get_order"]), state,
+            configureContext: context => context.Diagnostic = capture);
+
+        Assert.Equal("What drink would you like?", await dispatcher.RunChatToolLoopAsync(CancellationToken.None));
+
+        var secondRequest = JsonNode.Parse(handler.ChatRequestBodies[1])!;
+        Assert.Equal(new[] { "user", "assistant", "tool" },
+            secondRequest["messages"]!.AsArray().Select(m => m!["role"]!.GetValue<string>()));
+        Assert.Equal("Adding your combo.", secondRequest["messages"]![1]!["content"]!.GetValue<string>());
+        Assert.Equal(4, state.Messages.Count);
+        Assert.Equal("What drink would you like?", state.Messages[^1]["content"]!.GetValue<string>());
+        Assert.Equal(4, logger.Lines.Count);
+        Assert.DoesNotContain("NEVER-COPY-GUEST", string.Join("\n", logger.Lines));
+        Assert.Contains("Adding your combo.", string.Join("\n", logger.Lines));
+    }
+
+    [Fact]
+    public async Task Diagnostic_does_not_follow_resumed_session_binding()
+    {
+        var handler = new RoutingFoundryHandler().EnqueueChatMessage("assistant", "Restored.");
+        var logger = new CascadeDiagnosticCaptureTests.RecordingLogger();
+        CascadeSessionContext? context = null;
+        var dispatcher = NewDispatcher(handler, new RecordingToolExecutor([]), NewState(),
+            configureContext: created =>
+            {
+                context = created;
+                created.Diagnostic = new CascadeDiagnosticCapture("session-1",
+                    DateTimeOffset.UtcNow.AddMinutes(10), TimeProvider.System, logger);
+            });
+        context!.SessionId = "resumed-session";
+
+        Assert.Equal("Restored.", await dispatcher.RunChatToolLoopAsync(CancellationToken.None));
+
+        Assert.Null(context.Diagnostic);
+        Assert.Empty(logger.Lines);
+    }
+
+    [Fact]
     public async Task RunChatToolLoopAsync_usesTheResumedExecutorInsteadOfTheProvisionalBinding()
     {
         var handler = new RoutingFoundryHandler()

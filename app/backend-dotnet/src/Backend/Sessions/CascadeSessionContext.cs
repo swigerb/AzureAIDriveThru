@@ -40,4 +40,5 @@ internal sealed class CascadeSessionContext
     public required IToolExecutor ToolExecutor { get; set; }
     public required SessionIdentifiers Identifiers { get; set; }
     public Task<WebSocketFrame?>? PendingFirstFrameTask { get; set; }
+    public CascadeDiagnosticCapture? Diagnostic { get; set; }
 }

@@ -19,12 +19,19 @@ internal sealed class CascadeToolCallDispatcher(
     FoundryChatClient chatClient,
     IReadOnlyList<JsonObject> toolDefinitions)
 {
-    private async Task<JsonObject> CallChatCompletionAsync(CancellationToken turnCt) =>
-        await CascadeRateLimit.WithRetryAsync(
+    private async Task<JsonObject> CallChatCompletionAsync(CancellationToken turnCt)
+    {
+        if (context.Diagnostic is { } diagnostic && diagnostic.SessionId != context.SessionId)
+        {
+            context.Logger.LogWarning("Synthetic cascade diagnostics disabled: session binding changed.");
+            context.Diagnostic = null;
+        }
+        return await CascadeRateLimit.WithRetryAsync(
             rateLimitSettings,
-            () => chatClient.CompleteAsync(context.State.Messages, context.State.Deployment, toolDefinitions, turnCt),
+            () => chatClient.CompleteAsync(context.State.Messages, context.State.Deployment, toolDefinitions, turnCt, context.Diagnostic),
             "chat completion", context.NotifyClientAsync, context.SessionId, context.Logger, turnCt,
             context.TimeProvider).ConfigureAwait(false);
+    }
 
     private async Task ExecuteToolCallAsync(JsonObject toolCall, string previousItemId, CancellationToken turnCt)
     {
