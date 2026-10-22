@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import shutil
 import sys
 from decimal import Decimal
@@ -201,6 +202,136 @@ def test_real_tools_replace_omissions_instead_of_renaming_with_modify(session, d
     assert [drink for meal in meals for drink in meal["components"]] == ["Large Mountain Dew Baja Blast"] * quantity
     assert [upgrade for meal in meals for upgrade in meal["componentUpcharges"]] == [0.5] * quantity
     assert summary(session)["total"] == 9.49 * quantity
+
+
+def test_real_tool_text_exposes_current_rewards_without_changing_client_ticket(session):
+    import tools
+
+    def update(action, item):
+        return asyncio.run(tools.update_order({
+            "action": action, "item_name": item, "size": "Standard", "quantity": 1,
+        }, session))
+
+    def get_order():
+        return asyncio.run(tools.get_order({}, session))
+
+    def model_snapshot(result):
+        match = re.search(r"\[SERVER-AUTHORITATIVE FICTIONAL REWARDS STATE: (.*?)\]", result.to_text())
+        assert match, "Tool text should include the server rewards snapshot."
+        return json.loads(match.group(1))
+
+    def assert_no_codes(result):
+        assert "DEMO-PLUS" not in result.to_text()
+        assert "DEMO-NEW" not in result.to_text()
+        assert "demoCodes" not in result.to_text()
+
+    unchecked = get_order()
+    unchecked_snapshot = model_snapshot(unchecked)
+    assert not unchecked_snapshot["checkedIn"]
+    assert not unchecked_snapshot["canRedeem"]
+    assert not unchecked_snapshot["eligibleItemInOrder"]
+    assert_no_codes(unchecked)
+    assert unchecked.to_client_text() == orders.get_order_summary_json(session)
+    assert summary(session)["rewardsDemo"]["demoCodes"]
+
+    update("add", "Cinnamon Twists")
+    orders.rewards_action(session, "check_in", "DEMO-NEW")
+    insufficient = get_order()
+    insufficient_snapshot = model_snapshot(insufficient)
+    assert insufficient_snapshot["eligibleItemInOrder"]
+    assert not insufficient_snapshot["canRedeem"]
+    assert insufficient_snapshot["balance"] == 0
+    assert_no_codes(insufficient)
+
+
+def test_real_tool_text_guides_eligible_reward_and_clears_stale_eligibility(session):
+    import tools
+
+    def update(action, item):
+        return asyncio.run(tools.update_order({
+            "action": action, "item_name": item, "size": "Standard", "quantity": 1,
+        }, session))
+
+    def get_order():
+        return asyncio.run(tools.get_order({}, session))
+
+    def model_snapshot(result):
+        match = re.search(r"\[SERVER-AUTHORITATIVE FICTIONAL REWARDS STATE: (.*?)\]", result.to_text())
+        assert match, "Tool text should include the server rewards snapshot."
+        return json.loads(match.group(1))
+
+    def assert_no_codes(result):
+        assert "DEMO-PLUS" not in result.to_text()
+        assert "DEMO-NEW" not in result.to_text()
+        assert "demoCodes" not in result.to_text()
+
+    orders.rewards_action(session, "check_in", "DEMO-PLUS")
+    update("add", "Crunchy Taco")
+    eligible_result = update("add", "Cinnamon Twists")
+    eligible_snapshot = model_snapshot(eligible_result)
+    assert eligible_snapshot["canRedeem"]
+    assert eligible_snapshot["eligibleItemInOrder"]
+    assert eligible_snapshot["rewardItem"] == "Cinnamon Twists"
+    assert not eligible_snapshot["redeemed"]
+    assert "Use reward" in eligible_result.to_text()
+    assert "do not redeem automatically" in eligible_result.to_text()
+    assert eligible_result.to_client_text() == orders.get_order_summary_json(session)
+    assert summary(session)["rewardsDemo"]["demoCodes"]
+    assert_no_codes(eligible_result)
+
+    orders.rewards_action(session, "redeem")
+    reserved = get_order()
+    reserved_snapshot = model_snapshot(reserved)
+    assert reserved_snapshot["redeemed"]
+    assert reserved_snapshot["discount"] == 1.49
+    assert reserved_snapshot["postDiscountTotal"] == summary(session)["totalDisplay"]
+    assert_no_codes(reserved)
+
+    removed = update("remove", "Cinnamon Twists")
+    removed_snapshot = model_snapshot(removed)
+    assert removed_snapshot["eligibleItemInOrder"]
+    assert removed_snapshot["canRedeem"]
+    assert removed_snapshot["rewardItem"] == "Crunchy Taco"
+    assert not removed_snapshot["redeemed"]
+    assert removed_snapshot["discount"] == 0
+    assert removed_snapshot["balance"] == 500
+    assert_no_codes(removed)
+
+    orders.reset_order(session)
+    reset_result = get_order()
+    reset_snapshot = model_snapshot(reset_result)
+    assert not reset_snapshot["eligibleItemInOrder"]
+    assert not reset_snapshot["redeemed"]
+    assert reset_snapshot["balance"] == 500
+    assert_no_codes(reset_result)
+
+    orders.rewards_action(session, "check_in", "DEMO-NEW")
+    update("add", "Crunchy Taco")
+    orders.rewards_action(session, "complete")
+    completed = get_order()
+    completed_snapshot = model_snapshot(completed)
+    assert completed_snapshot["completed"]
+    assert not completed_snapshot["canRedeem"]
+    assert completed_snapshot["pointsAwarded"] == 19
+    assert completed_snapshot["balance"] == 519
+    assert_no_codes(completed)
+
+
+def test_real_tool_text_is_unchanged_for_personas_without_rewards():
+    import tools
+
+    catalog = PersonaCatalog.load()
+    neutral_session = orders.create_session(catalog.get(catalog.default_persona_id))
+    try:
+        result = asyncio.run(tools.get_order({}, neutral_session))
+        expected = (
+            orders.get_grouped_order_for_readback(neutral_session)
+            + orders.get_happy_hour_banner_for_session(neutral_session)
+        )
+        assert result.to_text() == expected
+        assert "SERVER-AUTHORITATIVE FICTIONAL REWARDS STATE" not in result.to_text()
+    finally:
+        orders.delete_session(neutral_session)
 
 
 def test_rendered_taco_prompt_and_tool_schema_explain_actual_customization_contract():
