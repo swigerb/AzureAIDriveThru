@@ -60,7 +60,7 @@ public sealed class CascadeDiagnosticCaptureTests
         Assert.Null(Claim(gate, logger, marker: "wrong"));
         Assert.Null(Claim(gate, logger, entra: false));
         Assert.Null(Claim(gate, logger, authenticated: false));
-        Assert.Null(Claim(gate, logger, persona: "sonic"));
+        Assert.Null(Claim(gate, logger, persona: "test-other"));
         Assert.Null(Claim(gate, logger, pipeline: "realtime"));
         Assert.NotNull(Claim(gate, logger));
         Assert.Null(Claim(gate, logger));
