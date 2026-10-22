@@ -194,11 +194,16 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
     public async Task RunTurnAndSpeakAsync(CancellationToken turnCt)
     {
         var responseId = MiddleTierItemIds.NewId();
+        if (context.Diagnostic is { } diagnostic)
+        {
+            diagnostic.ResponseId = responseId;
+        }
         await CascadeProcessor.SendTextAsync(context.BrowserSocket, new JsonObject
         {
             ["type"] = "response.created",
             ["response"] = new JsonObject { ["id"] = responseId },
         }.ToJsonString(), turnCt, context.CancellationToken).ConfigureAwait(false);
+        context.Diagnostic?.Emission("response.created");
 
         string finalText;
         try
@@ -214,6 +219,7 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         }
         catch (OperationCanceledException) when (turnCt.IsCancellationRequested)
         {
+            context.Diagnostic?.Emission("cancelled");
             throw;
         }
         catch (FoundryHttpException ex) when (ex.IsContentFilter)
@@ -264,10 +270,13 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
             ["response_id"] = responseId,
             ["delta"] = finalText,
         }.ToJsonString(), turnCt, context.CancellationToken).ConfigureAwait(false);
+        context.Diagnostic?.Emission("transcript.sent");
         context.SessionManager?.RecordTurn(context.SessionId, "assistant", finalText);
         try
         {
+            context.Diagnostic?.Emission("tts.started");
             await context.AudioTurnPipeline.SpeakAsync(finalText, responseId, turnCt).ConfigureAwait(false);
+            context.Diagnostic?.Emission("tts.completed");
             return true;
         }
         catch (CascadeRateLimitExhaustedException)
@@ -276,6 +285,7 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         }
         catch (OperationCanceledException) when (turnCt.IsCancellationRequested)
         {
+            context.Diagnostic?.Emission("cancelled");
             throw;
         }
         catch (Exception ex)
@@ -289,8 +299,9 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
 
     /// <summary>The Realtime API's <c>response.done</c> shape: the frontend renders the assistant's
     /// line from <c>output[].content[].transcript</c>, exactly as it does for realtime turns.</summary>
-    private Task SendResponseDoneAsync(string responseId, string? finalText, CancellationToken turnCt) =>
-        CascadeProcessor.SendTextAsync(context.BrowserSocket, new JsonObject
+    private async Task SendResponseDoneAsync(string responseId, string? finalText, CancellationToken turnCt)
+    {
+        await CascadeProcessor.SendTextAsync(context.BrowserSocket, new JsonObject
         {
             ["type"] = "response.done",
             ["response"] = new JsonObject
@@ -306,7 +317,9 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
                         ["content"] = new JsonArray(new JsonObject { ["type"] = "audio", ["transcript"] = finalText }),
                     }),
             },
-        }.ToJsonString(), turnCt, context.CancellationToken);
+        }.ToJsonString(), turnCt, context.CancellationToken).ConfigureAwait(false);
+        context.Diagnostic?.Emission("response.done");
+    }
 
     private void ReleaseUntranscribedAudio(byte[] turnAudio)
     {

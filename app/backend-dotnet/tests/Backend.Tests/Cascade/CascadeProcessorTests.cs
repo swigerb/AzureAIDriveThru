@@ -730,8 +730,10 @@ public sealed class CascadeProcessorTests
     /// during turn 1's tool call, then lets a SECOND guest turn run to completion, and asserts the
     /// second turn's own chat-completion request body contains no trace of `call_1` at all --
     /// proving the whole cancelled round was truncated out of history rather than left dangling.</summary>
-    [Fact]
-    public async Task RunSessionAsync_BargeInDuringToolCall_ThenNextTurnSucceeds_WithNoOrphanedToolCallInHistory()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RunSessionAsync_BargeInDuringToolCall_ThenNextTurnSucceeds_WithNoOrphanedToolCallInHistory(bool diagnose)
     {
         var (persona, loader) = LoadDeltaFixture();
         var handler = new RoutingFoundryHandler()
@@ -774,7 +776,11 @@ public sealed class CascadeProcessorTests
             ],
             ReceiveDelay);
 
-        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-orphan-truncation", TestContext.Current.CancellationToken);
+        var diagnosticLogger = new CascadeDiagnosticCaptureTests.RecordingLogger();
+        var diagnostic = diagnose ? new CascadeDiagnosticCapture("sess-orphan-truncation",
+            DateTimeOffset.UtcNow.AddMinutes(10), TimeProvider.System, diagnosticLogger) : null;
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-orphan-truncation",
+            TestContext.Current.CancellationToken, diagnostic: diagnostic);
 
         Assert.DoesNotContain(logger.Entries, e => e.Level >= LogLevel.Warning);
 
@@ -803,6 +809,23 @@ public sealed class CascadeProcessorTests
         // Turn 1's transcript was already committed before the barge-in, so its audio must not be
         // replayed into turn 2's upload (both turns' own audio is the same size here).
         Assert.Equal(WavData(handler.TranscribeRequestBodies[0]).Length, WavData(handler.TranscribeRequestBodies[1]).Length);
+        if (diagnose)
+        {
+            var events = diagnosticLogger.Lines.Select(line => JsonNode.Parse(line)!).ToList();
+            var created = events.Where(e => (string?)e["stage"] == "response.created").ToList();
+            Assert.Equal(3, created.Count);
+            Assert.Equal(3, created.Select(e => (string?)e["responseId"]).Distinct().Count());
+            Assert.Equal(frames.Where(f => (string?)f["type"] == "response.created")
+                    .Select(f => (string?)f["response"]?["id"]),
+                created.Select(e => (string?)e["responseId"]));
+            var cancelled = Assert.Single(events, e => (string?)e["stage"] == "cancelled");
+            Assert.Equal((string?)created[1]["responseId"], (string?)cancelled["responseId"]);
+            Assert.True(events.IndexOf(cancelled) < events.IndexOf(created[2]));
+            Assert.Equal(new[] { (string?)created[0]["responseId"], (string?)created[2]["responseId"] },
+                events.Where(e => (string?)e["stage"] == "response.done").Select(e => (string?)e["responseId"]));
+            Assert.Equal(new[] { (string?)created[0]["responseId"], (string?)created[2]["responseId"] },
+                events.Where(e => (string?)e["stage"] == "tts.started").Select(e => (string?)e["responseId"]));
+        }
     }
 
     /// <summary>Live repro (cascade post-fix runs): "No, [0.48 s] that'll be it" split into two

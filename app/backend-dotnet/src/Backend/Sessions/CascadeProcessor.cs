@@ -170,10 +170,12 @@ internal sealed class CascadeProcessor : IPipelineProcessor
         ResolvedModel resolvedModel,
         string sessionId,
         CancellationToken cancellationToken,
-        string? menuMode = null)
+        string? menuMode = null,
+        CascadeDiagnosticCapture? diagnostic = null)
     {
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var context = CreateSessionContext(browserSocket, persona, resolvedModel, sessionId, linkedCts, menuMode);
+        context.Diagnostic = diagnostic;
         var handler = new CascadeClientMessageHandler(context);
         await StartSessionAsync(context, handler).ConfigureAwait(false);
         await ReceiveSessionAsync(context, handler).ConfigureAwait(false);
