@@ -64,9 +64,12 @@ public sealed class LiveAzureOrderCompletionTests
         })();
         """;
 
-    // Phases, in order: guest orders a burger; a tool round runs and the assistant speaks;
-    // guest closes ("...be it"/"that's all"); a tool round (get_order) runs; the assistant
-    // speaks a completed closing response with audio that reads back the total or the carhop.
+    // Phases, in order: guest orders a burger; the assistant speaks; guest closes ("...be it" /
+    // "that's all"); the assistant speaks a completed closing response with audio that reads back
+    // the total or the carhop. At least one order tool round must land between the burger and the
+    // closing. The model sometimes defers update_order until the guest closes, so the tool round
+    // is not pinned to a specific turn. Returns "done", "blocked:<reason>" when the Realtime API
+    // ended a turn incomplete (for example content_filter), or false while still in progress.
     private const string OrderCompletedScript = """
         () => {
           const events = window.__liveOrderEvents ?? [];
@@ -74,21 +77,22 @@ public sealed class LiveAzureOrderCompletionTests
             for (let i = from + 1; i < events.length; i++) { if (predicate(events[i])) return i; }
             return -1;
           };
+          const incomplete = events.find(e => e.type === 'response.done' && e.status === 'incomplete');
+          if (incomplete) return 'blocked:' + (incomplete.statusDetails?.reason ?? 'unknown');
           const hasAudio = id => events.some(e => e.type === 'response.audio.delta' && e.responseId === id);
           const spoken = e => e.type === 'response.done' && e.status === 'completed' && (e.transcript ?? '').trim() !== '' && hasAudio(e.responseId);
           const guest = re => e => e.type === 'conversation.item.input_audio_transcription.completed' && re.test(e.transcript ?? '');
           const tool = e => e.type === 'extension.middle_tier_tool_response';
           const order = after(-1, guest(/burger/i));
           if (order < 0) return false;
-          const orderTool = after(order, tool);
-          if (orderTool < 0) return false;
-          const ask = after(orderTool, spoken);
+          const ask = after(order, spoken);
           if (ask < 0) return false;
           const close = after(ask, guest(/be it|that'?s (it|all)/i));
           if (close < 0) return false;
-          const closeTool = after(close, tool);
-          if (closeTool < 0) return false;
-          return after(closeTool, e => spoken(e) && /carhop|right out|total/i.test(e.transcript)) >= 0;
+          const closing = after(close, e => spoken(e) && /carhop|right out|total/i.test(e.transcript));
+          if (closing < 0) return false;
+          const orderTool = after(order, tool);
+          return orderTool >= 0 && orderTool < closing ? 'done' : false;
         }
         """;
 
@@ -189,8 +193,18 @@ public sealed class LiveAzureOrderCompletionTests
                     // The model's wording and turn segmentation vary between runs (for example
                     // it may offer a combo instead of asking "anything else", and "No, that'll be
                     // it" may arrive as two transcripts), so assert the turn structure instead.
-                    await page.WaitForFunctionAsync(OrderCompletedScript, null,
-                        new PageWaitForFunctionOptions { Timeout = 180_000 });
+                    var outcome = await (await page.WaitForFunctionAsync(OrderCompletedScript, null,
+                        new PageWaitForFunctionOptions { Timeout = 180_000 })).JsonValueAsync<string>();
+                    if (outcome.StartsWith("blocked:", StringComparison.Ordinal))
+                    {
+                        // The prerecorded guest cannot rephrase, so the order cannot finish. The
+                        // app must still hand the mic back with the rephrase notice rather than
+                        // leaving the guest in silence.
+                        await page.GetByText("Please say it another way", new() { Exact = false })
+                            .WaitForAsync(new LocatorWaitForOptions { Timeout = 10_000 });
+                        Assert.Fail($"The Realtime API ended a guest turn incomplete ({outcome}); the app showed the rephrase notice.");
+                    }
+
                     await page.WaitForFunctionAsync(
                         """
                         () => {
