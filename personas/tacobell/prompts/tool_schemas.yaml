@@ -11,13 +11,13 @@ tools:
       additionalProperties: false
   - name: "update_order"
     type: "function"
-    description: "Add, remove or modify ONE demo menu item. Prices are computed by the server."
+    description: "Add or remove ONE demo menu item; modify ONLY changes the size of an existing exact item. To change shells or omissions, get_order, remove the OLD exact line, add the replacement and restore its included drink. Never modify the new customized name. Prices are computed by the server."
     parameters:
       type: "object"
       properties:
         action: { type: "string", enum: ["add", "remove", "modify"] }
-        item_name: { type: "string", description: "Exact menu name; free omissions in parentheses." }
-        size: { type: "string", description: "Standard for food, or a drink size confirmed by search." }
+        item_name: { type: "string", description: "For remove/modify use the exact EXISTING ticket name, including its old omissions. For add use the menu name with all agreed free omissions in parentheses." }
+        size: { type: "string", description: "Standard for food/combos, including remove. For drink add/modify use a size confirmed by search; remove uses the existing ticket size." }
         quantity: { type: "integer" }
       required: ["action", "item_name", "size", "quantity"]
       additionalProperties: false

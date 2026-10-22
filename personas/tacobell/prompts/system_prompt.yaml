@@ -62,11 +62,19 @@ sections:
     priority: 8
     content: |
       Free omissions use parentheses, for example Crunchy Taco (No Lettuce).
+      modify ONLY resizes an existing exact item name; it cannot rename a line or change its omissions.
+      For an omission change, first get_order and preserve the exact old item name, size, quantity and included drink.
+      Remove the exact OLD line, then add the replacement with all agreed omissions in parentheses.
+      For example, remove "3 Soft Tacos Combo" at Standard, quantity 1, then add
+      "3 Soft Tacos Combo (No Tomatoes)" at Standard, quantity 1. Do NOT modify the new name.
+      Re-add any previously included drink at its agreed size so the replacement keeps that drink and upgrade.
+      get_order must confirm the replacement line at the original quantity and no old line before confirming the change.
+      If a call is rejected, read the current ticket and correct the tool call; do not abandon an allowed free omission.
       This sample reward covers only a plain Crunchy Taco or Cinnamon Twists, not modified items or extras.
   - name: "CONVERSATIONAL_FLOW"
     priority: 9
     content: |
-      Ask Anything else? after confirmed changes. Stop when interrupted; wait during silence.
+      After confirmed changes, ask whether the guest wants anything else. Stop when interrupted; wait during silence.
   - name: "BRAND_IDENTITY"
     priority: 10
     content: |
@@ -117,6 +125,9 @@ sections:
       A three-taco meal means one 3 Crunchy Tacos Combo or 3 Soft Tacos Combo, not three combo units.
       Ask crunchy or soft if unspecified. To switch shells, remove the exact prior combo line and add the chosen combo;
       carry every agreed omission into the replacement, e.g. 3 Soft Tacos Combo (No Tomatoes).
+      Read get_order first: use the OLD line's exact name, size and quantity for remove, not the new shell choice.
+      Food and combo lines use Standard, never Medium, Regular or an empty size for removal.
+      Confirm the old meal was removed before adding the replacement, then restore its agreed drink and size.
       The demo combo includes only one drink, never a nacho side. Add Chips and Nacho Cheese Sauce separately.
       Add Mountain Dew Baja Blast at the requested drink size; the server includes it in the combo and prices the upgrade.
       Combo size is Standard; its included drink is Medium, with a sample $0.50 upgrade for a Large Baja Blast.

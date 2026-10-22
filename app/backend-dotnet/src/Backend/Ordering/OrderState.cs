@@ -694,19 +694,28 @@ internal sealed class OrderState
 
     private void HandleRemove(string itemName, string size, int quantity, OrderUpdateResult result)
     {
-        var existingIndex = _items.FindIndex(oi => oi.Item == itemName && oi.Size == size);
-        if (existingIndex != -1)
+        var remaining = quantity;
+        var matched = false;
+        // Component-upcharge pricing can split identical meals into per-unit lines.
+        for (var index = 0; index < _items.Count;)
         {
-            if (_items[existingIndex].Quantity > quantity)
+            var item = _items[index];
+            if (item.Item != itemName || item.Size != size)
             {
-                _items[existingIndex].Quantity -= quantity;
+                index++;
+                continue;
             }
+            matched = true;
+            var removed = Math.Min(remaining, item.Quantity);
+            item.Quantity -= removed;
+            remaining -= removed;
+            if (item.Quantity == 0)
+                _items.RemoveAt(index);
             else
-            {
-                _items.RemoveAt(existingIndex);
-            }
-            return;
+                index++;
+            if (remaining <= 0) break;
         }
+        if (matched) return;
 
         // #179/PR #184 round 2: itemName may be the exact size (the raw-line lookup just failed
         // above) -- or, like the live bug report, currently filling a combo's side/drink slot via

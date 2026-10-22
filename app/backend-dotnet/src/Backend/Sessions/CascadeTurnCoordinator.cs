@@ -204,6 +204,8 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         try
         {
             finalText = await context.ToolCallDispatcher.RunChatToolLoopAsync(turnCt).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(finalText))
+                throw new InvalidOperationException("Chat tool loop returned no spoken answer; the ticket may have changed.");
         }
         catch (CascadeRateLimitExhaustedException)
         {
