@@ -1102,6 +1102,36 @@ public sealed class CascadeProcessorTests
         Assert.Equal("failed", guestDone["response"]!["status"]!.GetValue<string>());
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData(" \n\t")]
+    public async Task RunSessionAsync_EmptyAnswer_SendsFailedResponseDoneWithoutRetryOrTts(string answer)
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Welcome!")
+            .EnqueueSpeech([1, 2])
+            .EnqueueTranscript("add chips and a large drink")
+            .EnqueueChatMessage("assistant", answer);
+        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, logger: new RecordingLogger());
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+        var socket = new DelayedFakeWebSocket(
+            [
+                (AppendFrame(Pcm16(20000, count: 10)), WebSocketMessageType.Text),
+                (AppendFrame(Pcm16(0, count: 4800)), WebSocketMessageType.Text),
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay);
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-empty-answer", TestContext.Current.CancellationToken);
+        var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
+        var done = frames.Last(f => f["type"]!.GetValue<string>() == "response.done")["response"]!;
+        Assert.Equal("failed", done["status"]!.GetValue<string>());
+        Assert.Empty(done["output"]!.AsArray());
+        Assert.Contains(frames, f => (string?)f["type"] == "error");
+        Assert.Equal(2, handler.ChatRequestBodies.Count);
+        Assert.Single(handler.SpeakRequestBodies);
+    }
+
     /// <summary>Live regression: Foundry rejected a cascade prompt with 400 content_filter and the
     /// guest only got a generic failure (no rephrase notice). Must match the Realtime API's
     /// filtered-turn shape, with no automatic retry.</summary>

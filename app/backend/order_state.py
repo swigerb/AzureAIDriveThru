@@ -1252,15 +1252,21 @@ class OrderState:
                     )
 
         elif action == "remove":
-            existing_item_index = next((index for index, order_item in enumerate(order_state) if order_item.item == item_name and order_item.size == size), -1)
-            if existing_item_index != -1:
-                if order_state[existing_item_index].quantity > quantity:
-                    order_state[existing_item_index].quantity -= quantity
-                    logger.debug("Decreased quantity for %s in session %s", display, session_id)
-                else:
-                    order_state.pop(existing_item_index)
-                    logger.debug("Removed %s from session %s", display, session_id)
-            else:
+            remaining = quantity
+            matched = False
+            # Component-upcharge pricing can split identical meals into per-unit lines.
+            for order_item in list(order_state):
+                if order_item.item != item_name or order_item.size != size:
+                    continue
+                matched = True
+                removed = min(remaining, order_item.quantity)
+                order_item.quantity -= removed
+                remaining -= removed
+                if order_item.quantity == 0:
+                    order_state.remove(order_item)
+                if remaining <= 0:
+                    break
+            if not matched:
                 # #179/PR #184 round 2: *item_name* may be the exact size (`order_item.size ==
                 # size` just failed above) -- or, like the live bug report, currently filling a
                 # combo's side/drink slot via absorption, which has no raw line to match AT ALL

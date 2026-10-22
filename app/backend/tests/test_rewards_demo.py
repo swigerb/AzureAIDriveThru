@@ -172,6 +172,52 @@ def test_customized_meal_late_sweet_reward_and_exact_totals(session):
     assert summary(session)["rewardsDemo"]["pointsAwarded"] == 119
 
 
+@pytest.mark.parametrize("drink_before_omission", [False, True])
+@pytest.mark.parametrize("quantity", [1, 2])
+def test_real_tools_replace_omissions_instead_of_renaming_with_modify(session, drink_before_omission, quantity):
+    import tools
+
+    def update(action, item, size="Standard"):
+        return asyncio.run(tools.update_order({
+            "action": action, "item_name": item, "size": size, "quantity": quantity,
+        }, session))
+
+    update("add", "3 Crunchy Tacos Combo")
+    update("remove", "3 Crunchy Tacos Combo")
+    update("add", "3 Soft Tacos Combo")
+    if drink_before_omission:
+        update("add", "Mountain Dew Baja Blast", "Large")
+    rejected = update("modify", "3 Soft Tacos Combo (No Tomatoes)")
+    assert rejected.text["reason"] == "not_in_order"
+    assert all(meal["item"] == "3 Soft Tacos Combo" for meal in summary(session)["items"])
+    assert sum(meal["quantity"] for meal in summary(session)["items"]) == quantity
+    update("remove", "3 Soft Tacos Combo")
+    assert summary(session)["items"] == []
+    update("add", "3 Soft Tacos Combo (No Tomatoes)")
+    update("add", "Mountain Dew Baja Blast", "Large")
+    meals = summary(session)["items"]
+    assert sum(meal["quantity"] for meal in meals) == quantity
+    assert all(meal["item"] == "3 Soft Tacos Combo (No Tomatoes)" and meal["price"] == 9.49 for meal in meals)
+    assert [drink for meal in meals for drink in meal["components"]] == ["Large Mountain Dew Baja Blast"] * quantity
+    assert [upgrade for meal in meals for upgrade in meal["componentUpcharges"]] == [0.5] * quantity
+    assert summary(session)["total"] == 9.49 * quantity
+
+
+def test_rendered_taco_prompt_and_tool_schema_explain_actual_customization_contract():
+    from prompt_loader import PromptLoader
+
+    persona = PersonaCatalog.load().get("tacobell")
+    loader = PromptLoader(prompts_dir=persona.prompts_dir)
+    prompt = loader.get_system_prompt()
+    assert "modify ONLY resizes an existing exact item name" in prompt
+    assert 'remove "3 Soft Tacos Combo" at Standard, quantity 1' in prompt
+    assert '"3 Soft Tacos Combo (No Tomatoes)" at Standard, quantity 1' in prompt
+    assert "Re-add any previously included drink at its agreed size" in prompt
+    update = next(tool for tool in loader.get_tool_schemas() if tool["name"] == "update_order")
+    assert "modify ONLY changes the size" in update["description"]
+    assert "exact EXISTING ticket name" in update["parameters"]["properties"]["item_name"]["description"]
+
+
 def test_reward_reservation_keeps_its_item_and_releases_if_that_item_is_removed(session):
     add(session)
     orders.rewards_action(session, "check_in", "DEMO-PLUS")

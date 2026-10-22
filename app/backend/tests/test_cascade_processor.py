@@ -1012,6 +1012,22 @@ class RunChatToolLoopOrphanedToolCallTests(unittest.IsolatedAsyncioTestCase):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class RunTurnAndSpeakFailureTests(unittest.IsolatedAsyncioTestCase):
+    async def test_empty_or_whitespace_answer_is_failed_without_retry_or_tts(self):
+        for final_text in ["", " \n\t"]:
+            with self.subTest(final_text=final_text):
+                processor = _make_processor({})
+                processor._run_chat_tool_loop = AsyncMock(return_value=final_text)
+                processor._speak = AsyncMock()
+                ws = _make_mock_ws()
+                state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+                await processor._run_turn_and_speak(ws, "s1", state)
+                self.assertEqual(_sent_types(ws), ["response.created", "error", "response.done"])
+                done = ws.send_json.await_args_list[-1].args[0]["response"]
+                self.assertEqual(done["status"], "failed")
+                self.assertEqual(done["output"], [])
+                self.assertEqual(processor._run_chat_tool_loop.await_count, 1)
+                processor._speak.assert_not_awaited()
+
     async def test_non_429_chat_completion_failure_still_sends_a_failed_response_done(self):
         """Mutation-test seam: remove the `except Exception:` branch around
         `_run_chat_tool_loop` (or let it silently fall through) and `response.done` is never

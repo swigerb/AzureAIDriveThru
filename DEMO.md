@@ -55,7 +55,12 @@ If the session expires, the card hides stale balances and actions and shows only
 **Reconnect** with a fresh-session explanation. Reconnect without microphone permission,
 then enter a demo code again.
 
-### Post-deployment live-model acceptance (not yet executed)
+The model's `modify` action only resizes an existing exact item name. Shell or omission
+changes require reading the current ticket, removing the old exact line at its existing
+size, adding the replacement with all agreed omissions, and restoring any included drink
+at its agreed size. Check the resulting ticket before confirming the change.
+
+### Post-deployment live-model acceptance
 
 After deployment **and explicit authorization for paid model/audio calls**, run the same
 conversation above against each deployed supported backend/pipeline using a fresh session
@@ -69,7 +74,7 @@ retain a single Large Baja Blast inside the Standard meal with a $0.50 upgrade, 
 chips as a separate side. After the first spoken full-ticket closing/$12.94 total, request
 the forgotten twists before completion. Require the revised full-ticket closing/$14.55
 total, a proactive eligible-demo-reward offer, a single $1.49 twists discount after the
-real panel's Redeem click, and a final spoken full-ticket closing/$12.94 total consistent
+real panel's **Use reward** click, and a final spoken full-ticket closing/$12.94 total consistent
 with the screen. Complete once: 119 earned points, 369 remaining. Repeat completion and
 verify no second discount/debit/award. Capture actual tool evidence and screenshots at
 each boundary; report any recognition, tool-selection, spoken-closing or ledger mismatch

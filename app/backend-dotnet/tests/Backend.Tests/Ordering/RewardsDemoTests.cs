@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Backend.Ordering;
 using Backend.Personas;
@@ -147,6 +148,45 @@ public sealed class RewardsDemoTests
         order.RewardsAction("complete", null);
         Assert.Equal(369, Rewards(order)["balance"]!.GetValue<int>());
         Assert.Equal(119, Rewards(order)["pointsAwarded"]!.GetValue<int>());
+    }
+
+    [Theory]
+    [InlineData(false, 1)]
+    [InlineData(true, 1)]
+    [InlineData(false, 2)]
+    [InlineData(true, 2)]
+    public async Task RealToolsReplaceOmissionsInsteadOfRenamingWithModify(bool drinkBeforeOmission, int quantity)
+    {
+        var persona = PersonaCatalog.Load().Get("tacobell");
+        var order = NewOrder();
+        var executor = new OrderToolExecutor(order, PersonaOrderFactory.GetMenuCatalog(persona), null, 10, 25);
+        Task<ToolResult> Update(string action, string item, string size = "Standard") =>
+            executor.ExecuteAsync("update_order", JsonSerializer.SerializeToElement(new
+            {
+                action, item_name = item, size, quantity,
+            }), TestContext.Current.CancellationToken);
+        await Update("add", "3 Crunchy Tacos Combo");
+        await Update("remove", "3 Crunchy Tacos Combo");
+        await Update("add", "3 Soft Tacos Combo");
+        if (drinkBeforeOmission) await Update("add", "Mountain Dew Baja Blast", "Large");
+        var rejected = await Update("modify", "3 Soft Tacos Combo (No Tomatoes)");
+        using var payload = JsonDocument.Parse(rejected.ToText());
+        Assert.Equal("not_in_order", payload.RootElement.GetProperty("reason").GetString());
+        Assert.All(order.Items, meal => Assert.Equal("3 Soft Tacos Combo", meal.Item));
+        Assert.Equal(quantity, order.Items.Sum(meal => meal.Quantity));
+        await Update("remove", "3 Soft Tacos Combo");
+        Assert.Empty(order.Items);
+        await Update("add", "3 Soft Tacos Combo (No Tomatoes)");
+        await Update("add", "Mountain Dew Baja Blast", "Large");
+        Assert.Equal(quantity, order.Items.Sum(meal => meal.Quantity));
+        Assert.All(order.Items, meal =>
+        {
+            Assert.Equal("3 Soft Tacos Combo (No Tomatoes)", meal.Item);
+            Assert.Equal(9.49m, meal.Price);
+        });
+        Assert.Equal(Enumerable.Repeat("Large Mountain Dew Baja Blast", quantity), order.Items.SelectMany(meal => meal.Components));
+        Assert.Equal(Enumerable.Repeat(0.5m, quantity), order.Items.SelectMany(meal => meal.ComponentUpcharges));
+        Assert.Equal(9.49m * quantity, order.Summary.Total);
     }
 
     [Fact]

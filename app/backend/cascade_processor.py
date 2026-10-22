@@ -971,6 +971,8 @@ class CascadeProcessor:
 
         try:
             final_text = await self._run_chat_tool_loop(ws, session_id, state)
+            if not final_text.strip():
+                raise ValueError("Chat tool loop returned no spoken answer; the ticket may have changed.")
         except CascadeRateLimitExhausted:
             await ws.send_json(_completed_response_done(response_id, ""))
             return
