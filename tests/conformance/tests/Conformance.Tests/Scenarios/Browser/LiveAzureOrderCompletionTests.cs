@@ -49,6 +49,14 @@ public sealed class LiveAzureOrderCompletionTests
                     record.status = response.status ?? '';
                     record.statusDetails = response.status_details ?? null;
                     record.outputTypes = (response.output ?? []).map(item => item.type ?? '');
+                    const usage = response.usage ?? null;
+                    record.usage = usage ? {
+                      input: usage.input_tokens ?? null,
+                      output: usage.output_tokens ?? null,
+                      inputText: usage.input_token_details?.text_tokens ?? null,
+                      inputAudio: usage.input_token_details?.audio_tokens ?? null,
+                      inputCached: usage.input_token_details?.cached_tokens ?? null,
+                    } : null;
                     record.transcript = (response.output ?? [])
                       .flatMap(item => item.content ?? [])
                       .map(part => part.transcript ?? '')
@@ -61,6 +69,14 @@ public sealed class LiveAzureOrderCompletionTests
               return socket;
             }
           });
+          let noticeShown = false;
+          setInterval(() => {
+            const shown = /say it another way/i.test(document.body?.innerText ?? '');
+            if (shown && !noticeShown) {
+              window.__liveOrderEvents.push({ type: 'ui.rephrase_notice', t: Math.round(performance.now()) });
+            }
+            noticeShown = shown;
+          }, 200);
         })();
         """;
 
@@ -70,15 +86,23 @@ public sealed class LiveAzureOrderCompletionTests
     // closing. The model sometimes defers update_order until the guest closes, so the tool round
     // is not pinned to a specific turn. Returns "done", "blocked:<reason>" when the Realtime API
     // ended a turn incomplete (for example content_filter), or false while still in progress.
+    // With rephrase=true the guest audio carries a benign alternate close ("That's all, thank
+    // you.") after the first close. A blocked turn must then be followed by the rephrase notice,
+    // that alternate guest turn, and a spoken closing, which returns "recovered:<reason>". The
+    // harness never resends the blocked input itself.
     private const string OrderCompletedScript = """
-        () => {
+        (rephrase) => {
           const events = window.__liveOrderEvents ?? [];
           const after = (from, predicate) => {
             for (let i = from + 1; i < events.length; i++) { if (predicate(events[i])) return i; }
             return -1;
           };
-          const incomplete = events.find(e => e.type === 'response.done' && e.status === 'incomplete');
-          if (incomplete) return 'blocked:' + (incomplete.statusDetails?.reason ?? 'unknown');
+          const isIncomplete = e => e.type === 'response.done' && e.status === 'incomplete';
+          const incompletes = events.filter(isIncomplete);
+          const blocked = incompletes.length > 0 ? incompletes[0].statusDetails?.reason ?? 'unknown' : null;
+          if (blocked !== null && (!rephrase || incompletes.length > 1)) {
+            return 'blocked:' + blocked + (incompletes.length > 1 ? ':after-rephrase' : '');
+          }
           const hasAudio = id => events.some(e => e.type === 'response.audio.delta' && e.responseId === id);
           const spoken = e => e.type === 'response.done' && e.status === 'completed' && (e.transcript ?? '').trim() !== '' && hasAudio(e.responseId);
           const guest = re => e => e.type === 'conversation.item.input_audio_transcription.completed' && re.test(e.transcript ?? '');
@@ -87,12 +111,20 @@ public sealed class LiveAzureOrderCompletionTests
           if (order < 0) return false;
           const ask = after(order, spoken);
           if (ask < 0) return false;
-          const close = after(ask, guest(/be it|that'?s (it|all)/i));
+          let close;
+          if (blocked !== null) {
+            const notice = after(events.findIndex(isIncomplete), e => e.type === 'ui.rephrase_notice');
+            if (notice < 0) return false;
+            close = after(notice, guest(/that'?s all/i));
+          } else {
+            close = after(ask, guest(/be it|that'?s (it|all)/i));
+          }
           if (close < 0) return false;
           const closing = after(close, e => spoken(e) && /carhop|right out|total/i.test(e.transcript));
           if (closing < 0) return false;
           const orderTool = after(order, tool);
-          return orderTool >= 0 && orderTool < closing ? 'done' : false;
+          if (orderTool < 0 || orderTool >= closing) return false;
+          return blocked !== null ? 'recovered:' + blocked : 'done';
         }
         """;
 
@@ -193,13 +225,15 @@ public sealed class LiveAzureOrderCompletionTests
                     // The model's wording and turn segmentation vary between runs (for example
                     // it may offer a combo instead of asking "anything else", and "No, that'll be
                     // it" may arrive as two transcripts), so assert the turn structure instead.
-                    var outcome = await (await page.WaitForFunctionAsync(OrderCompletedScript, null,
+                    var rephrase = Environment.GetEnvironmentVariable("LIVE_CSHARP_ORDER_REPHRASE") == "1";
+                    var outcome = await (await page.WaitForFunctionAsync(OrderCompletedScript, rephrase,
                         new PageWaitForFunctionOptions { Timeout = 180_000 })).JsonValueAsync<string>();
+                    await page.EvaluateAsync("o => window.__liveOrderEvents.push({ type: 'harness.outcome', outcome: o })", outcome);
                     if (outcome.StartsWith("blocked:", StringComparison.Ordinal))
                     {
-                        // The prerecorded guest cannot rephrase, so the order cannot finish. The
-                        // app must still hand the mic back with the rephrase notice rather than
-                        // leaving the guest in silence.
+                        // Without a scripted rephrase the guest cannot recover, so the order cannot
+                        // finish. The app must still hand the mic back with the rephrase notice
+                        // rather than leaving the guest in silence.
                         await page.GetByText("Please say it another way", new() { Exact = false })
                             .WaitForAsync(new LocatorWaitForOptions { Timeout = 10_000 });
                         Assert.Fail($"The Realtime API ended a guest turn incomplete ({outcome}); the app showed the rephrase notice.");
