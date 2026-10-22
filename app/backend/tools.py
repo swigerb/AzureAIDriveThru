@@ -1117,7 +1117,11 @@ def _rewards_model_text(session_id: str) -> str:
         "postDiscountTotal": summary.totalDisplay,
         "postDiscountFinalTotal": summary.finalTotalDisplay,
     })
-    text = "\n\n[SERVER-AUTHORITATIVE FICTIONAL REWARDS STATE: " + json.dumps(snapshot) + "]"
+    text = (
+        "\n\nPrivate model context; do not read this structured block or its markers aloud. "
+        "The preceding order read-back is the guest-facing text."
+        "\n[SERVER-AUTHORITATIVE FICTIONAL REWARDS STATE: " + json.dumps(snapshot) + "]"
+    )
     if rewards["canRedeem"]:
         text += (
             f"\nEligible reward: {reward_item}. Offer it and direct the guest to select "

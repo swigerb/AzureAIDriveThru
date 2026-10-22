@@ -36,6 +36,10 @@ the guest is disconnected**, so a drop never extends the 5 minutes.
   `input_audio_buffer.speech_started`, and `conversation.item.input_audio_transcription.completed`.
 - **Not guest activity:** a continuously streaming mic, and the carhop's own speech, including the resume nudge.
 
+For cascade models, the local voice-activity detector's accepted speech start and a committed
+nonempty transcription refresh the same idle clock. Silent audio, unusable PCM and
+echo-suppressed playback do not refresh it; the 300-second limit is unchanged.
+
 `security.max_concurrent_sessions` counts attached sessions only. Held sessions don't use a slot.
 
 Resume works within one backend process only. That's why the Dockerfile runs one gunicorn worker and the ingress uses
