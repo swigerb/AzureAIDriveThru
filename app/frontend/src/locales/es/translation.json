@@ -19,7 +19,8 @@
         "resumeRejected": "No pudimos recuperar tu pedido. Toca el micrófono para empezar uno nuevo.",
         "superseded": "Este pedido continuó en otra ventana. Toca el micrófono para empezar de nuevo.",
         "rateLimited": "Un momento, por favor…",
-        "rateLimitedFinal": "Estamos un poco ocupados — ¿puedes repetirlo, por favor?"
+        "rateLimitedFinal": "Estamos un poco ocupados — ¿puedes repetirlo, por favor?",
+        "responseBlocked": "Lo siento, no pude procesar eso. Por favor, dilo de otra manera."
     },
     "history": {
         "transcriptHistory": "Historial de transcripciones",

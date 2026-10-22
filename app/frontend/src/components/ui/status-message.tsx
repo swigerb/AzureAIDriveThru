@@ -12,6 +12,7 @@ export type ConnectionNotice =
     | "superseded"
     | "rateLimited"
     | "rateLimitedFinal"
+    | "responseBlocked"
     | null;
 
 type Properties = {
@@ -28,17 +29,18 @@ const NOTICE_KEYS: Record<Exclude<ConnectionNotice, null>, string> = {
     resumeRejected: "status.resumeRejected",
     superseded: "status.superseded",
     rateLimited: "status.rateLimited",
-    rateLimitedFinal: "status.rateLimitedFinal"
+    rateLimitedFinal: "status.rateLimitedFinal",
+    responseBlocked: "status.responseBlocked"
 };
 
 // Notices that replace "conversation in progress" while the mic is live.
-const LIVE_NOTICES: ReadonlySet<ConnectionNotice> = new Set<ConnectionNotice>(["resumed", "rateLimited", "rateLimitedFinal"]);
+const LIVE_NOTICES: ReadonlySet<ConnectionNotice> = new Set<ConnectionNotice>(["resumed", "rateLimited", "rateLimitedFinal", "responseBlocked"]);
 
 export default memo(function StatusMessage({ isRecording, notice = null }: Properties) {
     const { t } = useTranslation();
     if (!isRecording) {
         return (
-            <p className="text mb-4 mt-6 text-sm text-muted-foreground" aria-live="polite">
+            <p className="text text-muted-foreground mt-6 mb-4 text-sm" aria-live="polite">
                 {t(notice ? NOTICE_KEYS[notice] : "status.notRecordingMessage")}
             </p>
         );
@@ -51,7 +53,7 @@ export default memo(function StatusMessage({ isRecording, notice = null }: Prope
                     <span key={index} className={`bar bar-${(index % 3) + 1}`} />
                 ))}
             </div>
-            <p className="mb-4 ml-2 mt-6 font-semibold text-primary">
+            <p className="text-primary mt-6 mb-4 ml-2 font-semibold">
                 {t(notice && LIVE_NOTICES.has(notice) ? NOTICE_KEYS[notice] : "status.conversationInProgress")}
             </p>
         </div>

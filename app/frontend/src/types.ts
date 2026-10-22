@@ -76,8 +76,11 @@ export type ResponseDone = {
         // Issues 247/262: "failed" when the backend's cascade turn pipeline hit an unrecoverable error
         // (e.g. a non-429 chat-completion failure, or a TTS failure) partway through a turn and
         // had to end it early with an empty `output` -- see _send_failed_response_done /
-        // SendFailedResponseDoneAsync in both backends. Absent/"completed" for the normal path.
+        // SendFailedResponseDoneAsync in both backends. "incomplete" is passed through from the
+        // Realtime API (for example `status_details.reason: "content_filter"`). Absent/"completed"
+        // for the normal path.
         status?: string;
+        status_details?: { type?: string; reason?: string } | null;
         output: { id: string; content?: { transcript: string; type: string }[] }[];
     };
 };

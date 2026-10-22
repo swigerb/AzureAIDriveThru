@@ -59,7 +59,12 @@ vi.mock("@/hooks/useAudioPlayer", () => ({ default: () => player }));
 const FIXTURE_PERSONA_INDEX = {
     default: "test-alpha",
     personas: [
-        { id: "test-alpha", displayName: "Test Alpha", logoUrl: "/personas/test-alpha/assets/logo.svg", theme: { light: { primary: "200 80% 50%", secondary: "40 60% 40%", background: "0 0% 98%", foreground: "0 0% 10%" } } }
+        {
+            id: "test-alpha",
+            displayName: "Test Alpha",
+            logoUrl: "/personas/test-alpha/assets/logo.svg",
+            theme: { light: { primary: "200 80% 50%", secondary: "40 60% 40%", background: "0 0% 98%", foreground: "0 0% 10%" } }
+        }
     ],
     backends: []
 };
@@ -159,5 +164,40 @@ describe("failed response.done recovery in the app", () => {
 
         expect(rec.unmute).toHaveBeenCalledTimes(1);
         expect(screen.getByText("Sure, one large tots.")).toBeInTheDocument();
+    });
+
+    // Live repro: the Realtime API blocked the guest's "No, that'll be it." with
+    // `status: "incomplete"`, `status_details.reason: "content_filter"` and no output. The mic
+    // stayed muted from response.created, so the session sat silent until the idle close.
+    const CONTENT_FILTERED_RESPONSE_DONE = {
+        type: "response.done",
+        response: { id: "resp_3", status: "incomplete", status_details: { type: "incomplete", reason: "content_filter" }, output: [] }
+    };
+
+    it("gives the mic back and asks the guest to rephrase when the content filter blocks a turn", async () => {
+        await startConversation();
+
+        act(() => rt.params.onReceivedResponseDone(CONTENT_FILTERED_RESPONSE_DONE));
+
+        expect(rec.unmute).toHaveBeenCalledTimes(1);
+        expect(screen.getByText("status.responseBlocked")).toBeInTheDocument();
+
+        // The guest speaks again: the notice goes, and the next answer carries on normally.
+        act(() => rt.params.onReceivedInputAudioBufferSpeechStarted({ type: "input_audio_buffer.speech_started" }));
+        expect(screen.queryByText("status.responseBlocked")).not.toBeInTheDocument();
+    });
+
+    it("unmutes on an incomplete response.done for other reasons without the content-filter notice", async () => {
+        await startConversation();
+
+        act(() =>
+            rt.params.onReceivedResponseDone({
+                type: "response.done",
+                response: { id: "resp_4", status: "incomplete", status_details: { type: "incomplete", reason: "max_output_tokens" }, output: [] }
+            })
+        );
+
+        expect(rec.unmute).toHaveBeenCalledTimes(1);
+        expect(screen.queryByText("status.responseBlocked")).not.toBeInTheDocument();
     });
 });
