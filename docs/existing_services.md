@@ -26,6 +26,12 @@ The current standard deployment names are:
 
 `AZURE_OPENAI_REALTIME_DEPLOYMENT` is still emitted for backward compatibility and local fallback, but the model picker uses `AZURE_AI_MODEL_DEPLOYMENTS` when the map contains the selected catalog id.
 
+By default, the app's managed identity receives `Cognitive Services OpenAI User` and `Cognitive Services User` on the reused account's resource group. Both roles are required: the realtime, speech-to-text, and text-to-speech routes use the first, and the cascade pipeline's Foundry `/models/chat/completions` route needs the second. To grant the same roles on the reused account only, run:
+
+```powershell
+azd env set AZURE_OPENAI_ROLE_SCOPE account
+```
+
 ## Reuse an existing Azure AI Search service
 
 Run these commands before `azd up`:

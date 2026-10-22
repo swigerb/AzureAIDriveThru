@@ -70,6 +70,11 @@ param storageContainerName string = 'content'
 param storageSkuName string
 
 param reuseExistingOpenAi bool = false
+// Where the app's AI roles are granted. 'resourceGroup' (default) grants on the AI resource group;
+// 'account' (only with reuseExistingOpenAi) grants the same roles on the reused account alone.
+@allowed(['resourceGroup', 'account'])
+param openAiRoleScope string = 'resourceGroup'
+var openAiAccountScopedRoles = reuseExistingOpenAi && openAiRoleScope == 'account'
 param openAiServiceName string = ''
 param openAiResourceGroupName string = ''
 param openAiEndpoint string = ''
@@ -699,7 +704,7 @@ module storage 'br/public:avm/res/storage/storage-account:0.9.1' = {
 }
 
 // Roles for the backend to access other services
-module openAiRoleBackend 'core/security/role.bicep' = if (!reuseExistingOpenAi) {
+module openAiRoleBackend 'core/security/role.bicep' = if (!openAiAccountScopedRoles) {
   scope: openAiResourceGroup
   name: 'openai-role-backend'
   params: {
@@ -709,9 +714,8 @@ module openAiRoleBackend 'core/security/role.bicep' = if (!reuseExistingOpenAi) 
   }
 }
 
-// Reuse of a production AI account is deliberately limited to the one approved role
-// on that account; do not broaden it to the production resource group.
-module openAiRoleBackendExisting 'core/security/cognitive-account-role.bicep' = if (reuseExistingOpenAi) {
+// openAiRoleScope=account: same roles, scoped to the reused account instead of its resource group.
+module openAiRoleBackendExisting 'core/security/cognitive-account-role.bicep' = if (openAiAccountScopedRoles) {
   scope: openAiResourceGroup
   name: 'openai-role-backend-existing'
   params: {
@@ -728,15 +732,25 @@ module openAiRoleBackendExisting 'core/security/cognitive-account-role.bicep' = 
 // dev, never the deployed container app, so without this module the deployed backend's
 // managed identity 401s the very first cascade chat-completions call. STT/TTS need no separate
 // grant here: they call the SAME AIServices account's `/openai/v1/audio/*` routes, already
-// covered by `openAiRoleBackend`'s "Cognitive Services OpenAI User". Reused production accounts
-// receive no generic Cognitive Services User grant; this verification uses the realtime path.
-module openAiRoleBackendCascade 'core/security/role.bicep' = if (!reuseExistingOpenAi) {
+// covered by `openAiRoleBackend`'s "Cognitive Services OpenAI User", which does NOT include the
+// `MaaS/chat/completions` data action the Foundry `/models` route needs.
+module openAiRoleBackendCascade 'core/security/role.bicep' = if (!openAiAccountScopedRoles) {
   scope: openAiResourceGroup
   name: 'openai-role-backend-cascade'
   params: {
     principalId: acaIdentity.outputs.principalId
     roleDefinitionId: 'a97b65f3-24c7-4388-baec-2e87135dc908' // Cognitive Services User
     principalType: 'ServicePrincipal'
+  }
+}
+
+module openAiRoleBackendCascadeExisting 'core/security/cognitive-account-role.bicep' = if (openAiAccountScopedRoles) {
+  scope: openAiResourceGroup
+  name: 'openai-role-backend-cascade-existing'
+  params: {
+    accountName: openAiServiceName
+    principalId: acaIdentity.outputs.principalId
+    roleDefinitionId: 'a97b65f3-24c7-4388-baec-2e87135dc908' // Cognitive Services User
   }
 }
 
@@ -752,9 +766,9 @@ module searchRoleBackend 'core/security/role.bicep' = {
   }
 }
 
-// Integrated vectorization uses the Search system identity to call the AI account. When reusing
-// production AI, grant only the approved account-scoped role and only when vector queries are on.
-module openAiRoleSearchService 'core/security/role.bicep' = if (!reuseExistingSearch && !reuseExistingOpenAi) {
+// Integrated vectorization uses the Search system identity to call the AI account. With
+// openAiRoleScope=account, grant it on the reused account only when vector queries are on.
+module openAiRoleSearchService 'core/security/role.bicep' = if (!reuseExistingSearch && !openAiAccountScopedRoles) {
   scope: openAiResourceGroup
   name: 'openai-role-searchservice'
   params: {
@@ -764,12 +778,12 @@ module openAiRoleSearchService 'core/security/role.bicep' = if (!reuseExistingSe
   }
 }
 
-module openAiRoleSearchServiceExisting 'core/security/cognitive-account-role.bicep' = if (reuseExistingOpenAi && !reuseExistingSearch && searchUseVectorQuery) {
+module openAiRoleSearchServiceExisting 'core/security/cognitive-account-role.bicep' = if (openAiAccountScopedRoles && !reuseExistingSearch && searchUseVectorQuery) {
   scope: openAiResourceGroup
   name: 'openai-role-searchservice-existing'
   params: {
     accountName: openAiServiceName
-    principalId: searchService.outputs.systemAssignedMIPrincipalId
+    principalId: searchService!.outputs.systemAssignedMIPrincipalId
     roleDefinitionId: '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
   }
 }

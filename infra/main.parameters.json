@@ -26,6 +26,9 @@
     "reuseExistingOpenAi": {
       "value": "${AZURE_OPENAI_REUSE_EXISTING=false}"
     },
+    "openAiRoleScope": {
+      "value": "${AZURE_OPENAI_ROLE_SCOPE=resourceGroup}"
+    },
     "openAiEndpoint": {
       "value": "${AZURE_OPENAI_EASTUS2_ENDPOINT}"
     },
