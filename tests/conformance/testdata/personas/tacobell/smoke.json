@@ -1,7 +1,7 @@
 {
-  "greetingSubstring": "Welcome to the Taco Bell demo!",
-  "instructionsSubstring": "You are a friendly crew associate in an unofficial Taco Bell ordering demo.",
-  "toolDescriptionSubstring": "Search Taco Bell demo menu",
+  "greetingSubstring": "Welcome to Taco Bell! Are you checking in with the Taco Bell app today?",
+  "instructionsSubstring": "You are a warm, efficient Taco Bell drive-thru crew associate.",
+  "toolDescriptionSubstring": "Search Taco Bell menu names, sizes and configured prices.",
   "searchableOwnItem": "Crunchy Taco",
   "orderableItemName": "Crunchy Taco",
   "orderableItemSize": "standard",

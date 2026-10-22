@@ -6,4 +6,4 @@ greeting:
     role: "user"
     content:
       - type: "input_text"
-        text: "Say exactly: Welcome to the Taco Bell demo! Live Más. All prices are samples. You can check in with a fictional code on screen. What can I get started for you?"
+        text: "Say exactly: Welcome to Taco Bell! Are you checking in with the Taco Bell app today?"

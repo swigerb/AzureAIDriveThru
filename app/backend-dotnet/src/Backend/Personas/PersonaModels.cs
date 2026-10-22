@@ -20,6 +20,7 @@ internal sealed record Persona
     [JsonPropertyName("id")] public required string Id { get; init; }
     [JsonPropertyName("displayName")] public required string DisplayName { get; init; }
     [JsonPropertyName("roleName")] public required string RoleName { get; init; }
+    [JsonPropertyName("speechStyle")] public string SpeechStyle { get; init; } = "fullReadback";
     [JsonPropertyName("locales")] public required PersonaLocales Locales { get; init; }
     [JsonPropertyName("store")] public required PersonaStore Store { get; init; }
     [JsonPropertyName("voice")] public required PersonaVoice Voice { get; init; }

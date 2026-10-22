@@ -5,7 +5,7 @@ restaurant 036309 price feed, or Taco Bell account integration.
 
 | Surface | Source and scope |
 | --- | --- |
-| Menu names | Official [tacos](https://www.tacobell.com/food/tacos), [burritos](https://www.tacobell.com/food/burritos), [specialties](https://www.tacobell.com/food/specialties), [nachos](https://www.tacobell.com/food/nachos), [drinks](https://www.tacobell.com/food/drinks), and [value menu](https://www.tacobell.com/food/luxe-value-menu) category pages. [Cinnamon Twists](https://www.tacobell.com/food/sweets/cinnamon-twists) is confirmed by its official product page. The official [boxes and combos page](https://www.tacobell.com/food/boxes-and-combos) confirms customizable combos; individual three-crunchy/three-soft-taco legacy URLs returned legal-only content, so those user-requested meal configurations/inclusions are explicitly illustrative rather than verified current store offerings. Short descriptions and illustrations are original. The pack contains 19 selected items in eight categories, not the entire menu or verified store inventory. |
+| Menu names | Official [tacos](https://www.tacobell.com/food/tacos), [burritos](https://www.tacobell.com/food/burritos), [specialties](https://www.tacobell.com/food/specialties), [nachos](https://www.tacobell.com/food/nachos), [drinks](https://www.tacobell.com/food/drinks), and [value menu](https://www.tacobell.com/food/luxe-value-menu) category pages. [Cinnamon Twists](https://www.tacobell.com/food/sweets/cinnamon-twists) is confirmed by its official product page. The official [boxes and combos page](https://www.tacobell.com/food/boxes-and-combos) confirms customizable combos; individual three-crunchy/three-soft-taco legacy URLs returned legal-only content, so those user-requested meal configurations/inclusions are explicitly illustrative rather than verified current store offerings. Short descriptions and illustrations are original. The pack contains 23 selected items in nine categories, including four user-requested sauce packets, not the entire menu or verified store inventory. |
 | Prices, sizes and tax | [Store 036309 menu](https://www.tacobell.com/food?store=036309) did not expose itemized store prices in accessible content. **Every numeric menu price, drink size offering, and 8% tax rate in this pack is an illustrative demo assumption**, visibly labeled in the UI and prompts. No sample price is represented as verified or current. There is no automatic refresh. |
 | UI colors | The [official site's public CSS](https://www.tacobell.com/_next/static/css/5404ed4473507abd.css) exposed link purple `#501098` and focus violet `#9A23F8`; an official CMS theme exposed `#EA42D1`. These are observed website values, not a verified comprehensive brand-guide palette. Other shades are derived demo/accessibility colors. The downloaded current logo itself contains `#5B2994`. |
 | Type | The same official CSS names `InterstateRegular` (body), `BrandonGrotesqueWeb-Black`, `GintoNordBold`, and GT America compressed/condensed/expanded/mono/standard variants. **No proprietary font files are bundled or loaded.** The pack uses locally available Arial with the app's sans-serif fallback, not an exact licensed Taco Bell typeface. |
@@ -16,6 +16,22 @@ restaurant 036309 price feed, or Taco Bell account integration.
 | Other assets | `taco-illustration.svg` is original artwork; no food photography is copied. The neutral English apology clip is reused from the repository's existing generated demo assets. |
 
 ## State and privacy contract
+
+`speechStyle: naturalDriveThru` opts this pack into brief change acknowledgments and
+private order/rewards context. Other packs retain `fullReadback` when the field is absent.
+The welcome asks about app check-in; a linked welcome and current balance require a fresh
+authoritative `get_order` result with `checkedIn: true`. Routine changes do not announce
+totals. Explicit total requests and final summaries use current server amounts; a late
+amendment requires a new final summary. Normal spoken ordering contains no simulation,
+software, or internal-instruction narration. A direct question about real account/payment
+integration must still be answered truthfully. Visible simulation/privacy disclosures stay
+in place; this voice style does not enable real transactions.
+
+Mild, Hot, Fire and Diablo Sauce Packet lines use explicitly illustrative zero prices
+and persist requested quantities, including two packets. Names are user-directed; store
+availability and complimentary pricing were not verified from a current store feed.
+Packets are neither rewardable nor point-earning. Crunchy Taco and Cinnamon Twists remain
+the only configured reward choices; Beefy 5-Layer Burrito is not a configured reward.
 
 The input accepts only the two displayed fictional codes. Unknown values are rejected
 in the browser before transmission; the backend independently checks an exact allow-list
