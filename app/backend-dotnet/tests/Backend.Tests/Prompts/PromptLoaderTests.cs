@@ -1,4 +1,5 @@
 using Backend.Prompts;
+using Backend.Tests.TestSupport;
 
 namespace Backend.Tests.Prompts;
 
@@ -7,6 +8,19 @@ namespace Backend.Tests.Prompts;
 /// docs/dotnet_mapping.md).</summary>
 public sealed class PromptLoaderTests : IDisposable
 {
+    [Fact]
+    public void TacoBellSpokenTextExcludesDirectionsAndKeepsMidorderChangesOpen()
+    {
+        var prompt = new PromptLoader(Path.Combine(RepoRootLocator.Find(), "personas"), "tacobell").SystemPrompt;
+        Assert.Contains("Your response text goes directly to the guest's speaker", prompt);
+        Assert.Contains("never stage directions, parenthetical acting notes, instruction labels", prompt);
+        Assert.Contains("Swapped to 3 Soft Tacos. What drink and size would you like with your combo?", prompt);
+        Assert.Contains("No tomatoes on all three. What drink and size would you like?", prompt);
+        Assert.Contains("The window direction is only for a guest-requested wrap-up, never an acknowledgment of an item change", prompt);
+        Assert.Contains("A previous wrap-up does not make a later modification a request to finish again", prompt);
+        Assert.Contains("do not verbalize that behavior", prompt);
+    }
+
     private readonly string _personasDir;
 
     public PromptLoaderTests()
