@@ -1208,7 +1208,7 @@ function SonicApp() {
                         <FaGithub className="h-4 w-4" />
                         <span>Source on GitHub</span>
                     </a>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2" data-testid="header-controls">
                         {/* Issue GH-180: always enabled -- requestPersonaSwitch decides whether the
                             switch runs immediately (empty order, no active conversation) or waits
                             on PersonaSwitchConfirmDialog's confirmation first. Issue GH-180 round
