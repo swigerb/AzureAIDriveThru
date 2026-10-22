@@ -1064,7 +1064,8 @@ async def update_order(args, session_id: str) -> ToolResult:
     # that was just made.
     spoken_read_back = summary.spokenReadBack
     delta_text_with_readback = f"{delta_text}{happy_hour_note}\n\n{spoken_read_back}" if spoken_read_back else delta_text + happy_hour_note
-    return ToolResult(delta_text_with_readback, ToolResultDirection.TO_BOTH, client_text=json_order_summary)
+    return ToolResult(delta_text_with_readback + _rewards_model_text(session_id),
+                      ToolResultDirection.TO_BOTH, client_text=json_order_summary)
 
 
 get_order_tool_schema = {
@@ -1088,7 +1089,41 @@ async def get_order(_args: Any, session_id: str) -> ToolResult:
     # #113: same pack-sourced lookup as update_order above -- this session's own bound
     # persona's banner/announce switch, never a hardcoded string.
     happy_hour_note = order_state_singleton.get_happy_hour_banner_for_session(session_id)
-    return ToolResult(readback + happy_hour_note, ToolResultDirection.TO_BOTH, client_text=json_summary)
+    return ToolResult(readback + happy_hour_note + _rewards_model_text(session_id),
+                      ToolResultDirection.TO_BOTH, client_text=json_summary)
+
+
+def _rewards_model_text(session_id: str) -> str:
+    summary = order_state_singleton.get_order_summary(session_id)
+    rewards = summary.rewardsDemo
+    if rewards is None:
+        return ""
+
+    reward_item = rewards["rewardItem"]
+    eligible_lines = [
+        item for item in summary.items
+        if item.item == reward_item and item.quantity > 0 and item.price > 0
+    ]
+    snapshot = {
+        key: rewards[key]
+        for key in (
+            "checkedIn", "balance", "rewardCost", "rewardItem", "canRedeem", "redeemed",
+            "completed", "discount", "pointsToEarn", "pointsAwarded",
+        )
+    }
+    snapshot.update({
+        "eligibleItemInOrder": bool(eligible_lines),
+        "eligibleItemPrice": min((item.price for item in eligible_lines), default=None),
+        "postDiscountTotal": summary.totalDisplay,
+        "postDiscountFinalTotal": summary.finalTotalDisplay,
+    })
+    text = "\n\n[SERVER-AUTHORITATIVE FICTIONAL REWARDS STATE: " + json.dumps(snapshot) + "]"
+    if rewards["canRedeem"]:
+        text += (
+            f"\nEligible reward: {reward_item}. Offer it and direct the guest to select "
+            "Use reward in the on-screen panel; do not redeem automatically."
+        )
+    return text
 
 
 reset_order_tool_schema = {

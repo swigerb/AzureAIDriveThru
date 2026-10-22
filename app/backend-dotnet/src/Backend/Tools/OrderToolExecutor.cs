@@ -245,15 +245,50 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
         // #113: this session's own bound persona's happy-hour banner -- never hardcoded here.
         var happyHourNote = _order.HappyHourBanner;
         return new ToolResult(
-            deltaText + happyHourNote + "\n\n" + summary.SpokenReadBack, ToolResultDirection.ToBoth, clientText: jsonOrderSummary);
+            deltaText + happyHourNote + "\n\n" + summary.SpokenReadBack + BuildRewardsModelText(summary),
+            ToolResultDirection.ToBoth, clientText: jsonOrderSummary);
     }
 
     private ToolResult GetOrder()
     {
         var readback = _order.GetGroupedOrderForReadback();
-        var jsonSummary = OrderSummaryJson.Serialize(_order.Summary);
+        var summary = _order.Summary;
+        var jsonSummary = OrderSummaryJson.Serialize(summary);
         var happyHourNote = _order.HappyHourBanner;
-        return new ToolResult(readback + happyHourNote, ToolResultDirection.ToBoth, clientText: jsonSummary);
+        return new ToolResult(readback + happyHourNote + BuildRewardsModelText(summary),
+            ToolResultDirection.ToBoth, clientText: jsonSummary);
+    }
+
+    private static string BuildRewardsModelText(Ordering.OrderSummary summary)
+    {
+        if (summary.RewardsDemo is not { } rewards) return "";
+
+        var snapshot = new System.Text.Json.Nodes.JsonObject();
+        foreach (var key in new[]
+                 {
+                     "checkedIn", "balance", "rewardCost", "rewardItem", "canRedeem", "redeemed",
+                     "completed", "discount", "pointsToEarn", "pointsAwarded",
+                 })
+        {
+            if (rewards.TryGetPropertyValue(key, out var value))
+                snapshot[key] = value?.DeepClone();
+        }
+
+        var rewardItem = rewards["rewardItem"]?.GetValue<string>();
+        var eligibleLine = rewardItem is null
+            ? null
+            : summary.Items.Where(item => item.Item == rewardItem && item.Quantity > 0 && item.Price > 0)
+                .OrderBy(item => item.Price).FirstOrDefault();
+        snapshot["eligibleItemInOrder"] = eligibleLine is not null;
+        snapshot["eligibleItemPrice"] = eligibleLine is null ? null : System.Text.Json.Nodes.JsonValue.Create(eligibleLine.Price);
+        snapshot["postDiscountTotal"] = summary.TotalDisplay;
+        snapshot["postDiscountFinalTotal"] = summary.FinalTotalDisplay;
+
+        var text = "\n\n[SERVER-AUTHORITATIVE FICTIONAL REWARDS STATE: " +
+                   JsonSerializer.Serialize(snapshot) + "]";
+        if (rewards["canRedeem"]?.GetValue<bool>() == true)
+            text += $"\nEligible reward: {rewardItem}. Offer it and direct the guest to select Use reward in the on-screen panel; do not redeem automatically.";
+        return text;
     }
 
     private ToolResult ResetOrder()
