@@ -26,6 +26,9 @@
     "reuseExistingOpenAi": {
       "value": "${AZURE_OPENAI_REUSE_EXISTING=false}"
     },
+    "openAiRoleScope": {
+      "value": "${AZURE_OPENAI_ROLE_SCOPE=resourceGroup}"
+    },
     "openAiEndpoint": {
       "value": "${AZURE_OPENAI_EASTUS2_ENDPOINT}"
     },
@@ -142,6 +145,9 @@
     },
     "azureContainerAppsWorkloadProfile": {
       "value": "${AZURE_CONTAINER_APPS_WORKLOAD_PROFILE=Consumption}"
+    },
+    "containerAppMaxReplicas": {
+      "value": "${AZURE_CONTAINER_APP_MAX_REPLICAS=5}"
     },
     "appSessionSecret": {
       "value": "${APP_SESSION_SECRET=}"

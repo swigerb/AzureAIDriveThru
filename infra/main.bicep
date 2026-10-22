@@ -12,6 +12,7 @@ param environmentName string
   'brazilsouth'
   'canadacentral'
   'canadaeast'
+  'centralus'
   'eastus2'
   'northcentralus'
   'westus'
@@ -69,6 +70,11 @@ param storageContainerName string = 'content'
 param storageSkuName string
 
 param reuseExistingOpenAi bool = false
+// Where the app's AI roles are granted. 'resourceGroup' (default) grants on the AI resource group;
+// 'account' (only with reuseExistingOpenAi) grants the same roles on the reused account alone.
+@allowed(['resourceGroup', 'account'])
+param openAiRoleScope string = 'resourceGroup'
+var openAiAccountScopedRoles = reuseExistingOpenAi && openAiRoleScope == 'account'
 param openAiServiceName string = ''
 param openAiResourceGroupName string = ''
 param openAiEndpoint string = ''
@@ -172,6 +178,11 @@ param dotnetWebAppExists bool = false
 
 @allowed(['Consumption', 'D4', 'D8', 'D16', 'D32', 'E4', 'E8', 'E16', 'E32', 'NC24-A100', 'NC48-A100', 'NC96-A100'])
 param azureContainerAppsWorkloadProfile string
+
+@minValue(1)
+@maxValue(5)
+@description('Maximum replica count for each backend container app. Use 1 for cost-bounded test environments; production defaults to 5.')
+param containerAppMaxReplicas int = 5
 
 param acaIdentityName string = '${environmentName}-aca-identity'
 param containerRegistryName string = '${replace(environmentName, '-', '')}acr'
@@ -317,7 +328,7 @@ module acaBackend 'core/host/container-app-upsert.bicep' = {
     containerCpuCoreCount: '1.0'
     containerMemory: '2Gi'
     containerMinReplicas: 1
-    containerMaxReplicas: 5
+    containerMaxReplicas: containerAppMaxReplicas
     healthProbePath: '/health'
     enableWebSocket: true
     // Order state and the resume credential live in one process (gunicorn
@@ -427,7 +438,7 @@ module acaBackendDotnet 'core/host/container-app-upsert.bicep' = if (deployDotne
     containerCpuCoreCount: '1.0'
     containerMemory: '2Gi'
     containerMinReplicas: 1
-    containerMaxReplicas: 5
+    containerMaxReplicas: containerAppMaxReplicas
     healthProbePath: '/health'
     enableWebSocket: true
     stickySessionsAffinity: 'sticky'
@@ -630,6 +641,11 @@ module searchService 'br/public:avm/res/search/search-service:0.7.1' = if (!reus
         principalId: principalId
         principalType: principalType
       }
+      {
+        roleDefinitionIdOrName: 'Search Index Data Reader'
+        principalId: acaIdentity.outputs.principalId
+        principalType: 'ServicePrincipal'
+      }
     ]
   }
 }
@@ -660,7 +676,7 @@ module storage 'br/public:avm/res/storage/storage-account:0.9.1' = {
         }
       ]
     }
-    roleAssignments: [
+    roleAssignments: concat([
       {
         roleDefinitionIdOrName: 'Storage Blob Data Reader'
         principalId: principalId
@@ -672,18 +688,40 @@ module storage 'br/public:avm/res/storage/storage-account:0.9.1' = {
         principalId: principalId
         principalType: principalType
       }
-    ]
+      {
+        roleDefinitionIdOrName: 'Storage Blob Data Contributor'
+        principalId: acaIdentity.outputs.principalId
+        principalType: 'ServicePrincipal'
+      }
+    ], !reuseExistingSearch ? [
+      {
+        roleDefinitionIdOrName: 'Storage Blob Data Reader'
+        principalId: searchService.outputs.systemAssignedMIPrincipalId
+        principalType: 'ServicePrincipal'
+      }
+    ] : [])
   }
 }
 
 // Roles for the backend to access other services
-module openAiRoleBackend 'core/security/role.bicep' = {
+module openAiRoleBackend 'core/security/role.bicep' = if (!openAiAccountScopedRoles) {
   scope: openAiResourceGroup
   name: 'openai-role-backend'
   params: {
-    principalId: acaBackend.outputs.identityPrincipalId
+    principalId: acaIdentity.outputs.principalId
     roleDefinitionId: '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
     principalType: 'ServicePrincipal'
+  }
+}
+
+// openAiRoleScope=account: same roles, scoped to the reused account instead of its resource group.
+module openAiRoleBackendExisting 'core/security/cognitive-account-role.bicep' = if (openAiAccountScopedRoles) {
+  scope: openAiResourceGroup
+  name: 'openai-role-backend-existing'
+  params: {
+    accountName: openAiServiceName
+    principalId: acaIdentity.outputs.principalId
+    roleDefinitionId: '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
   }
 }
 
@@ -694,14 +732,25 @@ module openAiRoleBackend 'core/security/role.bicep' = {
 // dev, never the deployed container app, so without this module the deployed backend's
 // managed identity 401s the very first cascade chat-completions call. STT/TTS need no separate
 // grant here: they call the SAME AIServices account's `/openai/v1/audio/*` routes, already
-// covered by `openAiRoleBackend`'s "Cognitive Services OpenAI User" below.
-module openAiRoleBackendCascade 'core/security/role.bicep' = {
+// covered by `openAiRoleBackend`'s "Cognitive Services OpenAI User", which does NOT include the
+// `MaaS/chat/completions` data action the Foundry `/models` route needs.
+module openAiRoleBackendCascade 'core/security/role.bicep' = if (!openAiAccountScopedRoles) {
   scope: openAiResourceGroup
   name: 'openai-role-backend-cascade'
   params: {
-    principalId: acaBackend.outputs.identityPrincipalId
+    principalId: acaIdentity.outputs.principalId
     roleDefinitionId: 'a97b65f3-24c7-4388-baec-2e87135dc908' // Cognitive Services User
     principalType: 'ServicePrincipal'
+  }
+}
+
+module openAiRoleBackendCascadeExisting 'core/security/cognitive-account-role.bicep' = if (openAiAccountScopedRoles) {
+  scope: openAiResourceGroup
+  name: 'openai-role-backend-cascade-existing'
+  params: {
+    accountName: openAiServiceName
+    principalId: acaIdentity.outputs.principalId
+    roleDefinitionId: 'a97b65f3-24c7-4388-baec-2e87135dc908' // Cognitive Services User
   }
 }
 
@@ -711,31 +760,31 @@ module searchRoleBackend 'core/security/role.bicep' = {
   scope: searchServiceResourceGroup
   name: 'search-role-backend'
   params: {
-    principalId: acaBackend.outputs.identityPrincipalId
+    principalId: acaIdentity.outputs.principalId
     roleDefinitionId: '1407120a-92aa-4202-b7e9-c0e197c71c8f'
     principalType: 'ServicePrincipal'
   }
 }
 
-// Necessary for integrated vectorization, for search service to access storage
-module storageRoleSearchService 'core/security/role.bicep' = if (!reuseExistingSearch) {
-  scope: storageResourceGroup
-  name: 'storage-role-searchservice'
-  params: {
-    principalId: !reuseExistingSearch ? searchService.outputs.systemAssignedMIPrincipalId : ''
-    roleDefinitionId: '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1' // Storage Blob Data Reader
-    principalType: 'ServicePrincipal'
-  }
-}
-
-// Necessary for integrated vectorization, for search service to access OpenAI embeddings
-module openAiRoleSearchService 'core/security/role.bicep' = if (!reuseExistingSearch) {
+// Integrated vectorization uses the Search system identity to call the AI account. With
+// openAiRoleScope=account, grant it on the reused account only when vector queries are on.
+module openAiRoleSearchService 'core/security/role.bicep' = if (!reuseExistingSearch && !openAiAccountScopedRoles) {
   scope: openAiResourceGroup
   name: 'openai-role-searchservice'
   params: {
     principalId: !reuseExistingSearch ? searchService.outputs.systemAssignedMIPrincipalId : ''
     roleDefinitionId: '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
     principalType: 'ServicePrincipal'
+  }
+}
+
+module openAiRoleSearchServiceExisting 'core/security/cognitive-account-role.bicep' = if (openAiAccountScopedRoles && !reuseExistingSearch && searchUseVectorQuery) {
+  scope: openAiResourceGroup
+  name: 'openai-role-searchservice-existing'
+  params: {
+    accountName: openAiServiceName
+    principalId: searchService!.outputs.systemAssignedMIPrincipalId
+    roleDefinitionId: '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
   }
 }
 

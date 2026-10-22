@@ -467,9 +467,9 @@ public sealed class PythonParityTests
     }
 
     /// <summary>
-    /// Writes a tiny stub `azd` script (just enough to satisfy load_azd_env()'s own
-    /// <c>subprocess.run("azd env list -o json", shell=True)</c> plus <c>load_dotenv(path,
-    /// override=True)</c>) to a fresh temp directory and returns that directory, for prepending to
+    /// Writes a tiny stub `azd` script (answering both <c>azd env list -o json</c> and
+    /// <c>azd env get-value NAME</c>, the call setup_search_index.py's load_azd_env() uses)
+    /// to a fresh temp directory and returns that directory, for prepending to
     /// PATH. Never talks to a real azd installation or Azure.
     /// </summary>
     private static string CreateStubAzdOnPath(
@@ -497,15 +497,28 @@ public sealed class PythonParityTests
         {
             new { Name = "test", IsDefault = true, DotEnvPath = envFile }
         });
+        // setup_search_index.py reads individual settings with `azd env get-value NAME`, which
+        // prints the value and exits 0, or exits non-zero when the key is not set.
+        var values = lines.Select(line => line.Split('=', 2)).ToDictionary(pair => pair[0], pair => pair[1]);
         var script = Path.Combine(dir, OperatingSystem.IsWindows() ? "azd.cmd" : "azd");
-        File.WriteAllText(
-            script,
-            OperatingSystem.IsWindows()
-                ? $"@echo off\r\necho {environmentJson}\r\n"
-                : $$"""
-            #!/bin/sh
-            echo '{{environmentJson}}'
-            """);
+        string content;
+        if (OperatingSystem.IsWindows())
+        {
+            var cases = string.Concat(values.Select(pair =>
+                $"if \"%3\"==\"{pair.Key}\" (echo {pair.Value}& exit /b 0)\r\n"));
+            content = "@echo off\r\nif \"%2\"==\"get-value\" goto getvalue\r\n"
+                + $"echo {environmentJson}\r\nexit /b 0\r\n:getvalue\r\n{cases}"
+                + "echo ERROR: key '%3' not found 1>&2\r\nexit /b 1\r\n";
+        }
+        else
+        {
+            var cases = string.Concat(values.Select(pair => $"    {pair.Key}) echo '{pair.Value}'; exit 0 ;;\n"));
+            content = "#!/bin/sh\nif [ \"$2\" = \"get-value\" ]; then\n  case \"$3\" in\n"
+                + cases
+                + "    *) echo \"ERROR: key '$3' not found\" >&2; exit 1 ;;\n  esac\nfi\n"
+                + $"echo '{environmentJson}'\n";
+        }
+        File.WriteAllText(script, content);
         if (!OperatingSystem.IsWindows())
         {
             File.SetUnixFileMode(

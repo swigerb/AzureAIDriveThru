@@ -7,14 +7,16 @@ namespace Backend.Cascade;
 /// cascade_processor.py's `_TurnDetector`. Unlike the realtime pipeline, there is no upstream
 /// Realtime API doing `server_vad` turn segmentation for us -- the whole point of "cascade" is
 /// that WE own STT/chat/TTS, so we must decide for ourselves when the guest has started and
-/// finished speaking. Mirrors config.yaml's existing `vad.threshold`/`vad.silence_duration_ms`
-/// (already used to configure the realtime session's own `server_vad`) so both pipelines feel the
-/// same to a guest, without pretending to reimplement OpenAI's actual VAD algorithm -- just enough
+/// finished speaking. Uses config.yaml's `vad.cascade_energy_threshold` (an RMS level, unlike
+/// the server_vad-style 0-1 `vad.threshold`) and the shared `vad.silence_duration_ms`, without pretending to reimplement OpenAI's actual VAD algorithm -- just enough
 /// to segment turns for STT.
 /// </summary>
 internal sealed class TurnDetector
 {
     private const int AudioSampleRate = 24000;
+
+    /// <summary>Default <c>vad.cascade_energy_threshold</c>: about -34 dBFS RMS.</summary>
+    public const double DefaultEnergyThreshold = 0.02;
 
     private readonly double _cutoff;
     private readonly int _silenceSamplesNeeded;
@@ -29,7 +31,7 @@ internal sealed class TurnDetector
     /// real barge-in. 0.0 (the default) means "no cooldown in effect".</summary>
     private double _echoCooldownUntil;
 
-    public TurnDetector(double threshold = 0.5, int silenceDurationMs = 200, int sampleRate = AudioSampleRate)
+    public TurnDetector(double threshold = DefaultEnergyThreshold, int silenceDurationMs = 200, int sampleRate = AudioSampleRate)
     {
         _cutoff = threshold * 32767;
         _silenceSamplesNeeded = Math.Max(1, (int)(silenceDurationMs / 1000.0 * sampleRate));
@@ -121,34 +123,42 @@ internal sealed class TurnDetector
     }
 }
 
-/// <summary>config.yaml's top-level `vad` section (`vad.threshold`/`vad.silence_duration_ms`) --
-/// shared verbatim with the realtime pipeline's own `server_vad` config (Realtime/RealtimeSessionConfig.cs),
-/// just read independently here since <see cref="TurnDetector"/> is cascade's own local VAD, not
-/// a value forwarded in a `session.update` to an upstream Realtime API.</summary>
+/// <summary>config.yaml's top-level `vad` section: `vad.cascade_energy_threshold` (an RMS fraction
+/// of PCM16 full scale, NOT the server_vad-style 0-1 `vad.threshold`) and the shared
+/// `vad.silence_duration_ms`. Read here because <see cref="TurnDetector"/> is cascade's own local
+/// VAD, not a value forwarded in a `session.update` to an upstream Realtime API.</summary>
 internal sealed record CascadeVadConfig(double Threshold, int SilenceDurationMs)
 {
     public static CascadeVadConfig FromAppConfig(AppConfig config)
     {
         var section = config.TryGetSection("vad");
         return new CascadeVadConfig(
-            GetDouble(section, "threshold", 0.5),
+            GetEnergyThreshold(section),
             GetInt(section, "silence_duration_ms", 200));
     }
 
-    private static double GetDouble(IDictionary<object, object>? section, string key, double fallback)
+    /// <summary>Validates <c>vad.cascade_energy_threshold</c>; an invalid value fails startup
+    /// instead of silently falling back to a cutoff that may never (or always) detect speech.</summary>
+    internal static double GetEnergyThreshold(IDictionary<object, object>? section)
     {
+        const string key = "cascade_energy_threshold";
         if (section is null || !section.TryGetValue(key, out var value) || value is null)
         {
-            return fallback;
+            return TurnDetector.DefaultEnergyThreshold;
         }
-        return value switch
+        double? parsed = value switch
         {
             double d => d,
             int i => i,
             long l => l,
-            string s when double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsed) => parsed,
-            _ => fallback,
+            string s when double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var p) => p,
+            _ => null,
         };
+        if (parsed is not { } threshold || !(threshold > 0 && threshold < 1))
+        {
+            throw new InvalidOperationException($"vad.{key} must be a number in (0, 1), got '{value}'.");
+        }
+        return threshold;
     }
 
     private static int GetInt(IDictionary<object, object>? section, string key, int fallback)

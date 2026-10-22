@@ -116,8 +116,8 @@ public static class CascadeScenarioHelpers
 
     /// <summary>
     /// Simulates one guest turn end to end: a loud "speech" burst (crosses `_TurnDetector`'s RMS
-    /// threshold -- config.yaml `vad.threshold` default 0.5 => cutoff ~16383 on a signed 16-bit
-    /// scale) followed by enough trailing near-silence to trip `speech_stopped`. Sent as TWO
+    /// threshold -- config.yaml `vad.cascade_energy_threshold` default 0.02 => cutoff ~655 on a
+    /// signed 16-bit scale) followed by enough trailing near-silence to trip `speech_stopped`. Sent as TWO
     /// separate `input_audio_buffer.append` frames rather than one combined buffer, because
     /// `_TurnDetector.feed` computes a single RMS over whatever bytes arrive in ONE call -- a
     /// single frame mixing loud and silent samples would average out to one ambiguous RMS

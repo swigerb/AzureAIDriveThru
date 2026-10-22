@@ -75,7 +75,7 @@ public sealed class CascadeAudioTurnPipelineTests
         var socket = new FakeWebSocket([]);
         var pipeline = NewPipeline(handler, socket, NewState());
 
-        await pipeline.SpeakAsync("Coming right up", CancellationToken.None);
+        await pipeline.SpeakAsync("Coming right up", "resp_1", CancellationToken.None);
 
         // Two chunks: one full CascadeProcessor.TtsChunkBytes-sized delta, one 100-byte remainder.
         Assert.Equal(2, socket.SentMessages.Count);
@@ -83,6 +83,8 @@ public sealed class CascadeAudioTurnPipelineTests
         {
             var frame = JsonNode.Parse(sent.Data)!.AsObject();
             Assert.Equal("response.audio.delta", frame["type"]!.GetValue<string>());
+            // Realtime API delta shape: each chunk names the response it belongs to.
+            Assert.Equal("resp_1", frame["response_id"]!.GetValue<string>());
         }
     }
 
@@ -94,7 +96,7 @@ public sealed class CascadeAudioTurnPipelineTests
         var detector = new TurnDetector(0.5, 500, 24000);
         var pipeline = NewPipeline(handler, new FakeWebSocket([]), NewState(), detector, echoCooldownSeconds: 0.2);
 
-        await pipeline.SpeakAsync("Coming right up", CancellationToken.None);
+        await pipeline.SpeakAsync("Coming right up", "resp_1", CancellationToken.None);
 
         // 0.5s audio + 0.2s cooldown starting at nowSeconds()=0 means a 0.0 timestamp is still
         // inside the cooldown window -- Feed() with LOUD audio at that timestamp still returns

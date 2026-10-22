@@ -152,4 +152,29 @@ internal sealed class FoundryHttpException(int statusCode, double? retryAfterSec
 {
     public int StatusCode { get; } = statusCode;
     public double? RetryAfterSeconds { get; } = retryAfterSeconds;
+
+    /// <summary>A 400 whose body is Foundry's <c>{"error":{"code":"content_filter"}}</c>.</summary>
+    public bool IsContentFilter
+    {
+        get
+        {
+            if (StatusCode != 400)
+            {
+                return false;
+            }
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(Message);
+                return doc.RootElement.TryGetProperty("error", out var error)
+                    && error.ValueKind == System.Text.Json.JsonValueKind.Object
+                    && error.TryGetProperty("code", out var code)
+                    && code.ValueKind == System.Text.Json.JsonValueKind.String
+                    && code.GetString() == "content_filter";
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                return false;
+            }
+        }
+    }
 }

@@ -423,7 +423,7 @@ function SonicApp() {
     // Rate-limit recovery (docs/rate_limit_recovery.md): the apology clip is playing.
     const apologyPlayingRef = useRef(false);
     const clearRateLimitNotice = useCallback(() => {
-        setConnectionNotice(current => (current === "rateLimited" || current === "rateLimitedFinal" ? null : current));
+        setConnectionNotice(current => (current === "rateLimited" || current === "rateLimitedFinal" || current === "responseBlocked" ? null : current));
     }, []);
 
     const flashResumedNotice = useCallback(() => {
@@ -640,13 +640,20 @@ function SonicApp() {
             // muted until the guest's next utterance happens to be loud enough to trip
             // handleBargeIn's own separate recovery path -- recover immediately instead of
             // relying on that.
-            if (message.response.status === "failed" && isAiSpeakingRef.current) {
+            if ((message.response.status === "failed" || message.response.status === "incomplete") && isAiSpeakingRef.current) {
                 isAiSpeakingRef.current = false;
                 unmuteAudioRecording();
             }
 
             const transcript = message.response.output.map(output => output.content?.map(content => content.transcript).join(" ")).join(" ");
-            if (!transcript) return;
+            if (!transcript) {
+                // The content filter blocked this turn before any output: ask the guest to rephrase
+                // rather than leaving the conversation silent.
+                if (message.response.status === "incomplete" && message.response.status_details?.reason === "content_filter") {
+                    setConnectionNotice("responseBlocked");
+                }
+                return;
+            }
             // Defense in depth (issue 181): a resumed-but-idle socket must never surface assistant
             // output while the guest hasn't (re)started their session.
             clearRateLimitNotice();

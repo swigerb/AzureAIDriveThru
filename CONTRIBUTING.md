@@ -41,6 +41,13 @@ Container builds support optional BuildKit secrets named `npm_config`, `pip_conf
 image layers. Pass the applicable config file with `docker build --secret id=<name>,src=<path>`;
 leave these unset in environments that already use their standard feeds.
 
+When the build host cannot reach the Python package index, download the `python-wheelhouse`
+artifact from the **Python wheelhouse** workflow and pass it with
+`docker build -f app/Dockerfile --build-context python-wheelhouse=<artifact-dir> ...`. The image
+then installs offline from the hash-locked wheels, after verifying the checksums and that the lock
+was built from the current `app/backend/requirements.txt`. Without that build context, the build
+installs from the configured index as usual.
+
 ## Dependency maintenance
 
 Use configured, approved package sources. Do not add a repository NuGet config that re-enables

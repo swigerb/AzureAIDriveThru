@@ -117,8 +117,24 @@ def _echo_tail_seconds(configured: Any) -> float:
 _ECHO_COOLDOWN_SECONDS = _echo_tail_seconds(_audio_cfg.get("echo_cooldown_seconds", 1.5))
 
 _AUDIO_SAMPLE_RATE = 24000
+# Default `vad.cascade_energy_threshold`: RMS fraction of PCM16 full scale (about -34 dBFS). Not the
+# server_vad-style 0-1 `vad.threshold`, which is not an audio level.
+_DEFAULT_CASCADE_ENERGY_THRESHOLD = 0.02
+
+
+def _cascade_energy_threshold(value: object) -> float:
+    """Validates `vad.cascade_energy_threshold`; an invalid value fails startup instead of
+    silently falling back to a cutoff that may never (or always) detect speech."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value < 1:
+        raise ValueError(f"vad.cascade_energy_threshold must be a number in (0, 1), got {value!r}")
+    return float(value)
+
+
 _AUDIO_SAMPLE_WIDTH = 2  # PCM16, matches both mic input and speaker output (confirmed against
                           # useAudioRecorder.tsx/useAudioPlayer.tsx -- no resampling needed).
+# Upper bound on guest audio carried across barge-in-cancelled turns (30 s of PCM16 @ 24 kHz);
+# applies only when carried audio is prepended -- a single utterance is never capped.
+_MAX_CARRIED_TURN_AUDIO_BYTES = 30 * _AUDIO_SAMPLE_RATE * _AUDIO_SAMPLE_WIDTH
 # Rick's #82 infra notes: the Foundry chat endpoint (and the audio endpoint we reuse for
 # STT/TTS) is a Cognitive Services resource -- the same bearer-token scope rtmt.py already uses
 # (see rtmt.py's own `get_bearer_token_provider` call site) applies to both.
@@ -190,6 +206,14 @@ def _http_status_of(exc: Exception) -> int | None:
     return getattr(exc, "status", None)
 
 
+def _is_content_filter(exc: Exception) -> bool:
+    """A Foundry chat-completion 400 whose prompt was rejected by the content filter
+    (`error.code == "content_filter"`)."""
+    if _http_status_of(exc) != 400:
+        return False
+    return getattr(getattr(exc, "error", None), "code", None) == "content_filter"
+
+
 def _retry_hint_of(exc: Exception) -> float | None:
     """Seconds the service asked us to wait, preferring a `Retry-After` response header (both
     azure-core's `HttpResponseError.response.headers` and aiohttp's own
@@ -239,9 +263,9 @@ class _TurnDetector:
     """A minimal, local RMS-energy voice-activity detector (issue #82). Unlike the realtime
     pipeline, there is no upstream Realtime API doing `server_vad` turn segmentation for us --
     the whole point of "cascade" is that WE own STT/chat/TTS, so we must decide for ourselves
-    when the guest has started and finished speaking. Mirrors config.yaml's existing
-    `vad.threshold`/`vad.silence_duration_ms` (already used to configure the realtime session's
-    own `server_vad`) so both pipelines feel the same to a guest, without pretending to
+    when the guest has started and finished speaking. Uses config.yaml's
+    `vad.cascade_energy_threshold` (an RMS level, unlike the server_vad-style 0-1 `vad.threshold`) and the
+    shared `vad.silence_duration_ms`, without pretending to
     reimplement OpenAI's actual VAD algorithm -- just enough to segment turns for STT.
 
     Uses the stdlib `array` module (not the deprecated, Python-3.13-removed `audioop`) since
@@ -249,7 +273,7 @@ class _TurnDetector:
     the life of this module.
     """
 
-    def __init__(self, threshold: float = 0.5, silence_duration_ms: int = 200, sample_rate: int = _AUDIO_SAMPLE_RATE):
+    def __init__(self, threshold: float = _DEFAULT_CASCADE_ENERGY_THRESHOLD, silence_duration_ms: int = 200, sample_rate: int = _AUDIO_SAMPLE_RATE):
         self._cutoff = threshold * 32767
         self._silence_samples_needed = max(1, int(silence_duration_ms / 1000 * sample_rate))
         self._speaking = False
@@ -338,6 +362,10 @@ class _CascadeSessionState:
     # `CascadeProcessor._start_turn`/`_send_greeting`, cancelled by `_cancel_current_turn` on a
     # new `speech_started` (barge-in, Rick's #118 review item 5).
     current_turn_task: asyncio.Task | None = None
+    # Guest audio handed to a turn whose transcription hasn't returned yet. A natural pause
+    # longer than `silence_duration_ms` ends the turn early, and the guest resuming then cancels
+    # it (barge-in) mid-STT; this audio is carried into the next turn instead of being dropped.
+    untranscribed_audio: bytes = b""
     # #126: this connection's own local VAD -- lives on the state (not a bare `_run_session`
     # local) so `_speak` can reach it to arm the echo-suppression cooldown after every TTS turn.
     detector: _TurnDetector | None = None
@@ -354,6 +382,23 @@ class _CascadeSessionState:
     nudge_armed: bool = False
     nudge_task: asyncio.Task | None = None
 
+
+def _release_untranscribed_audio(state: _CascadeSessionState, turn_audio: bytes) -> None:
+    """Drop the carried guest audio once its own turn is resolved -- only if no newer turn
+    has since replaced it with a longer combined buffer."""
+    if state.untranscribed_audio is turn_audio:
+        state.untranscribed_audio = b""
+
+
+def _completed_response_done(response_id: str, final_text: str) -> dict:
+    """The Realtime API's `response.done` shape: the frontend renders the assistant's line from
+    `output[].content[].transcript`, exactly as it does for realtime turns."""
+    output = [{
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "audio", "transcript": final_text}],
+    }] if final_text else []
+    return {"type": "response.done", "response": {"id": response_id, "status": "completed", "output": output}}
 
 def _resolve_persona_voice(persona, default_voice: str, allowed_voices: frozenset[str]) -> str:
     """#248: the per-persona default-voice lookup `RTMiddleTier._forward_messages` already does
@@ -420,7 +465,9 @@ class CascadeProcessor:
         # string a persona.json happens to declare.
         self.allowed_voices = allowed_voices if allowed_voices is not None else _DEFAULT_ALLOWED_VOICES
         self._chat_client: ChatCompletionsClient | None = None
-        self._vad_threshold = _vad_cfg.get("threshold", 0.5)
+        self._vad_threshold = _cascade_energy_threshold(
+            _vad_cfg.get("cascade_energy_threshold", _DEFAULT_CASCADE_ENERGY_THRESHOLD)
+        )
         self._vad_silence_ms = _vad_cfg.get("silence_duration_ms", 200)
         # Rick's #118 review item 5 (429 parity): reuses rate_limit.py's shared
         # settings/constants/ladder-shape so a chat/STT/TTS 429 surfaces to the guest through
@@ -694,10 +741,18 @@ class CascadeProcessor:
                 await ws.send_json({"type": "input_audio_buffer.speech_started"})
             elif event == "speech_stopped":
                 self._cancel_nudge(state, "guest turn started")
-                turn_audio = detector.take_buffer()
+                combined = state.untranscribed_audio + detector.take_buffer()
+                if state.untranscribed_audio and len(combined) > _MAX_CARRIED_TURN_AUDIO_BYTES:
+                    logger.warning(
+                        "Cascade carried guest audio exceeded %d bytes; dropped the oldest %d bytes (session=%s)",
+                        _MAX_CARRIED_TURN_AUDIO_BYTES, len(combined) - _MAX_CARRIED_TURN_AUDIO_BYTES, session_id)
+                    combined = combined[-_MAX_CARRIED_TURN_AUDIO_BYTES:]
+                turn_audio = combined
+                state.untranscribed_audio = turn_audio
                 detector.reset()
                 self._start_turn(ws, session_id, state, turn_audio)
         elif msg_type == "input_audio_buffer.clear":
+            state.untranscribed_audio = b""
             detector.reset()
         elif msg_type == "extension.set_voice":
             # Rick's #253 review item 1: mirror realtime's own extension.set_voice handler
@@ -824,22 +879,27 @@ class CascadeProcessor:
         try:
             transcript = await self._with_rate_limit_retry(ws, session_id, lambda: self._transcribe(turn_audio), "transcription")
         except CascadeRateLimitExhausted:
+            _release_untranscribed_audio(state, turn_audio)
             return  # the client already got the final extension.rate_limited notice
         except Exception:
+            _release_untranscribed_audio(state, turn_audio)
             logger.exception("Cascade transcription failed (session=%s)", session_id)
             return
         if not transcript.strip():
+            _release_untranscribed_audio(state, turn_audio)
             return
-        await ws.send_json({
+        # Commit point: no await between here and the history/carry update, so a barge-in
+        # cancel lands either before it (audio stays carried, no transcript emitted) or after it
+        # (carry released, transcript frame still delivered via shield). Never both.
+        state.messages.append(UserMessage(content=transcript))
+        _release_untranscribed_audio(state, turn_audio)
+        # #126: feeds this session's own rehydration/resume history -- see
+        # `SessionManager.rehydration_text`/`recent_turns`.
+        self._sessions.record_turn(session_id, "guest", transcript)
+        await asyncio.shield(ws.send_json({
             "type": "conversation.item.input_audio_transcription.completed",
             "transcript": transcript,
-        })
-        state.messages.append(UserMessage(content=transcript))
-        # #126: feeds this session's own rehydration/resume history -- see
-        # `SessionManager.rehydration_text`/`recent_turns`. Never called before this issue (a
-        # cascade session's `recent_turns()` was always empty), so a resumed cascade session had
-        # nothing real to rehydrate with.
-        self._sessions.record_turn(session_id, "guest", transcript)
+        }))
         await self._run_turn_and_speak(ws, session_id, state)
 
     async def _send_greeting(self, ws: web.WebSocketResponse, session_id: str, state: _CascadeSessionState, prompt_loader) -> None:
@@ -905,11 +965,25 @@ class CascadeProcessor:
         try:
             final_text = await self._run_chat_tool_loop(ws, session_id, state)
         except CascadeRateLimitExhausted:
-            await ws.send_json({"type": "response.done", "response": {"id": response_id}})
+            await ws.send_json(_completed_response_done(response_id, ""))
             return
         except asyncio.CancelledError:
             raise  # barge-in: `_cancel_current_turn` owns this turn's cleanup, not us.
-        except Exception:
+        except Exception as exc:
+            if _is_content_filter(exc):
+                # Same terminal shape the Realtime API sends for a filtered turn, so the frontend
+                # asks the guest to rephrase instead of going silent. No automatic retry.
+                logger.warning("Cascade chat completion blocked by content filter (session=%s)", session_id)
+                await ws.send_json({
+                    "type": "response.done",
+                    "response": {
+                        "id": response_id,
+                        "status": "incomplete",
+                        "status_details": {"type": "incomplete", "reason": "content_filter"},
+                        "output": [],
+                    },
+                })
+                return
             # #262: a non-429 chat-completion failure (e.g. a transient 500) used to propagate
             # straight out of this method, through `_process_turn`/`_send_greeting`, into
             # `_start_turn`/`_start_greeting`'s own `except Exception: logger.exception(...)` --
@@ -928,12 +1002,12 @@ class CascadeProcessor:
             return
 
         if final_text:
-            await ws.send_json({"type": "response.audio_transcript.delta", "delta": final_text})
+            await ws.send_json({"type": "response.audio_transcript.delta", "response_id": response_id, "delta": final_text})
             # #126: feeds this session's own rehydration/resume history -- see
             # `_process_turn`'s matching guest-side `record_turn` call for why.
             self._sessions.record_turn(session_id, "assistant", final_text)
             try:
-                await self._with_rate_limit_retry(ws, session_id, lambda: self._speak(ws, final_text, state), "text-to-speech")
+                await self._with_rate_limit_retry(ws, session_id, lambda: self._speak(ws, final_text, state, response_id=response_id), "text-to-speech")
             except CascadeRateLimitExhausted:
                 pass
             except asyncio.CancelledError:
@@ -949,7 +1023,7 @@ class CascadeProcessor:
                 await self._send_failed_response_done(ws, response_id, "text-to-speech failed")
                 return
 
-        await ws.send_json({"type": "response.done", "response": {"id": response_id}})
+        await ws.send_json(_completed_response_done(response_id, final_text))
 
         identifiers = order_state_singleton.advance_round_trip(session_id)
         await self._sessions.emit_session_identifiers(ws, "extension.round_trip_token", identifiers)
@@ -1148,7 +1222,7 @@ class CascadeProcessor:
             return text
         return apply_lexicon(text, pronunciations)
 
-    async def _speak(self, ws: web.WebSocketResponse, text: str, state: _CascadeSessionState) -> None:
+    async def _speak(self, ws: web.WebSocketResponse, text: str, state: _CascadeSessionState, *, response_id: str = "") -> None:
         token = await self._bearer_token()
         deployment = self.model_catalog.deployment_for(self.model_catalog.cascade_audio.tts)
         url = f"{self.audio_endpoint}/openai/v1/audio/speech"
@@ -1173,5 +1247,7 @@ class CascadeProcessor:
             chunk = audio_bytes[i:i + chunk_size]
             await ws.send_json({
                 "type": "response.audio.delta",
+                # Realtime API delta shape: each chunk names the response it belongs to.
+                "response_id": response_id,
                 "delta": base64.b64encode(chunk).decode("ascii"),
             })

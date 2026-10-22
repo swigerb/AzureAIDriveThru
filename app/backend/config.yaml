@@ -84,6 +84,11 @@ vad:
   threshold: 0.5
   prefix_padding_ms: 300
   silence_duration_ms: 200
+  # Cascade only: RMS energy cutoff, as a fraction of PCM16 full scale, for the local turn
+  # detector. `threshold` above is a server_vad-style 0-1 setting, not an audio level (realtime
+  # sessions send their own turn_detection); cascade reusing it (0.5 = -6 dBFS) meant normal
+  # speech levels never started a cascade turn. 0.02 is about -34 dBFS. Must be in (0, 1).
+  cascade_energy_threshold: 0.02
 
 business_rules:
   tax_rate: 0.08

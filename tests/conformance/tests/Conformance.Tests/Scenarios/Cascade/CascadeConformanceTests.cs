@@ -109,6 +109,17 @@ public sealed class CascadeConformanceTests(CascadeConformanceFixture fixture)
         Assert.True(finalAnswer is not null, "Expected the model's final answer as response.audio_transcript.delta.");
         Assert.Equal("Your order is currently empty.", finalAnswer!.Json.GetProperty("delta").GetString());
 
+        // The completed turn's response.done carries the Realtime API's output shape: the
+        // frontend renders the assistant line only from output[].content[].transcript.
+        var doneFrame = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > finalAnswer.Sequence && f.Type == "response.done", FrameTimeout, ct);
+        Assert.True(doneFrame is not null, "Expected the turn's own response.done.");
+        var doneResponse = doneFrame!.Json.GetProperty("response");
+        Assert.Equal("completed", doneResponse.GetProperty("status").GetString());
+        Assert.Equal(
+            "Your order is currently empty.",
+            doneResponse.GetProperty("output")[0].GetProperty("content")[0].GetProperty("transcript").GetString());
+
         // Proves _speak() actually reached the fake TTS endpoint (the SAME
         // FakeRealtimeUpstreamServer.BaseUri the realtime pipeline's WS points at) with the final
         // answer text, and streamed at least one audio.delta chunk back -- the same client-visible
@@ -117,6 +128,10 @@ public sealed class CascadeConformanceTests(CascadeConformanceFixture fixture)
             f => f.Sequence > connection.GreetingWatermark && f.Type == "response.audio.delta", FrameTimeout, ct);
         Assert.True(audioDelta is not null, "Expected at least one response.audio.delta chunk from cascade TTS.");
         Assert.Contains("Your order is currently empty.", fixture.Realtime.TtsRequestInputs);
+        // Realtime API delta shape: transcript and audio deltas name the response they belong to.
+        var responseId = doneResponse.GetProperty("id").GetString();
+        Assert.Equal(responseId, finalAnswer.Json.GetProperty("response_id").GetString());
+        Assert.Equal(responseId, audioDelta!.Json.GetProperty("response_id").GetString());
     });
 
     [Fact]

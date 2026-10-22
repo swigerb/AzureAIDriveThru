@@ -129,6 +129,11 @@ internal sealed class CascadeProcessor : IPipelineProcessor
         // Completes once the most recent barge-in's cancelled turn has fully stopped and its
         // speech_started frame has been sent -- see RunSessionAsync's BargeIn helper.
         public Task? BargeInTail { get; set; }
+        // Guest audio handed to a turn whose transcription hasn't been committed yet. A natural
+        // pause longer than silence_duration_ms ends the turn early, and the guest resuming then
+        // cancels it (barge-in) mid-STT; this audio is carried into the next turn instead of being
+        // dropped. Guarded by TurnRegistryLock.
+        public byte[] UntranscribedAudio { get; set; } = [];
 
         // #126 one-shot resume nudge (mirrors rtmt.py's/RealtimeProcessor's own
         // NudgeScheduler-arming pair, kept as plain fields here -- not a NudgeScheduler instance --

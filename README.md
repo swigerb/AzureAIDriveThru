@@ -45,13 +45,13 @@ https://github.com/user-attachments/assets/d4dc2713-5117-45cd-ba49-9aa2d707432d
 
 The browser streams microphone PCM over one `/realtime` WebSocket. The Python backend relays audio to the configured Foundry realtime deployment, with default catalog id `gpt-realtime-2.1-mini`, voice `marin`, server VAD threshold `0.5`, 300 ms prefix padding, 200 ms silence duration, the active persona prompt, and persona-specific tool schemas. Guest speech transcription defaults to `whisper-1`. The model can call ordering tools, and the backend returns tool results to both the model and the frontend ticket.
 
-`gpt-realtime-2.1` remains catalogued and deployed as a selectable (non-default) alternative -- it runs deeper reasoning passes than `gpt-realtime-2.1-mini`, at the cost of latency straightforward transactional intents don't need (issue #306).
-
-A Grok voice/realtime model is not offered in Microsoft Foundry for this subscription today (checked 2026-10-05 in eastus2, eastus, westus, westus3, northcentralus, and swedencentral -- only Grok text models are listed). Deferred until Foundry offers one.
+`gpt-realtime-2.1` is a selectable, non-default alternative to `gpt-realtime-2.1-mini`. It uses deeper reasoning at the cost of latency, which is unnecessary for straightforward transactional intents.
 
 ### Cascade pipeline
 
 The cascade pipeline uses the same WebSocket and frontend contract. The backend segments guest audio locally, transcribes it with `gpt-4o-transcribe`, sends text and the same tool schemas to a Foundry chat model, then returns audio from `gpt-4o-mini-tts`. The catalog contains `gpt-5-mini` and `phi-4` for reasoning. The standard deployment creates both, while current persona allow-lists select `gpt-5-mini`.
+
+Cascade turns are slower than realtime: with `gpt-5-mini` and tool calls, a guest turn took roughly 10 to 35 seconds in testing before the reply played. The chat model occasionally repeats a sentence or reads a tool's upsell hint aloud. A short pause inside a guest phrase can split it into two turns; audio from a turn cancelled before its transcript commits is carried into the next turn. While a reply plays, guest audio is suppressed to avoid echo, so speech that overlaps the assistant can be lost. The cascade speech threshold (`vad.cascade_energy_threshold`) has been verified with synthetic speech, not yet with a physical microphone.
 
 ## Azure services
 
@@ -75,37 +75,23 @@ The cascade pipeline uses the same WebSocket and frontend contract. The backend 
 ### Dependency compatibility
 
 The frontend uses React 19, Vite 8, TypeScript 7, and Vitest 5. Vite's
-`legacy.inconsistentCjsInterop` option is intentional: `react-use-websocket` still publishes a
-transpiled CommonJS default export, and removing the option breaks the production bundle.
-Commit `package-lock.json` and NuGet `packages.lock.json` updates with manifest changes;
-Dependabot monitors npm, pip, NuGet, containers, and GitHub Actions against `dev`.
+`legacy.inconsistentCjsInterop` option is required for the CommonJS default export published by
+`react-use-websocket`. Keep `package-lock.json` and NuGet `packages.lock.json` in sync with
+manifest changes. Dependabot checks npm, pip, NuGet, containers, and GitHub Actions against
+`dev`; see [contributor guidance](CONTRIBUTING.md#dependency-maintenance).
 
-The dependency audit on 2026-10-21 checked npm and Python against the configured corporate
-package proxy, all three NuGet solutions (including transitives) against the enabled NuGet
-sources, GitHub Action releases, and official container/runtime metadata. No public package
-registry fallback or feed replacement is needed. React/React DOM are now 19.3.1; compatible
-transitive npm updates are in the lockfile. See [contributor checks](CONTRIBUTING.md#dependency-maintenance)
-for repeatable inventory and audit commands.
+Current compatibility constraints:
 
-The runtime sweep retains these explicit exceptions, not a claim that everything is stable:
+- The C# backend targets .NET 11 RC2, a prerelease SDK/runtime pinned in `global.json`. Moving to
+  stable .NET 10 requires a separate target-framework change.
+- `azure-ai-inference` uses `1.0.0b9`; no stable release is available.
+- PyYAML 6.0.3 has no Windows wheel for Python 3.15. Setup scripts, CI, and the production image
+  set `PYYAML_FORCE_LIBYAML=0` to use the supported pure-Python parser. The devcontainer uses
+  Python 3.13 because its registry does not offer a Python 3.15 image.
+- Transitive npm versions follow their parent packages' supported ranges. Avoid overrides that
+  force incompatible versions; upstream `latest` can also be a prerelease.
 
-- The C# port already targets .NET 11; RC2 is the latest compatible SDK/runtime, not a stable
-  release. Moving the port to stable .NET 10 is a separate target-framework change.
-- `azure-ai-inference` remains at `1.0.0b9` because no stable release is available.
-- PyYAML 6.0.3 does not yet publish a Windows wheel for Python 3.15, so both local setup scripts, CI, and the
-  production image set `PYYAML_FORCE_LIBYAML=0` while installing it. This selects PyYAML's
-  supported pure-Python parser and avoids requiring a C/C++ compiler; the backend's YAML behavior
-  is covered by backend tests. The Microsoft Python devcontainer now uses the available
-  Python 3.13 Bookworm base; its registry does not yet offer a 3.14 or 3.15 image. It does not
-  reproduce the production/CI Python 3.15 runtime.
-- Transitive npm packages can remain below their upstream `latest` tag when a parent pins or
-  restricts their version. Keep the parent-compatible resolution; do not force incompatible
-  major versions with overrides merely to make an outdated report empty. Some upstream
-  `latest` tags themselves point to prereleases (for example Rollup `5.0.0-0`); those are
-  not stable upgrade candidates.
-
-Local Windows validation does not replace the Linux container build and Gunicorn startup
-checks in CI. No Azure resources or hosting plans need to change for these upgrades.
+Windows checks do not replace the Linux container build and Gunicorn startup checks in CI.
 
 ### Local development
 
@@ -132,38 +118,19 @@ built frontend; it is not a Windows production server.
 
 ### Deploy with azd
 
-The deployed app always runs with Entra ID auth, so create the Entra app registration and pin its ids before the first `azd up`. Without them, the frontend build and backend startup both fail.
+The deployed app requires Entra ID. Create its app registration and set the tenant, client, and
+API scope values before building the frontend. Follow the staged auth and ingress procedure in
+[DEPLOY.md](DEPLOY.md).
 
-```powershell
-azd auth login
-azd env new <env-name>
-azd env set AZURE_LOCATION eastus2
-azd env set AZURE_OPENAI_SERVICE_LOCATION eastus2
-
-# Create (or reconcile) the Entra app registration, then pin its ids
-./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -Apply
-azd env set ENTRA_TENANT_ID "<tenant-id>"
-azd env set ENTRA_CLIENT_ID "<client-id>"
-
-azd up
-```
-
-The `postprovision` hooks configure auth env files and build persona search indexes with `scripts/setup_search_index.ps1` or `.sh`. The `postdeploy` hook runs `scripts/smoke_realtime.ps1` or `.sh` as a non-fatal realtime smoke check.
-
-Once the app has a public URL, re-run `./scripts/Setup-EntraAuth.ps1 -TenantId <tenant-id> -ClientId <client-id> -FromAzdEnv -Apply` to add its redirect URI (see [DEPLOY.md](DEPLOY.md#setup), case (c)), then verify with:
-
-```powershell
-./scripts/Verify-ProductionAuth.ps1
-./scripts/Verify-ProductionAuth.ps1 -Authenticated
-```
-
-See [DEPLOY.md](DEPLOY.md) and [docs/customizing_deploy.md](docs/customizing_deploy.md) for deployment options.
+`DEPLOY_DOTNET_APP` defaults to `false`. While it is disabled, target the Python service explicitly
+(for example, `azd deploy backend`); after enabling and provisioning C#, target `backend-dotnet`.
+Do not run bare `azd up` or `azd deploy` while the C# service is disabled.
 
 ## Choose your backend
 
 The app has two backend implementations behind the same frontend and the same `/realtime` wire
 contract: `app/backend` (Python, aiohttp -- the reference implementation) and
-`app/backend-dotnet` (C#, .NET 11, ASP.NET Core -- an in-progress port). Both can run side by side
+`app/backend-dotnet` (C#, .NET 11, ASP.NET Core). Both can run side by side
 in the same environment, sharing the same Foundry account, Azure AI Search service, and managed
 identity (`docs/persona-architecture.md` section 14).
 
@@ -210,14 +177,13 @@ move between them without losing their persona or model choice:
 - **Python** deploys by default on every `azd up` -- see [Deploy with `azd`](#deploy-with-azd)
   above.
 - **C#** is opt-in per environment via `DEPLOY_DOTNET_APP`/`deployDotnetApp`, off by default: see
-  [DEPLOY.md's ".NET container app" section](DEPLOY.md#net-container-app-s7-17) for the
-  `azd env set` steps, the ingress-last rollout, and rollback. The owner's production
-  environment has it enabled as of 2026-10-05.
+  [DEPLOY.md's .NET container app section](DEPLOY.md#net-container-app) for the `azd env set`
+  steps, ingress-last rollout, and rollback. Enable it only in environments where the second app
+  is approved and intended.
 
-**Live comparison.** `scripts/ab_compare.py` drives the same scripted orders against both
-backends' live `/realtime` endpoint and measures per-turn latency, tool correctness, session
-ready time, and container CPU/memory; see its own `--help` for usage. The latest run's results
-are in [docs/ab-report.md](docs/ab-report.md).
+**Live comparison.** `scripts/ab_compare.py` drives scripted orders against both backends' live
+`/realtime` endpoints and measures latency, tool correctness, session readiness, and container
+CPU and memory. Run `python scripts/ab_compare.py --help` for usage.
 
 ## Repository layout
 

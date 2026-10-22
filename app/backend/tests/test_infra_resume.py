@@ -65,9 +65,13 @@ class StickyIngressTests(unittest.TestCase):
         self.assertGreaterEqual(version, "2023-05-02", "ingress.stickySessions needs API 2023-05-02-preview or later")
 
     def test_replica_bounds_unchanged(self):
-        block = _backend_module_block(MAIN_BICEP.read_text(encoding="utf-8"))
+        main = MAIN_BICEP.read_text(encoding="utf-8")
+        block = _backend_module_block(main)
         self.assertRegex(block, r"containerMinReplicas:\s*1\b")
-        self.assertRegex(block, r"containerMaxReplicas:\s*5\b")
+        self.assertRegex(block, r"containerMaxReplicas:\s*containerAppMaxReplicas\b")
+        self.assertRegex(main, r"param containerAppMaxReplicas int = 5\b")
+        params = (MAIN_BICEP.parent / "main.parameters.json").read_text(encoding="utf-8")
+        self.assertIn('"value": "${AZURE_CONTAINER_APP_MAX_REPLICAS=5}"', params)
 
 
 class SessionSecretWiringTests(unittest.TestCase):

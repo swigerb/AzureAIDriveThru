@@ -1,0 +1,90 @@
+name: Python wheelhouse
+
+# Builds a hash-locked wheelhouse for app/backend/requirements.txt from the public PyPI index on
+# the same python:3.15-slim base as app/Dockerfile. A build host that cannot reach the index can
+# pass the downloaded artifact to `docker build --build-context python-wheelhouse=<dir>`.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - app/backend/requirements.txt
+      - app/Dockerfile
+      - .github/workflows/python-wheelhouse.yml
+
+permissions:
+  contents: read
+
+jobs:
+  wheelhouse:
+    name: Build Python wheelhouse
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build wheels and lock
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/wheelhouse"
+          docker pull --quiet python:3.15-slim
+          docker run --rm \
+            -v "$PWD/app/backend/requirements.txt:/src/requirements.txt:ro" \
+            -v "$RUNNER_TEMP/wheelhouse:/wheelhouse" \
+            -e PYYAML_FORCE_LIBYAML=0 \
+            python:3.15-slim sh -euc '
+              python -m pip wheel --no-cache-dir --index-url https://pypi.org/simple \
+                --wheel-dir /wheelhouse -r /src/requirements.txt
+              cd /wheelhouse
+              python - <<"PY"
+          import hashlib, pathlib
+          lines = []
+          for wheel in sorted(pathlib.Path(".").glob("*.whl")):
+              name, version = wheel.name.split("-")[:2]
+              digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+              lines.append(f"{name}=={version} --hash=sha256:{digest}")
+          pathlib.Path("requirements.lock.txt").write_text("\n".join(lines) + "\n")
+          PY
+              tr -d "\r" < /src/requirements.txt | sha256sum | cut -d" " -f1 > requirements.txt.sha256
+              sha256sum *.whl requirements.lock.txt requirements.txt.sha256 > SHA256SUMS
+              python -m pip --version > pip-version.txt
+            '
+          {
+            echo "repository=$GITHUB_REPOSITORY"
+            echo "commit=$GITHUB_SHA"
+            echo "run=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "index=https://pypi.org/simple"
+            echo "base_image=$(docker image inspect --format '{{index .RepoDigests 0}}' python:3.15-slim)"
+            echo "pip=$(cat "$RUNNER_TEMP/wheelhouse/pip-version.txt")"
+          } > "$RUNNER_TEMP/wheelhouse/PROVENANCE.txt"
+          rm "$RUNNER_TEMP/wheelhouse/pip-version.txt"
+          cat "$RUNNER_TEMP/wheelhouse/PROVENANCE.txt"
+          cat "$RUNNER_TEMP/wheelhouse/requirements.lock.txt"
+
+      - name: Verify offline install
+        run: |
+          set -euo pipefail
+          docker run --rm --network none \
+            -v "$PWD/app/backend/requirements.txt:/app/requirements.txt:ro" \
+            -v "$RUNNER_TEMP/wheelhouse:/wheelhouse:ro" \
+            -w /app python:3.15-slim sh -euc '
+              (cd /wheelhouse && sha256sum -c --strict SHA256SUMS)
+              test "$(tr -d "\r" < requirements.txt | sha256sum | cut -d" " -f1)" = "$(cat /wheelhouse/requirements.txt.sha256)"
+              python -m pip install --no-cache-dir --no-index --find-links /wheelhouse \
+                --require-hashes -r /wheelhouse/requirements.lock.txt
+              python -m pip install --no-cache-dir --no-index --find-links /wheelhouse \
+                --dry-run -r requirements.txt
+              python -m pip check
+              python -c "import aiohttp, openai, yaml, jwt, azure.identity, azure.search.documents"
+            '
+
+      - name: Upload wheelhouse
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: python-wheelhouse
+          path: ${{ runner.temp }}/wheelhouse
+          if-no-files-found: error
+          retention-days: 14

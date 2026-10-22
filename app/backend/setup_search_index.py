@@ -38,6 +38,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -64,7 +65,6 @@ from azure.search.documents.indexes.models import (
     VectorSearchAlgorithmMetric,
     VectorSearchProfile,
 )
-from dotenv import load_dotenv
 from openai import AzureOpenAI
 from rich.logging import RichHandler
 
@@ -88,24 +88,51 @@ EMBEDDING_DIMENSIONS = 3072
 # Search indexing is near-real-time, so the post-ingest document count can lag for a moment.
 _COUNT_VERIFY_ATTEMPTS = 10
 _COUNT_VERIFY_DELAY_SECONDS = 2.0
+_AZD_SKIP_INDEX_SETTING = "AZURE_SEARCH_SKIP_INDEX_SETUP"
+_AZD_OPTIONAL_RUNTIME_SETTINGS = (
+    "AZURE_OPENAI_EMBEDDING_DEPLOYMENT",
+    "AZURE_TENANT_ID",
+    "PERSONAS",
+)
+_AZD_REQUIRED_RUNTIME_SETTINGS = (
+    "AZURE_SEARCH_ENDPOINT",
+    "AZURE_OPENAI_EASTUS2_ENDPOINT",
+)
+_AZD_RUNTIME_SETTINGS = (
+    _AZD_SKIP_INDEX_SETTING,
+    *_AZD_OPTIONAL_RUNTIME_SETTINGS,
+    *_AZD_REQUIRED_RUNTIME_SETTINGS,
+)
 
 
 def load_azd_env():
-    """Load the default azd environment file via python-dotenv."""
-    result = subprocess.run(
-        "azd env list -o json", shell=True, capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        raise RuntimeError("Error loading azd env")
-    env_json = json.loads(result.stdout)
-    env_file_path = None
-    for entry in env_json:
-        if entry["IsDefault"]:
-            env_file_path = entry["DotEnvPath"]
-    if not env_file_path:
-        raise RuntimeError("No default azd env file found")
-    logger.info("Loading azd env from %s", env_file_path)
-    load_dotenv(env_file_path, override=True)
+    """Load only the non-secret runtime settings needed from the selected azd environment."""
+
+    azd = shutil.which("azd") or "azd"
+
+    def load_setting(name: str, *, required: bool = False) -> str:
+        result = subprocess.run(
+            [azd, "env", "get-value", name],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        value = result.stdout.strip()
+        if result.returncode == 0 and value:
+            os.environ[name] = value
+            return value
+        if required and not os.environ.get(name):
+            detail = result.stderr.strip() or f"azd exited with status {result.returncode}"
+            raise RuntimeError(f"Unable to load required azd setting {name}: {detail}")
+        return os.environ.get(name, "")
+
+    if load_setting(_AZD_SKIP_INDEX_SETTING) == "true":
+        return
+
+    for name in _AZD_OPTIONAL_RUNTIME_SETTINGS:
+        load_setting(name)
+    for name in _AZD_REQUIRED_RUNTIME_SETTINGS:
+        load_setting(name, required=True)
 
 
 def sanitize_key(key: str) -> str:

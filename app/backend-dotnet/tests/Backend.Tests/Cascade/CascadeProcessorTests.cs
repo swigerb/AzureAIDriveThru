@@ -27,12 +27,13 @@ namespace Backend.Tests.Cascade;
 internal sealed class RoutingFoundryHandler : HttpMessageHandler
 {
     private readonly Queue<Func<HttpResponseMessage>> _chatResponses = new();
-    private readonly Queue<Func<HttpResponseMessage>> _transcribeResponses = new();
+    private readonly Queue<Func<CancellationToken, Task<HttpResponseMessage>>> _transcribeResponses = new();
     private readonly Queue<Func<HttpResponseMessage>> _speakResponses = new();
 
     public List<string> ChatRequestBodies { get; } = [];
     public List<string> SpeakRequestBodies { get; } = [];
-    public int TranscribeRequestCount { get; private set; }
+    public int TranscribeRequestCount => TranscribeRequestBodies.Count;
+    public List<byte[]> TranscribeRequestBodies { get; } = [];
 
     public RoutingFoundryHandler EnqueueChatMessage(string role, string? content, JsonArray? toolCalls = null)
     {
@@ -67,6 +68,18 @@ internal sealed class RoutingFoundryHandler : HttpMessageHandler
         return this;
     }
 
+    /// <summary>Foundry's real 400 body for a prompt rejected by the content filter.</summary>
+    public RoutingFoundryHandler EnqueueChatContentFilter()
+    {
+        _chatResponses.Enqueue(() => new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent(
+                """{"error":{"message":"The response was filtered","type":null,"param":"prompt","code":"content_filter","status":400}}""",
+                Encoding.UTF8, "application/json"),
+        });
+        return this;
+    }
+
     /// <summary>Simulates an HttpClient-internal timeout on the chat-completions call itself (as
     /// opposed to a tool call -- see <see cref="RecordingToolExecutor"/>'s own doc comment for that
     /// variant): throws a <see cref="TaskCanceledException"/> whose OWN cancellation token (not the
@@ -86,16 +99,28 @@ internal sealed class RoutingFoundryHandler : HttpMessageHandler
     public RoutingFoundryHandler EnqueueTranscript(string text)
     {
         var body = new JsonObject { ["text"] = text }.ToJsonString();
-        _transcribeResponses.Enqueue(() => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") });
+        _transcribeResponses.Enqueue(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") }));
+        return this;
+    }
+
+    /// <summary>A transcription still in flight when the guest resumes speaking: never answers,
+    /// only ends when the turn's own token is cancelled by barge-in.</summary>
+    public RoutingFoundryHandler EnqueueTranscriptUntilCancelled()
+    {
+        _transcribeResponses.Enqueue(async ct =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct).ConfigureAwait(false);
+            throw new InvalidOperationException("unreachable");
+        });
         return this;
     }
 
     public RoutingFoundryHandler EnqueueTranscribeRateLimited()
     {
-        _transcribeResponses.Enqueue(() => new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+        _transcribeResponses.Enqueue(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.TooManyRequests)
         {
             Content = new StringContent("""{"error":"rate limited"}""", Encoding.UTF8, "application/json"),
-        });
+        }));
         return this;
     }
 
@@ -122,23 +147,23 @@ internal sealed class RoutingFoundryHandler : HttpMessageHandler
         if (path.EndsWith("/chat/completions", StringComparison.Ordinal))
         {
             ChatRequestBodies.Add(request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken));
-            return Dequeue(_chatResponses, "chat completion");
+            return Dequeue(_chatResponses, "chat completion")();
         }
         if (path.EndsWith("/audio/transcriptions", StringComparison.Ordinal))
         {
-            TranscribeRequestCount++;
-            return Dequeue(_transcribeResponses, "transcription");
+            TranscribeRequestBodies.Add(request.Content is null ? [] : await request.Content.ReadAsByteArrayAsync(cancellationToken));
+            return await Dequeue(_transcribeResponses, "transcription")(cancellationToken);
         }
         if (path.EndsWith("/audio/speech", StringComparison.Ordinal))
         {
             SpeakRequestBodies.Add(request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken));
-            return Dequeue(_speakResponses, "speech");
+            return Dequeue(_speakResponses, "speech")();
         }
         return new HttpResponseMessage(HttpStatusCode.NotFound);
     }
 
-    private static HttpResponseMessage Dequeue(Queue<Func<HttpResponseMessage>> queue, string routeName) =>
-        queue.Count > 0 ? queue.Dequeue()() : throw new InvalidOperationException($"No queued {routeName} response -- the test under-provisioned its fake responses.");
+    private static T Dequeue<T>(Queue<T> queue, string routeName) =>
+        queue.Count > 0 ? queue.Dequeue() : throw new InvalidOperationException($"No queued {routeName} response -- the test under-provisioned its fake responses.");
 }
 
 /// <summary>Records each call's raw arguments JSON (via <see cref="JsonElement.GetRawText"/>) and
@@ -217,6 +242,14 @@ internal sealed class DelayedFakeWebSocket(
 
     public List<(byte[] Data, WebSocketMessageType MessageType, bool EndOfMessage)> SentMessages { get; } = [];
 
+    /// <summary>Optional barrier awaited before the Nth queued message is handed to the reader.</summary>
+    public Func<int, Task>? BeforeReceive { get; init; }
+
+    /// <summary>Optional barrier awaited before a text frame is recorded as sent.</summary>
+    public Func<string, CancellationToken, Task>? BeforeSendText { get; init; }
+
+    private int _dequeued;
+
     public override WebSocketCloseStatus? CloseStatus => null;
     public override string? CloseStatusDescription => null;
     public override WebSocketState State => _state;
@@ -249,6 +282,11 @@ internal sealed class DelayedFakeWebSocket(
             {
                 throw new InvalidOperationException("DelayedFakeWebSocket has no more messages queued -- the reader kept reading past what the test expected.");
             }
+            if (BeforeReceive is not null)
+            {
+                await BeforeReceive(_dequeued).ConfigureAwait(false);
+            }
+            _dequeued++;
             (_currentData, _currentType) = _messages.Dequeue();
             _currentOffset = 0;
         }
@@ -266,10 +304,17 @@ internal sealed class DelayedFakeWebSocket(
         return new WebSocketReceiveResult(toCopy, messageType, endOfMessage);
     }
 
-    public override Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken)
+    public override async Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken)
     {
-        SentMessages.Add((buffer.ToArray(), messageType, endOfMessage));
-        return Task.CompletedTask;
+        var data = buffer.ToArray();
+        if (BeforeSendText is not null && messageType == WebSocketMessageType.Text)
+        {
+            await BeforeSendText(Encoding.UTF8.GetString(data), cancellationToken).ConfigureAwait(false);
+        }
+        lock (SentMessages)
+        {
+            SentMessages.Add((data, messageType, endOfMessage));
+        }
     }
 }
 
@@ -674,6 +719,223 @@ public sealed class CascadeProcessorTests
             m!["role"]?.GetValue<string>() == "tool" && m["tool_call_id"]?.GetValue<string>() == "call_1");
         // The two REAL turns' own content is present, proving history otherwise continued normally.
         Assert.Contains(lastMessages, m => m!["role"]!.GetValue<string>() == "user" && m["content"]!.GetValue<string>() == "second query");
+        // Turn 1's transcript was already committed before the barge-in, so its audio must not be
+        // replayed into turn 2's upload (both turns' own audio is the same size here).
+        Assert.Equal(WavData(handler.TranscribeRequestBodies[0]).Length, WavData(handler.TranscribeRequestBodies[1]).Length);
+    }
+
+    /// <summary>Live repro (cascade post-fix runs): "No, [0.48 s] that'll be it" split into two
+    /// turns at the 200 ms silence window, and the guest resuming barge-in-cancelled the first
+    /// fragment's turn mid-STT, losing its audio -- STT only ever heard "that'll be it". The
+    /// cancelled fragment must be prepended to the next turn's upload. Mutation seam: dropping
+    /// <c>CarryForward</c> makes the second upload start with the second fragment instead.</summary>
+    [Fact]
+    public async Task RunSessionAsync_FragmentCancelledMidTranscription_IsPrependedToTheNextTurnsUpload()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Welcome!")
+            .EnqueueSpeech([1, 2])
+            .EnqueueTranscriptUntilCancelled() // "No," -- still transcribing when the guest resumes
+            .EnqueueTranscript("No, that'll be it.")
+            .EnqueueChatMessage("assistant", "Your carhop will be right out.")
+            .EnqueueSpeech([3, 4]);
+        var logger = new RecordingLogger();
+        var processor = NewProcessor(handler, new RecordingToolExecutor([]), loader, logger: logger);
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+
+        var firstFragment = Pcm16(20000, count: 10);
+        var secondFragment = Pcm16(10000, count: 10);
+        var silentChunk = Pcm16(0, count: 4800);
+        var socket = new DelayedFakeWebSocket(
+            [
+                (AppendFrame(firstFragment), WebSocketMessageType.Text),
+                (AppendFrame(silentChunk), WebSocketMessageType.Text), // turn 1 spawned, blocks in STT
+                (AppendFrame(secondFragment), WebSocketMessageType.Text), // guest resumes: barge-in cancels turn 1
+                (AppendFrame(silentChunk), WebSocketMessageType.Text), // turn 2 spawned with both fragments
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay);
+
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-split-utterance", TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(logger.Entries, e => e.Level >= LogLevel.Warning);
+        Assert.Equal(2, handler.TranscribeRequestCount);
+        var firstUpload = WavData(handler.TranscribeRequestBodies[0]);
+        var secondUpload = WavData(handler.TranscribeRequestBodies[1]);
+        Assert.Equal(firstUpload, secondUpload[..firstUpload.Length]);
+        Assert.True(secondUpload.AsSpan(firstUpload.Length).StartsWith(secondFragment));
+
+        var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
+        var transcribed = frames.Single(f => f["type"]!.GetValue<string>() == "conversation.item.input_audio_transcription.completed");
+        Assert.Equal("No, that'll be it.", transcribed["transcript"]!.GetValue<string>());
+    }
+
+    /// <summary>Barrier race: turn 1's transcript commit is in flight (its transcription.completed
+    /// send stalled) when the guest barges in and the next fragment's speech_stopped merges the
+    /// carry. The commit must be atomic with the carry: turn 1 commits exactly once and its audio
+    /// is not replayed into turn 2. Mutation seam: committing after the send (the pre-fix order)
+    /// leaves turn 1's audio in the merged carry, so turn 2's upload starts with it.</summary>
+    [Fact]
+    public async Task RunSessionAsync_TranscriptSendStalledAcrossBargeIn_CommitsOnceWithoutReplayingAudio()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Welcome!")
+            .EnqueueSpeech([1, 2])
+            .EnqueueTranscript("A double cheeseburger.")
+            .EnqueueTranscript("That's all.")
+            .EnqueueChatMessage("assistant", "Your carhop will be right out.")
+            .EnqueueSpeech([3, 4]);
+        var processor = NewProcessor(handler, new RecordingToolExecutor([]), loader);
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+
+        var sendReached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseSend = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var testCt = TestContext.Current.CancellationToken;
+        var secondFragment = Pcm16(10000, count: 10);
+        var silentChunk = Pcm16(0, count: 4800);
+        var socket = new DelayedFakeWebSocket(
+            [
+                (AppendFrame(Pcm16(20000, count: 10)), WebSocketMessageType.Text),
+                (AppendFrame(silentChunk), WebSocketMessageType.Text), // turn 1: STT returns, transcript send stalls
+                (AppendFrame(secondFragment), WebSocketMessageType.Text), // barge-in cancels turn 1
+                (AppendFrame(silentChunk), WebSocketMessageType.Text), // speech_stopped merges the carry
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay)
+        {
+            BeforeSendText = async (payload, ct) =>
+            {
+                if (payload.Contains("input_audio_transcription.completed", StringComparison.Ordinal)
+                    && payload.Contains("cheeseburger", StringComparison.Ordinal))
+                {
+                    sendReached.TrySetResult();
+                    await releaseSend.Task.WaitAsync(ct).ConfigureAwait(false);
+                }
+            },
+            BeforeReceive = async index =>
+            {
+                if (index == 2)
+                {
+                    await sendReached.Task.WaitAsync(TimeSpan.FromSeconds(10), testCt).ConfigureAwait(false);
+                }
+                else if (index == 4)
+                {
+                    releaseSend.TrySetResult();
+                    var deadline = DateTime.UtcNow.AddSeconds(10);
+                    while (handler.TranscribeRequestCount < 2 && DateTime.UtcNow < deadline)
+                    {
+                        await Task.Delay(20, testCt).ConfigureAwait(false);
+                    }
+                    await Task.Delay(200, testCt).ConfigureAwait(false);
+                }
+            },
+        };
+
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-commit-race", testCt);
+
+        Assert.Equal(2, handler.TranscribeRequestCount);
+        var firstUpload = WavData(handler.TranscribeRequestBodies[0]);
+        var secondUpload = WavData(handler.TranscribeRequestBodies[1]);
+        Assert.True(secondUpload.AsSpan().StartsWith(secondFragment));
+        Assert.Equal(firstUpload.Length, secondUpload.Length);
+
+        var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
+        var transcripts = frames
+            .Where(f => f["type"]!.GetValue<string>() == "conversation.item.input_audio_transcription.completed")
+            .Select(f => f["transcript"]!.GetValue<string>())
+            .ToList();
+        Assert.Equal(["A double cheeseburger.", "That's all."], transcripts);
+        var lastMessages = JsonNode.Parse(handler.ChatRequestBodies[^1])!["messages"]!.AsArray();
+        Assert.Single(lastMessages, m => m!["role"]!.GetValue<string>() == "user" && m["content"]!.GetValue<string>() == "A double cheeseburger.");
+    }
+
+    [Fact]
+    public async Task RunSessionAsync_CommittedTranscriptAudio_IsNotCarriedIntoTheNextTurn()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Welcome!")
+            .EnqueueSpeech([1, 2])
+            .EnqueueTranscript("A double cheeseburger.")
+            .EnqueueChatMessage("assistant", "Anything else?")
+            .EnqueueSpeech([3, 4])
+            .EnqueueTranscript("No, that'll be it.")
+            .EnqueueChatMessage("assistant", "Your carhop will be right out.")
+            .EnqueueSpeech([5, 6]);
+        var processor = NewProcessor(handler, new RecordingToolExecutor([]), loader);
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+
+        var secondFragment = Pcm16(10000, count: 10);
+        var silentChunk = Pcm16(0, count: 4800);
+        var socket = new DelayedFakeWebSocket(
+            [
+                (AppendFrame(Pcm16(20000, count: 10)), WebSocketMessageType.Text),
+                (AppendFrame(silentChunk), WebSocketMessageType.Text),
+                (AppendFrame(secondFragment), WebSocketMessageType.Text),
+                (AppendFrame(silentChunk), WebSocketMessageType.Text),
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay);
+
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-no-carry", TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, handler.TranscribeRequestCount);
+        Assert.True(WavData(handler.TranscribeRequestBodies[1]).AsSpan().StartsWith(secondFragment));
+    }
+
+    [Fact]
+    public async Task RunSessionAsync_CarriedAudioOverTheCap_IsTruncatedToTheNewestBytesWithAWarning()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Welcome!")
+            .EnqueueSpeech([1, 2])
+            .EnqueueTranscriptUntilCancelled()
+            .EnqueueTranscript("");
+        var logger = new RecordingLogger();
+        var processor = NewProcessor(handler, new RecordingToolExecutor([]), loader, logger: logger);
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+
+        var halfCapSamples = CascadeClientMessageHandler.MaxCarriedTurnAudioBytes / 4;
+        var silentChunk = Pcm16(0, count: 4800);
+        var socket = new DelayedFakeWebSocket(
+            [
+                (AppendFrame(Pcm16(20000, count: halfCapSamples)), WebSocketMessageType.Text),
+                (AppendFrame(silentChunk), WebSocketMessageType.Text), // turn 1 blocks in STT
+                (AppendFrame(Pcm16(10000, count: halfCapSamples)), WebSocketMessageType.Text), // barge-in
+                (AppendFrame(silentChunk), WebSocketMessageType.Text), // carried + new > cap
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay);
+
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-carry-cap", TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, handler.TranscribeRequestCount);
+        Assert.Equal(CascadeClientMessageHandler.MaxCarriedTurnAudioBytes, WavData(handler.TranscribeRequestBodies[1]).Length);
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("dropped the oldest", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void CarryForward_CapsCarriedAudioToTheMostRecentBytes()
+    {
+        var carried = new byte[CascadeClientMessageHandler.MaxCarriedTurnAudioBytes];
+        var fragment = new byte[] { 7, 8 };
+        var combined = CascadeClientMessageHandler.CarryForward(carried, fragment);
+        Assert.Equal(CascadeClientMessageHandler.MaxCarriedTurnAudioBytes, combined.Length);
+        Assert.Equal(fragment, combined[^2..]);
+        Assert.Same(fragment, CascadeClientMessageHandler.CarryForward([], fragment));
+    }
+
+    /// <summary>Extracts the PCM payload of the WAV file inside a multipart transcription upload.</summary>
+    private static byte[] WavData(byte[] multipartBody)
+    {
+        var riff = multipartBody.AsSpan().IndexOf("RIFF"u8);
+        Assert.True(riff >= 0, "transcription upload contains no WAV file");
+        var data = multipartBody.AsSpan(riff).IndexOf("data"u8) + riff;
+        var length = BitConverter.ToInt32(multipartBody, data + 4);
+        return multipartBody.AsSpan(data + 8, length).ToArray();
     }
 
     /// <summary>#236 Rick re-review item 3 (LOW): the `when (turnCt.IsCancellationRequested)`
@@ -743,6 +1005,12 @@ public sealed class CascadeProcessorTests
         var types = frames.Select(f => f["type"]!.GetValue<string>()).ToList();
         Assert.Equal(2, types.Count(t => t == "response.done")); // greeting + guest turn
         Assert.Equal("Sorry, something went wrong.", frames.Last(f => f["type"]!.GetValue<string>() == "response.audio_transcript.delta")["delta"]!.GetValue<string>());
+        // Realtime-shaped completion: the frontend renders the assistant line only from
+        // output[].content[].transcript (an id-only frame left cascade turns invisible).
+        var guestDone = frames.Last(f => f["type"]!.GetValue<string>() == "response.done")["response"]!;
+        Assert.Equal("completed", guestDone["status"]!.GetValue<string>());
+        Assert.Equal("assistant", guestDone["output"]![0]!["role"]!.GetValue<string>());
+        Assert.Equal("Sorry, something went wrong.", guestDone["output"]![0]!["content"]![0]!["transcript"]!.GetValue<string>());
     }
 
     /// <summary>#262: an `OperationCanceledException` whose OWN token is cancelled (an
@@ -832,6 +1100,41 @@ public sealed class CascadeProcessorTests
         Assert.Contains(types, t => t == "error");
         var guestDone = frames.Last(f => f["type"]!.GetValue<string>() == "response.done");
         Assert.Equal("failed", guestDone["response"]!["status"]!.GetValue<string>());
+    }
+
+    /// <summary>Live regression: Foundry rejected a cascade prompt with 400 content_filter and the
+    /// guest only got a generic failure (no rephrase notice). Must match the Realtime API's
+    /// filtered-turn shape, with no automatic retry.</summary>
+    [Fact]
+    public async Task RunSessionAsync_ChatContentFilter_SendsIncompleteContentFilterResponseDone()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Welcome!")
+            .EnqueueSpeech([1, 2])
+            .EnqueueTranscript("that'll be it")
+            .EnqueueChatContentFilter();
+        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, logger: new RecordingLogger());
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+
+        var socket = new DelayedFakeWebSocket(
+            [
+                (AppendFrame(Pcm16(20000, count: 10)), WebSocketMessageType.Text),
+                (AppendFrame(Pcm16(0, count: 4800)), WebSocketMessageType.Text),
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay);
+
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-chat-filter", TestContext.Current.CancellationToken);
+
+        var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
+        var types = frames.Select(f => f["type"]!.GetValue<string>()).ToList();
+        Assert.DoesNotContain("error", types);
+        var guestDone = frames.Last(f => f["type"]!.GetValue<string>() == "response.done")["response"]!;
+        Assert.Equal("incomplete", guestDone["status"]!.GetValue<string>());
+        Assert.Equal("content_filter", guestDone["status_details"]!["reason"]!.GetValue<string>());
+        Assert.Empty(guestDone["output"]!.AsArray());
+        Assert.Equal(2, handler.ChatRequestBodies.Count);
     }
 
     /// <summary>#262's TTS leg: a non-429 TTS failure (after a successful chat completion) must

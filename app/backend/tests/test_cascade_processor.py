@@ -53,6 +53,7 @@ from azure.core.exceptions import HttpResponseError
 import session_manager
 from cascade_processor import (
     _AUDIO_SAMPLE_RATE,
+    _MAX_CARRIED_TURN_AUDIO_BYTES,
     CascadeProcessor,
     CascadeRateLimitExhausted,
     _CascadeSessionState,
@@ -202,6 +203,37 @@ def _make_processor(tools: dict, persona_tool_schemas: dict | None = None) -> Ca
 
 def _fake_tool_call(name: str, arguments: str = "{}", call_id: str = "call_1"):
     return SimpleNamespace(id=call_id, function=SimpleNamespace(name=name, arguments=arguments))
+
+
+class ShippedCascadeVadThresholdTests(unittest.TestCase):
+    """Regression: cascade reused realtime's `vad.threshold` (0.5 -> -6 dBFS RMS), so real
+    speech (about -20 dBFS, RMS ~3277) never started a turn."""
+
+    def test_processor_reads_cascade_energy_threshold_not_realtime_threshold(self):
+        self.assertEqual(_make_processor({})._vad_threshold, 0.02)
+
+    def test_shipped_config_starts_and_ends_a_turn_for_realistic_speech(self):
+        processor = _make_processor({})
+        detector = _TurnDetector(threshold=processor._vad_threshold, silence_duration_ms=200, sample_rate=24000)
+        self.assertIsNone(detector.feed(_loud_tone(2400, amplitude=100)))
+        self.assertEqual(detector.feed(_loud_tone(2400, amplitude=3277)), "speech_started")
+        self.assertEqual(detector.feed(_loud_tone(5000, amplitude=100)), "speech_stopped")
+
+    def test_shipped_config_short_pause_inside_silence_window_does_not_end_turn(self):
+        detector = _TurnDetector(threshold=_make_processor({})._vad_threshold, silence_duration_ms=200, sample_rate=24000)
+        self.assertEqual(detector.feed(_loud_tone(2400, amplitude=3277)), "speech_started")
+        self.assertIsNone(detector.feed(_loud_tone(2400, amplitude=100)))  # 100 ms < 200 ms window
+        self.assertIsNone(detector.feed(_loud_tone(2400, amplitude=3277)))
+        self.assertIsNone(detector.feed(_loud_tone(2400, amplitude=100)))
+        self.assertEqual(detector.feed(_loud_tone(2400, amplitude=100)), "speech_stopped")
+
+    def test_invalid_threshold_fails_instead_of_falling_back(self):
+        from cascade_processor import _cascade_energy_threshold
+
+        for bad in (0, 1, -0.1, "0.02", None, True):
+            with self.subTest(value=bad), self.assertRaises(ValueError):
+                _cascade_energy_threshold(bad)
+        self.assertEqual(_cascade_energy_threshold(0.05), 0.05)
 
 
 class ExecuteToolCallTests(unittest.IsolatedAsyncioTestCase):
@@ -452,9 +484,24 @@ class SendGreetingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(state.messages), 1)
         self.assertIn("Welcome to the drive-thru!", state.messages[0].content)
         processor._speak.assert_awaited_once_with(
-            ws, "Welcome to the drive-thru! What can I get started for you today?", state
+            ws, "Welcome to the drive-thru! What can I get started for you today?", state,
+            response_id=ws.send_json.await_args_list[0].args[0]["response"]["id"],
         )
         self.assertEqual(_sent_types(ws), ["response.created", "response.audio_transcript.delta", "response.done"])
+        # Realtime API delta shape: the transcript delta names its own response.
+        self.assertEqual(
+            ws.send_json.await_args_list[1].args[0]["response_id"],
+            ws.send_json.await_args_list[0].args[0]["response"]["id"],
+        )
+        # Realtime-shaped completion: the frontend renders the assistant line only from
+        # `output[].content[].transcript` (an id-only frame left cascade turns invisible).
+        done = ws.send_json.await_args_list[-1].args[0]["response"]
+        self.assertEqual(done["status"], "completed")
+        self.assertEqual(
+            done["output"][0]["content"][0]["transcript"],
+            "Welcome to the drive-thru! What can I get started for you today?",
+        )
+        self.assertEqual(done["output"][0]["role"], "assistant")
         processor._sessions.mark_greeting_sent.assert_called_once_with("s1")
 
     async def test_greeting_is_a_noop_without_a_bound_prompt_loader(self):
@@ -569,6 +616,167 @@ class BargeInEndToEndTests(unittest.IsolatedAsyncioTestCase):
         processor._speak.assert_not_awaited()
         release_transcribe.set()  # let the (already-cancelled) coroutine's own await resolve harmlessly
 
+
+class SplitUtteranceCarryForwardTests(unittest.IsolatedAsyncioTestCase):
+    """Live repro (cascade post-fix runs): "No, [0.48 s] that'll be it" split into two turns at
+    the 200 ms silence window; the guest resuming then barge-in-cancelled the first fragment's
+    turn mid-STT and its audio was lost, so STT only ever heard "that'll be it". Mutation seam:
+    dropping the carry-forward makes the combined-upload assertion fail."""
+
+    def setUp(self):
+        self.processor = _make_processor({})
+        self.ws = _make_mock_ws()
+        self.state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+        self.detector = _TurnDetector(threshold=0.1, silence_duration_ms=200, sample_rate=24000)
+        self.clock = 0.0
+        self.uploads: list[bytes] = []
+        self.first_started = asyncio.Event()
+        self.processor._speak = AsyncMock()
+        self.processor._run_turn_and_speak = AsyncMock()
+
+    async def _feed(self, pcm: bytes, seconds: float):
+        self.clock += seconds
+        with patch("cascade_processor.time.monotonic", return_value=self.clock):
+            await self.processor._handle_client_message(
+                self.ws, "s1", self.state, self.detector,
+                {"type": "input_audio_buffer.append", "audio": base64.b64encode(pcm).decode("ascii")}, None)
+
+    async def _utterance(self, amplitude: int):
+        await self._feed(_loud_tone(2400, amplitude), 0.1)
+        for _ in range(4):
+            await self._feed(_silence(2400), 0.1)
+
+    async def test_fragment_cancelled_mid_transcription_is_prepended_to_the_next_turn(self):
+        async def _transcribe(pcm16_bytes):
+            self.uploads.append(pcm16_bytes)
+            if len(self.uploads) == 1:
+                self.first_started.set()
+                await asyncio.Event().wait()  # STT still in flight when the guest resumes
+            return "no that'll be it"
+
+        self.processor._transcribe = _transcribe
+        await self._utterance(amplitude=8000)
+        await asyncio.wait_for(self.first_started.wait(), timeout=2)
+        first_fragment = self.uploads[0]
+
+        await self._utterance(amplitude=16000)
+        await asyncio.wait_for(self.state.current_turn_task, timeout=2)
+
+        self.assertEqual(len(self.uploads), 2)
+        combined = self.uploads[1]
+        self.assertTrue(combined.startswith(first_fragment))
+        self.assertIn(_loud_tone(2400, 16000), combined)
+        self.processor._run_turn_and_speak.assert_awaited_once()
+        self.assertEqual(self.state.untranscribed_audio, b"")
+
+    async def test_committed_transcript_audio_is_not_carried_into_the_next_turn(self):
+        async def _transcribe(pcm16_bytes):
+            self.uploads.append(pcm16_bytes)
+            return "a double cheeseburger"
+
+        self.processor._transcribe = _transcribe
+        await self._utterance(amplitude=8000)
+        await asyncio.wait_for(self.state.current_turn_task, timeout=2)
+        await self._utterance(amplitude=16000)
+        await asyncio.wait_for(self.state.current_turn_task, timeout=2)
+
+        self.assertEqual(len(self.uploads), 2)
+        self.assertNotIn(_loud_tone(2400, 8000), self.uploads[1])
+
+    async def test_barge_in_after_transcript_commit_carries_nothing_and_commits_each_transcript_once(self):
+        """Cancellation after the transcript was committed (here: mid chat) must not replay the
+        already-committed guest audio into the next turn."""
+        transcripts = iter(["a double cheeseburger", "no that'll be it"])
+
+        async def _transcribe(pcm16_bytes):
+            self.uploads.append(pcm16_bytes)
+            return next(transcripts)
+
+        chat_started = asyncio.Event()
+        chat_calls = 0
+
+        async def _chat(*_args):
+            nonlocal chat_calls
+            chat_calls += 1
+            if chat_calls == 1:
+                chat_started.set()
+                await asyncio.Event().wait()
+
+        self.processor._transcribe = _transcribe
+        self.processor._run_turn_and_speak = _chat
+        await self._utterance(amplitude=8000)
+        await asyncio.wait_for(chat_started.wait(), timeout=2)
+        self.assertEqual(self.state.untranscribed_audio, b"")
+
+        await self._utterance(amplitude=16000)
+        await asyncio.wait_for(self.state.current_turn_task, timeout=2)
+
+        self.assertEqual(len(self.uploads), 2)
+        self.assertNotIn(_loud_tone(2400, 8000), self.uploads[1])
+        committed = [c.args[0]["transcript"] for c in self.ws.send_json.await_args_list
+                     if c.args[0]["type"] == "conversation.item.input_audio_transcription.completed"]
+        self.assertEqual(committed, ["a double cheeseburger", "no that'll be it"])
+
+    async def test_barge_in_while_the_transcript_frame_is_sending_commits_it_exactly_once(self):
+        """Barrier race: turn 1's transcription.completed send is stalled when the guest barges
+        in and the next fragment merges the carry. The commit must happen before that send, so
+        turn 1 is committed once and its audio is not replayed into turn 2. Mutation seam:
+        appending history after the send leaves turn 1's audio carried into turn 2."""
+        transcripts = iter(["a double cheeseburger", "that's all"])
+
+        async def _transcribe(pcm16_bytes):
+            self.uploads.append(pcm16_bytes)
+            return next(transcripts)
+
+        send_reached = asyncio.Event()
+        release_send = asyncio.Event()
+
+        async def _send_json(payload):
+            if payload.get("transcript") == "a double cheeseburger":
+                send_reached.set()
+                await release_send.wait()
+
+        self.ws.send_json = AsyncMock(side_effect=_send_json)
+        self.processor._transcribe = _transcribe
+        await self._utterance(amplitude=8000)
+        await asyncio.wait_for(send_reached.wait(), timeout=2)
+
+        await self._feed(_loud_tone(2400, 16000), 0.1)  # barge-in cancels turn 1 mid-send
+        release_send.set()
+        for _ in range(4):
+            await self._feed(_silence(2400), 0.1)
+        await asyncio.wait_for(self.state.current_turn_task, timeout=2)
+
+        self.assertEqual(len(self.uploads), 2)
+        self.assertNotIn(_loud_tone(2400, 8000), self.uploads[1])
+        committed = [c.args[0]["transcript"] for c in self.ws.send_json.await_args_list
+                     if c.args[0]["type"] == "conversation.item.input_audio_transcription.completed"]
+        self.assertEqual(committed, ["a double cheeseburger", "that's all"])
+        self.assertEqual([m.content for m in self.state.messages], ["a double cheeseburger", "that's all"])
+
+    async def test_overflowing_carried_audio_keeps_the_newest_bytes_and_logs_a_warning(self):
+        self.state.untranscribed_audio = b"\x01\x00" * (_MAX_CARRIED_TURN_AUDIO_BYTES // 2)
+        self.processor._transcribe = AsyncMock(return_value="")
+        with self.assertLogs("cascade_processor", level="WARNING") as logs:
+            await self._utterance(amplitude=16000)
+        self.assertTrue(any("dropped the oldest" in line for line in logs.output))
+        await asyncio.wait_for(self.state.current_turn_task, timeout=2)
+        uploaded = self.processor._transcribe.await_args.args[0]
+        self.assertEqual(len(uploaded), _MAX_CARRIED_TURN_AUDIO_BYTES)
+        self.assertTrue(uploaded.endswith(_silence(2400)))
+        self.assertIn(_loud_tone(2400, 16000), uploaded)
+
+    async def test_clear_drops_carried_audio(self):
+        self.state.untranscribed_audio = b"\x01\x02"
+        await self.processor._handle_client_message(
+            self.ws, "s1", self.state, self.detector, {"type": "input_audio_buffer.clear"}, None)
+        self.assertEqual(self.state.untranscribed_audio, b"")
+
+    async def test_failed_transcription_drops_carried_audio(self):
+        self.processor._transcribe = AsyncMock(side_effect=RuntimeError("stt down"))
+        self.state.untranscribed_audio = audio = _loud_tone(2400)
+        await self.processor._process_turn(self.ws, "s1", self.state, audio)
+        self.assertEqual(self.state.untranscribed_audio, b"")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Rick's PR #253 review item 1: `extension.set_voice` must go through the SAME
@@ -821,6 +1029,53 @@ class RunTurnAndSpeakFailureTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(done_msg["response"]["status"], "failed")
         self.assertEqual(done_msg["response"]["output"], [])
 
+    async def test_content_filtered_chat_completion_sends_incomplete_content_filter_response_done(self):
+        """Live regression: Foundry rejected a cascade prompt with 400 content_filter and the
+        guest only got a generic failure (no rephrase notice). Must match the Realtime API's
+        filtered-turn shape that the frontend already turns into a rephrase prompt, with no
+        automatic retry."""
+        body = json.dumps({"error": {"message": "The response was filtered", "param": "prompt",
+                                     "code": "content_filter", "status": 400}})
+
+        class _Resp:
+            status_code = 400
+            reason = "Bad Request"
+            headers = {"Content-Type": "application/json"}
+            content_type = "application/json"
+            request = None
+
+            def text(self, encoding=None):
+                return body
+
+            def body(self):
+                return body.encode()
+
+        processor = _make_processor({})
+        processor._run_chat_tool_loop = AsyncMock(side_effect=HttpResponseError(response=_Resp()))
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+
+        await processor._run_turn_and_speak(ws, "s1", state)
+
+        self.assertEqual(_sent_types(ws), ["response.created", "response.done"])
+        self.assertEqual(processor._run_chat_tool_loop.await_count, 1)
+        done = ws.send_json.await_args_list[-1].args[0]["response"]
+        self.assertEqual(done["status"], "incomplete")
+        self.assertEqual(done["status_details"], {"type": "incomplete", "reason": "content_filter"})
+        self.assertEqual(done["output"], [])
+
+    async def test_other_400_still_sends_a_failed_response_done(self):
+        err = HttpResponseError(message="bad request")
+        err.status_code = 400
+        processor = _make_processor({})
+        processor._run_chat_tool_loop = AsyncMock(side_effect=err)
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+
+        await processor._run_turn_and_speak(ws, "s1", state)
+
+        self.assertEqual(ws.send_json.await_args_list[-1].args[0]["response"]["status"], "failed")
+
     async def test_non_429_tts_failure_still_sends_a_failed_response_done(self):
         processor = _make_processor({})
         processor._run_chat_tool_loop = AsyncMock(return_value="Sure thing.")
@@ -1050,11 +1305,14 @@ class SpeakArmsEchoCooldownTests(unittest.IsolatedAsyncioTestCase):
         with patch("cascade_processor.aiohttp.ClientSession", return_value=fake_session_cm), \
              patch("cascade_processor._ECHO_COOLDOWN_SECONDS", 0.3):
             with patch.object(state.detector, "start_echo_cooldown") as mock_start:
-                await processor._speak(ws, "hello", state)
+                await processor._speak(ws, "hello", state, response_id="resp_1")
 
         mock_start.assert_called_once()
         (duration_seconds,), _ = mock_start.call_args
         self.assertAlmostEqual(duration_seconds, 1.0 + 0.3)
+        deltas = [c.args[0] for c in ws.send_json.await_args_list if c.args[0]["type"] == "response.audio.delta"]
+        self.assertTrue(deltas)
+        self.assertTrue(all(d["response_id"] == "resp_1" for d in deltas))
 
     async def test_speak_with_zero_configured_cooldown_never_arms_suppression(self):
         processor = _make_processor({})

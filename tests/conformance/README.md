@@ -52,6 +52,30 @@ On Unix, replace PowerShell environment assignments with `export NAME=value` and
 `.venv/bin/python` for requirement installation. No live Azure services are required: the
 harness launches local upstream/search/Entra fakes.
 
+### Opt-in live Azure order test
+
+`LiveAzureOrderCompletionTests` (`Category=LiveAzure`) drives Microsoft Edge against a deployed
+app and its real realtime model, using a prerecorded WAV as the fake microphone. It is skipped
+unless `LIVE_CSHARP_ORDER_ENDPOINT` and `LIVE_CSHARP_ORDER_AUDIO` are set. The guest signs in
+interactively; tokens stay in the browser profile and are never read or logged.
+
+| Variable | Purpose |
+|---|---|
+| `LIVE_CSHARP_ORDER_ENDPOINT` | Deployed app URL (C# or Python backend). |
+| `LIVE_CSHARP_ORDER_AUDIO` | WAV with the guest turns: a burger order, then "No, that'll be it." |
+| `LIVE_CSHARP_EDGE_PATH` | Optional Edge executable path; defaults to the standard install location. |
+| `LIVE_CSHARP_PROFILE_DIR` | Persistent browser profile that keeps the sign-in between runs. |
+| `LIVE_CSHARP_HEADED` | `1` shows the browser window for interactive sign-in. |
+| `LIVE_CSHARP_ACCOUNT_UPN` | Account to preselect at sign-in. |
+| `LIVE_CSHARP_ORDER_DIAGNOSTICS` | Path for an event timeline (event types, transcripts, token counts; no audio or tokens). |
+| `LIVE_CSHARP_ORDER_REPHRASE` | `1` when the WAV also contains "That's all, thank you." about 20 seconds after the close. A content-filtered turn then passes only if the rephrase notice appears, the alternate turn is accepted, and the closing is spoken. |
+
+```powershell
+dotnet test tests/conformance/tests/Conformance.Tests --filter "Category=LiveAzure"
+```
+
+The test uses metered model inference and is never run in CI.
+
 ## Restoring packages (locked mode) — issue #24
 
 Every project here restores with `RestorePackagesWithLockFile=true` (set repo-wide in

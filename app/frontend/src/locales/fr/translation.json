@@ -19,7 +19,8 @@
         "resumeRejected": "Impossible de récupérer votre commande. Touchez le micro pour en commencer une nouvelle.",
         "superseded": "Cette commande s'est poursuivie dans une autre fenêtre. Touchez le micro pour recommencer.",
         "rateLimited": "Un instant, s'il vous plaît…",
-        "rateLimitedFinal": "Nous sommes un peu débordés — pouvez-vous répéter, s'il vous plaît ?"
+        "rateLimitedFinal": "Nous sommes un peu débordés — pouvez-vous répéter, s'il vous plaît ?",
+        "responseBlocked": "Désolé, je n'ai pas pu traiter cela. Pouvez-vous le dire autrement ?"
     },
     "history": {
         "transcriptHistory": "Historique de la transcription",

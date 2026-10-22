@@ -207,12 +207,30 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         }
         catch (CascadeRateLimitExhaustedException)
         {
-            await SendResponseDoneAsync(responseId, turnCt).ConfigureAwait(false);
+            await SendResponseDoneAsync(responseId, finalText: null, turnCt).ConfigureAwait(false);
             return;
         }
         catch (OperationCanceledException) when (turnCt.IsCancellationRequested)
         {
             throw;
+        }
+        catch (FoundryHttpException ex) when (ex.IsContentFilter)
+        {
+            // Same terminal shape the Realtime API sends for a filtered turn, so the frontend asks
+            // the guest to rephrase instead of going silent. No automatic retry.
+            context.Logger.CascadeChatContentFiltered(context.SessionId);
+            await CascadeProcessor.SendTextAsync(context.BrowserSocket, new JsonObject
+            {
+                ["type"] = "response.done",
+                ["response"] = new JsonObject
+                {
+                    ["id"] = responseId,
+                    ["status"] = "incomplete",
+                    ["status_details"] = new JsonObject { ["type"] = "incomplete", ["reason"] = "content_filter" },
+                    ["output"] = new JsonArray(),
+                },
+            }.ToJsonString(), turnCt, context.CancellationToken).ConfigureAwait(false);
+            return;
         }
         catch (Exception ex)
         {
@@ -227,7 +245,7 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         {
             return;
         }
-        await SendResponseDoneAsync(responseId, turnCt).ConfigureAwait(false);
+        await SendResponseDoneAsync(responseId, finalText, turnCt).ConfigureAwait(false);
         context.Identifiers.AdvanceRoundTrip();
         await CascadeProcessor.SendTextAsync(
             context.BrowserSocket,
@@ -241,12 +259,13 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         await CascadeProcessor.SendTextAsync(context.BrowserSocket, new JsonObject
         {
             ["type"] = "response.audio_transcript.delta",
+            ["response_id"] = responseId,
             ["delta"] = finalText,
         }.ToJsonString(), turnCt, context.CancellationToken).ConfigureAwait(false);
         context.SessionManager?.RecordTurn(context.SessionId, "assistant", finalText);
         try
         {
-            await context.AudioTurnPipeline.SpeakAsync(finalText, turnCt).ConfigureAwait(false);
+            await context.AudioTurnPipeline.SpeakAsync(finalText, responseId, turnCt).ConfigureAwait(false);
             return true;
         }
         catch (CascadeRateLimitExhaustedException)
@@ -266,12 +285,37 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         }
     }
 
-    private Task SendResponseDoneAsync(string responseId, CancellationToken turnCt) =>
+    /// <summary>The Realtime API's <c>response.done</c> shape: the frontend renders the assistant's
+    /// line from <c>output[].content[].transcript</c>, exactly as it does for realtime turns.</summary>
+    private Task SendResponseDoneAsync(string responseId, string? finalText, CancellationToken turnCt) =>
         CascadeProcessor.SendTextAsync(context.BrowserSocket, new JsonObject
         {
             ["type"] = "response.done",
-            ["response"] = new JsonObject { ["id"] = responseId },
+            ["response"] = new JsonObject
+            {
+                ["id"] = responseId,
+                ["status"] = "completed",
+                ["output"] = string.IsNullOrEmpty(finalText)
+                    ? new JsonArray()
+                    : new JsonArray(new JsonObject
+                    {
+                        ["type"] = "message",
+                        ["role"] = "assistant",
+                        ["content"] = new JsonArray(new JsonObject { ["type"] = "audio", ["transcript"] = finalText }),
+                    }),
+            },
         }.ToJsonString(), turnCt, context.CancellationToken);
+
+    private void ReleaseUntranscribedAudio(byte[] turnAudio)
+    {
+        lock (context.TurnRegistryLock)
+        {
+            if (ReferenceEquals(context.State.UntranscribedAudio, turnAudio))
+            {
+                context.State.UntranscribedAudio = [];
+            }
+        }
+    }
 
     public async Task ProcessTurnAsync(byte[] turnAudio, CancellationToken turnCt)
     {
@@ -286,6 +330,7 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         }
         catch (CascadeRateLimitExhaustedException)
         {
+            ReleaseUntranscribedAudio(turnAudio);
             return;
         }
         catch (OperationCanceledException) when (turnCt.IsCancellationRequested)
@@ -294,20 +339,34 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         }
         catch (Exception ex)
         {
+            ReleaseUntranscribedAudio(turnAudio);
             context.Logger.CascadeTranscriptionFailed(ex, context.SessionId);
             return;
         }
         if (string.IsNullOrWhiteSpace(transcript))
         {
+            ReleaseUntranscribedAudio(turnAudio);
             return;
         }
+        // Commit point: decided under the same lock speech_stopped uses to merge carried audio.
+        // Barge-in cancels this turn before the next speech_stopped can merge, so either the
+        // turn commits here (carry cleared, merge sees only new audio) or it was already
+        // cancelled (audio stays carried, no transcript emitted). Never both.
+        lock (context.TurnRegistryLock)
+        {
+            turnCt.ThrowIfCancellationRequested();
+            if (ReferenceEquals(context.State.UntranscribedAudio, turnAudio))
+            {
+                context.State.UntranscribedAudio = [];
+            }
+        }
+        context.State.Messages.Add(CascadeChatMessage.User(transcript));
+        context.SessionManager?.RecordTurn(context.SessionId, "guest", transcript);
         await CascadeProcessor.SendTextAsync(context.BrowserSocket, new JsonObject
         {
             ["type"] = "conversation.item.input_audio_transcription.completed",
             ["transcript"] = transcript,
-        }.ToJsonString(), turnCt, context.CancellationToken).ConfigureAwait(false);
-        context.State.Messages.Add(CascadeChatMessage.User(transcript));
-        context.SessionManager?.RecordTurn(context.SessionId, "guest", transcript);
+        }.ToJsonString(), CancellationToken.None, context.CancellationToken).ConfigureAwait(false);
         await RunTurnAndSpeakAsync(turnCt).ConfigureAwait(false);
     }
 

@@ -41,6 +41,12 @@ internal static partial class Log
     [LoggerMessage(EventId = 2013, Level = LogLevel.Error, Message = "Cascade chat completion failed (session={SessionId})")]
     public static partial void CascadeChatCompletionFailed(this ILogger logger, Exception ex, string sessionId);
 
+    [LoggerMessage(EventId = 2026, Level = LogLevel.Warning, Message = "Cascade chat completion blocked by content filter (session={SessionId})")]
+    public static partial void CascadeChatContentFiltered(this ILogger logger, string sessionId);
+
+    [LoggerMessage(EventId = 2027, Level = LogLevel.Warning, Message = "Cascade carried guest audio exceeded {MaxBytes} bytes; dropped the oldest {DroppedBytes} bytes (session={SessionId})")]
+    public static partial void CascadeCarriedAudioTruncated(this ILogger logger, int maxBytes, int droppedBytes, string sessionId);
+
     [LoggerMessage(EventId = 2014, Level = LogLevel.Warning, Message = "Cascade TTS failed for this turn's final answer (session={SessionId})")]
     public static partial void CascadeTtsFailed(this ILogger logger, Exception ex, string sessionId);
 

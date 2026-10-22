@@ -402,18 +402,70 @@ internal sealed class RealtimeServerRelay(RealtimeSessionContext context)
         }
         try
         {
+            LogResponseLifecycle(message, msgType, "upstream");
             ApplyEventSideEffects(message, msgType);
             var forward = await GetForwardMessageAsync(message, msgType).ConfigureAwait(false);
             if (forward is not null)
             {
                 await FramePump.SendTextAsync(
                     context.BrowserSocket, forward.ToJsonString(), context.CancellationToken).ConfigureAwait(false);
+                LogResponseLifecycle(forward, msgType, "browser");
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             context.Logger?.ErrorProcessingServerFrame(ex, context.SessionId);
         }
+    }
+
+    private void LogResponseLifecycle(JsonObject message, string eventType, string stage)
+    {
+        if (eventType is not ("response.created" or "response.done")
+            || context.Logger is not { } logger
+            || !logger.IsEnabled(LogLevel.Information))
+        {
+            return;
+        }
+
+        var response = message["response"] as JsonObject;
+        var outputTypes = new List<string>();
+        var contentTypes = new List<string>();
+        if (response?["output"] is JsonArray output)
+        {
+            foreach (var item in output.OfType<JsonObject>())
+            {
+                var outputType = RealtimeProcessor.GetString(item, "type");
+                if (outputType is not null)
+                {
+                    outputTypes.Add(outputType);
+                }
+                if (item["content"] is JsonArray content)
+                {
+                    foreach (var part in content.OfType<JsonObject>())
+                    {
+                        var contentType = RealtimeProcessor.GetString(part, "type");
+                        if (contentType is not null)
+                        {
+                            contentTypes.Add(contentType);
+                        }
+                    }
+                }
+            }
+        }
+
+        var statusDetails = response?["status_details"] as JsonObject;
+        var error = statusDetails?["error"] as JsonObject;
+        logger.RealtimeResponseLifecycle(
+            stage,
+            eventType,
+            RealtimeProcessor.GetString(response, "id") ?? "?",
+            RealtimeProcessor.GetString(response, "status") ?? "unknown",
+            string.Join(",", outputTypes.Distinct(StringComparer.Ordinal)),
+            string.Join(",", contentTypes.Distinct(StringComparer.Ordinal)),
+            RealtimeProcessor.GetString(error, "code") ?? "",
+            RealtimeProcessor.GetString(statusDetails, "type") ?? "",
+            RealtimeProcessor.GetString(statusDetails, "reason") ?? "",
+            context.SessionId);
     }
 
     private void ApplyEventSideEffects(JsonObject message, string msgType)
