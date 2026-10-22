@@ -1,6 +1,6 @@
 -r requirements.txt
 
 # Local validation and CI tooling, monitored by Dependabot's backend pip entry.
-ruff==0.17.0
+ruff==0.17.1
 pytest==9.1.1
 pytest-asyncio==1.4.0
