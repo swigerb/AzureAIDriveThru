@@ -11,6 +11,7 @@
     "models", "strategies", "features", "ui"
   ],
   "properties": {
+    "speechStyle": { "type": "string", "enum": ["fullReadback", "naturalDriveThru"] },
     "rewardsDemo": {
       "type": "object",
       "additionalProperties": false,

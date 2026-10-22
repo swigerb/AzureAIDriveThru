@@ -13,6 +13,56 @@ namespace Backend.Tests.Personas;
 /// </summary>
 public sealed class PersonaCatalogTests
 {
+    [Theory]
+    [InlineData(null, "fullReadback")]
+    [InlineData("fullReadback", "fullReadback")]
+    [InlineData("naturalDriveThru", "naturalDriveThru")]
+    public async Task SpeechStyleOptInIsValidatedAndAbsentPreservesDefault(string? style, string expected)
+    {
+        using var fixture = new PersonaPackFixture();
+        var id = "voice-fixture-" + expected.ToLowerInvariant();
+        fixture.DuplicatePersona("sonic", id);
+        fixture.MutatePersonaJson(id, obj =>
+        {
+            obj.Remove("speechStyle");
+            if (style is not null) obj["speechStyle"] = style;
+        });
+        var persona = PersonaCatalog.Load(personasDir: fixture.PersonasDir).Get(id);
+        Assert.Equal(expected, persona.SpeechStyle);
+        Assert.Equal(expected, MenuCatalog.FromPersona(persona).SpeechStyle);
+        var order = Backend.Ordering.PersonaOrderFactory.CreateOrderState(persona);
+        var executor = new Backend.Tools.OrderToolExecutor(
+            order, Backend.Ordering.PersonaOrderFactory.GetMenuCatalog(persona), null, 10, 25);
+        var result = await executor.ExecuteAsync("update_order",
+            System.Text.Json.JsonSerializer.SerializeToElement(new
+            {
+                action = "add", item_name = "Tots", size = "Small", quantity = 1,
+            }), TestContext.Current.CancellationToken);
+        Assert.Equal(executor.CurrentOrderSummaryJson, result.ToClientText());
+        if (expected == "naturalDriveThru")
+        {
+            Assert.Contains("PRIVATE ORDER CONTEXT", result.ToText());
+            Assert.DoesNotContain("total", result.ToText().Split("PRIVATE ORDER CONTEXT")[0].ToLowerInvariant());
+        }
+        else
+        {
+            Assert.DoesNotContain("PRIVATE ORDER CONTEXT", result.ToText());
+            Assert.Contains(order.Summary.SpokenReadBack, result.ToText());
+        }
+    }
+
+    [Theory]
+    [InlineData("\"unknown\"")]
+    [InlineData("7")]
+    [InlineData("null")]
+    public void InvalidRealPackSpeechStyleRefusesToStart(string json)
+    {
+        using var fixture = new PersonaPackFixture();
+        fixture.MutatePersonaJson("sonic", obj => obj["speechStyle"] = JsonNode.Parse(json));
+        var error = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
+        Assert.Contains("speechStyle", error.Message);
+    }
+
     [Fact]
     public void LoadsRealSonicPack_HappyPath()
     {

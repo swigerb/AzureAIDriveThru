@@ -4,6 +4,7 @@
   "id": "tacobell",
   "displayName": "Taco Bell",
   "roleName": "crew associate",
+  "speechStyle": "naturalDriveThru",
   "locales": { "default": "en", "supported": ["en"] },
   "store": { "timezone": "America/New_York" },
   "voice": { "default": "marin" },

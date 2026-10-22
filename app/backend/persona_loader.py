@@ -36,7 +36,7 @@ import logging
 import os
 import stat
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import jsonschema
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -476,6 +476,7 @@ class PersonaManifest(BaseModel):
     id: str
     displayName: str
     roleName: str
+    speechStyle: Literal["fullReadback", "naturalDriveThru"] = "fullReadback"
     locales: _Locales
     store: _Store
     voice: _Voice

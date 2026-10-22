@@ -458,8 +458,10 @@ class MenuCatalog:
         bundle_included_size: str | None = None,
         split_combined_names: bool = False,
         search_query_rewrite: str = "",
+        speech_style: str = "fullReadback",
     ):
         self.persona_id = persona_id
+        self.speech_style = speech_style
         self.size_map = size_map
         self.size_aliases = size_aliases
         self.hidden_sizes = hidden_sizes
@@ -568,6 +570,7 @@ class MenuCatalog:
             bundle_included_size=bundles_cfg.includedSize,
             split_combined_names=extras_cfg.splitCombinedNames,
             search_query_rewrite=persona.manifest.strategies.searchQueryRewrite,
+            speech_style=persona.manifest.speechStyle,
         )
 
     def machine_status(self, machine: str) -> str | None:

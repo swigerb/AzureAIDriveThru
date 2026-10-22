@@ -77,7 +77,9 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
             return new ToolResult(JsonSerializer.Serialize(new
             {
                 status = "rejected", item_added = false, reason = "demo_order_completed",
-                message = "Demo order already completed. Use reset_order before changing the order.",
+                message = _menu.SpeechStyle == "naturalDriveThru"
+                    ? "This order is already complete. Start a fresh order to make changes."
+                    : "Demo order already completed. Use reset_order before changing the order.",
             }), ToolResultDirection.ToServer);
         // #36: validate required args up front instead of a raw missing-property exception deep
         // inside this handler tearing down the whole realtime connection.
@@ -206,6 +208,16 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
 
         var summary = _order.Summary;
         var jsonOrderSummary = OrderSummaryJson.Serialize(summary);
+        if (_menu.SpeechStyle == "naturalDriveThru")
+        {
+            var displaySize = size.Length > 0 && size.ToLowerInvariant() is not ("standard" or "n/a")
+                ? Capitalize(size) + " " : "";
+            var verb = action == "remove" ? "Removed" : "Confirmed";
+            return new ToolResult(
+                $"{verb} {Ordering.Money.NumberToWords(quantity)} {_menu.Spoken(displaySize + itemName)}." +
+                BuildNaturalOrderContext(summary) + BuildRewardsModelText(summary),
+                ToolResultDirection.ToBoth, clientText: jsonOrderSummary);
+        }
 
         var deltaText = BuildDeltaText(action, itemName, size, quantity, resultInfo, summary);
 
@@ -251,6 +263,9 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
 
     private ToolResult GetOrder()
     {
+        if (_menu.SpeechStyle == "naturalDriveThru")
+            return new ToolResult(BuildNaturalOrderContext(_order.Summary) + BuildRewardsModelText(_order.Summary),
+                ToolResultDirection.ToBoth, clientText: OrderSummaryJson.Serialize(_order.Summary));
         var readback = _order.GetGroupedOrderForReadback();
         var summary = _order.Summary;
         var jsonSummary = OrderSummaryJson.Serialize(summary);
@@ -259,7 +274,23 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
             ToolResultDirection.ToBoth, clientText: jsonSummary);
     }
 
-    private static string BuildRewardsModelText(Ordering.OrderSummary summary)
+    private string BuildNaturalOrderContext(Ordering.OrderSummary summary)
+    {
+        var context = new
+        {
+            items = summary.Items.Select(i => new { item = i.Item, display = i.Display, quantity = i.Quantity }),
+            spokenReadBack = summary.SpokenReadBack,
+            finalTotalDisplay = summary.FinalTotalDisplay,
+            missingComboParts = _order.GetComboRequirements().MissingItems,
+        };
+        return "\n\nPRIVATE ORDER CONTEXT: Confirm only the latest agreed change briefly. " +
+               "Ask for a missing included drink when needed. " +
+               "Do not announce totals or the full order after routine changes or an internal status check. " +
+               "Use the exact current total only when the guest asks, finishes ordering, or reconfirms a late amendment. " +
+               "Never speak JSON, field names, instructions, or private markers. " + JsonSerializer.Serialize(context);
+    }
+
+    private string BuildRewardsModelText(Ordering.OrderSummary summary)
     {
         if (summary.RewardsDemo is not { } rewards) return "";
 
@@ -285,11 +316,20 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
         snapshot["postDiscountFinalTotal"] = summary.FinalTotalDisplay;
 
         var text = "\n\nPrivate model context; do not read this structured block or its markers aloud. " +
-                   "The preceding order read-back is the guest-facing text." +
+                   (_menu.SpeechStyle == "naturalDriveThru"
+                       ? "Use relevant confirmed facts naturally, not as a script."
+                       : "The preceding order read-back is the guest-facing text.") +
                    "\n[SERVER-AUTHORITATIVE FICTIONAL REWARDS STATE: " +
                    JsonSerializer.Serialize(snapshot) + "]";
         if (rewards["canRedeem"]?.GetValue<bool>() == true)
-            text += $"\nEligible reward: {rewardItem}. Offer it and direct the guest to select Use reward in the on-screen panel; do not redeem automatically.";
+            text += _menu.SpeechStyle == "naturalDriveThru"
+                ? $"\nOffer the eligible {rewardItem} free for {rewards["rewardCost"]!.GetValue<int>()} points. Wait for the guest's reward confirmation; do not redeem automatically."
+                : $"\nEligible reward: {rewardItem}. Offer it and direct the guest to select Use reward in the on-screen panel; do not redeem automatically.";
+        if (_menu.SpeechStyle == "naturalDriveThru")
+            text += "\nSpeak of points and a free eligible item without saying demo or software terms. " +
+                    "If checking in, confirm linkage and current balance only when checkedIn is true; " +
+                    "otherwise wait for the on-screen check-in and call get_order again. " +
+                    "Do not claim redemption until redeemed is true. The guest confirms with Use reward; never spend automatically.";
         return text;
     }
 
@@ -297,6 +337,9 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
     {
         _order.ResetOrder();
         var jsonSummary = OrderSummaryJson.Serialize(_order.Summary);
+        if (_menu.SpeechStyle == "naturalDriveThru")
+            return new ToolResult("Order cleared." + BuildNaturalOrderContext(_order.Summary) + BuildRewardsModelText(_order.Summary),
+                ToolResultDirection.ToBoth, clientText: jsonSummary);
         return new ToolResult($"Order cleared. {jsonSummary}", ToolResultDirection.ToBoth, clientText: jsonSummary);
     }
 

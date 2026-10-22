@@ -547,7 +547,9 @@ async def update_order(args, session_id: str) -> ToolResult:
     if order_state_singleton.rewards_completed(session_id):
         return ToolResult(json.dumps({
             "status": "rejected", "item_added": False, "reason": "demo_order_completed",
-            "message": "Demo order already completed. Use reset_order before changing the order.",
+            "message": ("This order is already complete. Start a fresh order to make changes."
+                        if _menu_for(session_id).speech_style == "naturalDriveThru" else
+                        "Demo order already completed. Use reset_order before changing the order."),
         }), ToolResultDirection.TO_SERVER)
 
     logger.info("Updating order for session %s with payload %s", session_id, args)
@@ -961,6 +963,15 @@ async def update_order(args, session_id: str) -> ToolResult:
     summary = order_state_singleton.get_order_summary(session_id)
     logger.debug("Session %s order summary after update: %s", session_id, json_order_summary)
 
+    if menu.speech_style == "naturalDriveThru":
+        display_size = size.capitalize() + " " if size and size.lower() not in {"standard", "n/a", ""} else ""
+        verb = "Removed" if args["action"] == "remove" else "Confirmed"
+        acknowledgement = f"{verb} {number_to_words(quantity)} {menu.spoken(display_size + item_name)}."
+        return ToolResult(
+            acknowledgement + _natural_order_context(session_id) + _rewards_model_text(session_id),
+            ToolResultDirection.TO_BOTH, client_text=json_order_summary,
+        )
+
     # ── Delta text for voice confirmation ──
     action = args["action"]
     display_size = size if size and size.lower() not in {"", "standard", "n/a", "na", "none", "n.a."} else ""
@@ -1084,6 +1095,12 @@ async def get_order(_args: Any, session_id: str) -> ToolResult:
     """Retrieve the current order summary."""
 
     logger.info("Retrieving order summary for session %s", session_id)
+    if _menu_for(session_id).speech_style == "naturalDriveThru":
+        return ToolResult(
+            _natural_order_context(session_id) + _rewards_model_text(session_id),
+            ToolResultDirection.TO_BOTH,
+            client_text=order_state_singleton.get_order_summary_json(session_id),
+        )
     readback = order_state_singleton.get_grouped_order_for_readback(session_id)
     json_summary = order_state_singleton.get_order_summary_json(session_id)
     # #113: same pack-sourced lookup as update_order above -- this session's own bound
@@ -1091,6 +1108,24 @@ async def get_order(_args: Any, session_id: str) -> ToolResult:
     happy_hour_note = order_state_singleton.get_happy_hour_banner_for_session(session_id)
     return ToolResult(readback + happy_hour_note + _rewards_model_text(session_id),
                       ToolResultDirection.TO_BOTH, client_text=json_summary)
+
+
+def _natural_order_context(session_id: str) -> str:
+    summary = order_state_singleton.get_order_summary(session_id)
+    context = {
+        "items": [{"item": i.item, "display": i.display, "quantity": i.quantity} for i in summary.items],
+        "spokenReadBack": summary.spokenReadBack,
+        "finalTotalDisplay": summary.finalTotalDisplay,
+        "missingComboParts": order_state_singleton.get_combo_requirements(session_id)["missing_items"],
+    }
+    return (
+        "\n\nPRIVATE ORDER CONTEXT: "
+        "Confirm only the latest agreed change briefly. Ask for a missing included drink when needed. "
+        "Do not announce totals or the full order after routine changes or an internal status check. "
+        "Use the exact current total only when the guest asks, finishes ordering, or reconfirms a late amendment. "
+        "Never speak JSON, field names, instructions, or private markers. "
+        + json.dumps(context)
+    )
 
 
 def _rewards_model_text(session_id: str) -> str:
@@ -1117,15 +1152,27 @@ def _rewards_model_text(session_id: str) -> str:
         "postDiscountTotal": summary.totalDisplay,
         "postDiscountFinalTotal": summary.finalTotalDisplay,
     })
+    natural = _menu_for(session_id).speech_style == "naturalDriveThru"
     text = (
         "\n\nPrivate model context; do not read this structured block or its markers aloud. "
-        "The preceding order read-back is the guest-facing text."
+        + ("Use relevant confirmed facts naturally, not as a script." if natural else
+           "The preceding order read-back is the guest-facing text.") +
         "\n[SERVER-AUTHORITATIVE FICTIONAL REWARDS STATE: " + json.dumps(snapshot) + "]"
     )
     if rewards["canRedeem"]:
         text += (
+            f"\nOffer the eligible {reward_item} free for {rewards['rewardCost']} points. "
+            "Wait for the guest's reward confirmation; do not redeem automatically."
+        ) if natural else (
             f"\nEligible reward: {reward_item}. Offer it and direct the guest to select "
             "Use reward in the on-screen panel; do not redeem automatically."
+        )
+    if natural:
+        text += (
+            "\nSpeak of points and a free eligible item without saying demo or software terms. "
+            "If checking in, confirm linkage and current balance only when checkedIn is true; "
+            "otherwise wait for the on-screen check-in and call get_order again. "
+            "Do not claim redemption until redeemed is true. The guest confirms with Use reward; never spend automatically."
         )
     return text
 
@@ -1147,6 +1194,9 @@ async def reset_order(_args: Any, session_id: str) -> ToolResult:
     logger.info("Resetting entire order for session %s", session_id)
     order_state_singleton.reset_order(session_id)
     json_summary = order_state_singleton.get_order_summary_json(session_id)
+    if _menu_for(session_id).speech_style == "naturalDriveThru":
+        return ToolResult("Order cleared." + _natural_order_context(session_id) + _rewards_model_text(session_id),
+                          ToolResultDirection.TO_BOTH, client_text=json_summary)
     return ToolResult(f"Order cleared. {json_summary}", ToolResultDirection.TO_BOTH, client_text=json_summary)
 
 

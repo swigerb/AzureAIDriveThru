@@ -53,6 +53,15 @@
       ]
     },
     {
+      "category": "Sauces", "icon": "🌶️",
+      "items": [
+        { "name": "Mild Sauce Packet", "sizes": [{ "size": "standard", "price": 0 }], "description": "Mild sauce packet. Illustrative complimentary packet, not verified store inventory.", "aliases": ["Mild Sauce"], "comboSlot": "none" },
+        { "name": "Hot Sauce Packet", "sizes": [{ "size": "standard", "price": 0 }], "description": "Hot sauce packet. Illustrative complimentary packet, not verified store inventory.", "aliases": ["Hot Sauce"], "comboSlot": "none" },
+        { "name": "Fire Sauce Packet", "sizes": [{ "size": "standard", "price": 0 }], "description": "Fire sauce packet. Illustrative complimentary packet, not verified store inventory.", "aliases": ["Fire Sauce"], "comboSlot": "none" },
+        { "name": "Diablo Sauce Packet", "sizes": [{ "size": "standard", "price": 0 }], "description": "Diablo sauce packet. Illustrative complimentary packet, not verified store inventory.", "aliases": ["Diablo Sauce"], "comboSlot": "none" }
+      ]
+    },
+    {
       "category": "Drinks", "icon": "🥤",
       "items": [
         { "name": "Mountain Dew Baja Blast", "sizes": [{ "size": "small", "price": 1.99 }, { "size": "medium", "price": 2.49 }, { "size": "large", "price": 2.99 }], "description": "Baja Blast fountain drink. Illustrative demo sizes and prices, not a store quote.", "aliases": ["Baja Blast", "Mtn Dew Baja Blast"], "comboSlot": "drinks" },

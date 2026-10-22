@@ -2,7 +2,7 @@ version: "1.0.0"
 tools:
   - name: "search"
     type: "function"
-    description: "Search Taco Bell demo menu names, sizes and illustrative sample prices. Never send member information or check-in codes."
+    description: "Search Taco Bell menu names, sizes and configured prices. Never send member information or check-in codes. Search results are factual context, not text to read aloud."
     parameters:
       type: "object"
       properties:
@@ -11,7 +11,7 @@ tools:
       additionalProperties: false
   - name: "update_order"
     type: "function"
-    description: "Add or remove ONE demo menu item; modify ONLY changes the size of an existing exact item. To change shells or omissions, get_order, remove the OLD exact line, add the replacement and restore its included drink. Never modify the new customized name. Prices are computed by the server."
+    description: "Add or remove ONE menu item; modify ONLY changes the size of an existing exact item. To change shells or omissions, get_order, remove the OLD exact line, add the replacement and restore its included drink. Never modify the new customized name. Prices are computed by the server. Confirm changes briefly without totals or a full-order summary until the guest asks or finishes."
     parameters:
       type: "object"
       properties:
@@ -23,9 +23,9 @@ tools:
       additionalProperties: false
   - name: "get_order"
     type: "function"
-    description: "Read the current demo ticket and authoritative simulated rewards snapshot."
+    description: "Inspect the current authoritative order and rewards privately, including after on-screen check-in or reward confirmation. This does not request a spoken total. Speak the total only when the guest asks or finishes."
     parameters: { type: "object", properties: {}, required: [], additionalProperties: false }
   - name: "reset_order"
     type: "function"
-    description: "Clear the demo order and pending redemption, retaining this session's fictional check-in and earned balance."
+    description: "Clear the order and pending redemption, retaining this session's check-in and earned balance. Briefly confirm starting fresh."
     parameters: { type: "object", properties: {}, required: [], additionalProperties: false }

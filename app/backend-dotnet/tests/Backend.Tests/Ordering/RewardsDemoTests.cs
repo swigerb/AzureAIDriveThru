@@ -10,6 +10,86 @@ namespace Backend.Tests.Ordering;
 
 public sealed class RewardsDemoTests
 {
+    [Fact]
+    public async Task NaturalTurnsKeepTotalsPrivateAndSaveSauceQuantitiesWithoutChangingRewardsMath()
+    {
+        var persona = PersonaCatalog.Load().Get("tacobell");
+        var order = NewOrder();
+        var executor = new OrderToolExecutor(order, MenuCatalog.FromPersona(persona), null, 10, 25);
+        Task<ToolResult> GetOrder() => executor.ExecuteAsync("get_order",
+            JsonSerializer.SerializeToElement(new { }), TestContext.Current.CancellationToken);
+        var initial = await GetOrder();
+        Assert.False(ModelRewards(initial)["checkedIn"]!.GetValue<bool>());
+        Assert.Contains("only when checkedIn is true", initial.ToText());
+        order.RewardsAction("check_in", "DEMO-PLUS");
+        var checkedIn = ModelRewards(await GetOrder());
+        Assert.True(checkedIn["checkedIn"]!.GetValue<bool>());
+        Assert.Equal(500, checkedIn["balance"]!.GetValue<int>());
+
+        foreach (var (action, item, size, quantity) in new[]
+        {
+            ("add", "3 Crunchy Tacos Combo", "Standard", 1),
+            ("remove", "3 Crunchy Tacos Combo", "Standard", 1),
+            ("add", "3 Soft Tacos Combo (No Tomatoes)", "Standard", 1),
+            ("add", "Chips and Nacho Cheese Sauce", "Standard", 1),
+            ("add", "Mountain Dew Baja Blast", "Large", 1),
+            ("add", "Fire Sauce Packet", "Standard", 2),
+        })
+        {
+            var result = await executor.ExecuteAsync("update_order", JsonSerializer.SerializeToElement(new
+            {
+                action, item_name = item, size, quantity,
+            }), TestContext.Current.CancellationToken);
+            var text = result.ToText();
+            Assert.Contains("PRIVATE ORDER CONTEXT", text);
+            var acknowledgement = text.Split("PRIVATE ORDER CONTEXT")[0];
+            Assert.DoesNotMatch(@"(?i)demo|server|ticket|tool|read.?back|total|\$\d", acknowledgement);
+            Assert.Contains("Do not announce totals or the full order after routine changes", text);
+            Assert.DoesNotContain("The preceding order read-back is the guest-facing text.", text);
+            Assert.Equal(executor.CurrentOrderSummaryJson, result.ToClientText());
+            AssertNoCodes(result);
+        }
+        var sauce = Assert.Single(order.Items, i => i.Item == "Fire Sauce Packet");
+        Assert.Equal(2, sauce.Quantity);
+        Assert.Equal(0m, sauce.Price);
+        Assert.Equal("$12.94", order.Summary.FinalTotalDisplay);
+        Assert.False(Rewards(order)["canRedeem"]!.GetValue<bool>());
+        var final = await GetOrder();
+        Assert.StartsWith("\n\nPRIVATE ORDER CONTEXT:", final.ToText());
+        Assert.Contains("\"finalTotalDisplay\":\"$12.94\"", final.ToText());
+        Add(order, "Cinnamon Twists");
+        Assert.Equal("$14.55", order.Summary.FinalTotalDisplay);
+        order.RewardsAction("redeem", null);
+        Assert.True(ModelRewards(await GetOrder())["redeemed"]!.GetValue<bool>());
+        Assert.Equal("$12.94", order.Summary.FinalTotalDisplay);
+        order.RewardsAction("complete", null);
+        Assert.Equal(119, Rewards(order)["pointsAwarded"]!.GetValue<int>());
+        Assert.Equal(369, Rewards(order)["balance"]!.GetValue<int>());
+        var reset = await executor.ExecuteAsync("reset_order", JsonSerializer.SerializeToElement(new { }),
+            TestContext.Current.CancellationToken);
+        Assert.StartsWith("Order cleared.", reset.ToText());
+        AssertNoCodes(reset);
+        Assert.Empty(order.Items);
+    }
+
+    [Theory]
+    [InlineData("Mild Sauce Packet")]
+    [InlineData("Hot Sauce Packet")]
+    [InlineData("Fire Sauce Packet")]
+    [InlineData("Diablo Sauce Packet")]
+    public void ZeroPriceSaucesCannotEarnOrRedeemRewards(string item)
+    {
+        var order = NewOrder();
+        Add(order, item, quantity: 2);
+        order.RewardsAction("check_in", "DEMO-PLUS");
+        order.RewardsAction("redeem", null);
+        Assert.Equal(2, Assert.Single(order.Items).Quantity);
+        Assert.Equal(0m, order.Summary.Total);
+        Assert.False(Rewards(order)["canRedeem"]!.GetValue<bool>());
+        Assert.Equal(0m, Rewards(order)["discount"]!.GetValue<decimal>());
+        Assert.Equal(0, Rewards(order)["pointsToEarn"]!.GetValue<int>());
+    }
+
     private static OrderState NewOrder() => PersonaOrderFactory.CreateOrderState(
         PersonaCatalog.Load(personasDir: Path.Combine(RepoRootLocator.Find(), "personas")).Get("tacobell"));
 

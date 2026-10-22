@@ -50,6 +50,7 @@ internal sealed class MenuCatalog
     private const string SizeAliasIgnoredChars = " .-";
 
     public string PersonaId { get; }
+    public string SpeechStyle { get; private init; } = "fullReadback";
 
     private readonly IReadOnlyDictionary<string, string> _sizeMap;
     private readonly IReadOnlyDictionary<string, string> _sizeAliases;
@@ -254,7 +255,10 @@ internal sealed class MenuCatalog
             bundleResizeRule: string.IsNullOrEmpty(bundlesCfg.ResizeRule) ? "includedAnySize" : bundlesCfg.ResizeRule,
             bundleIncludedSize: bundlesCfg.IncludedSize,
             splitCombinedNames: extrasCfg.SplitCombinedNames,
-            searchQueryRewrite: persona.Strategies.SearchQueryRewrite);
+            searchQueryRewrite: persona.Strategies.SearchQueryRewrite)
+        {
+            SpeechStyle = persona.SpeechStyle,
+        };
     }
 
     // #74: shared, size-vocabulary-parameterized algorithms -- mirrors menu_utils.py's

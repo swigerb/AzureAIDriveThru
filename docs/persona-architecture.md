@@ -199,6 +199,13 @@ conformance suite and the scripts all read it. The Dockerfiles copy it to `/app/
 
 ### 4.2 `persona.json`
 
+Optional `speechStyle` is validated as `fullReadback` (the default when absent) or
+`naturalDriveThru`. The latter keeps order/rewards facts in private model context,
+uses brief change acknowledgments, and defers spoken totals/full summaries until a
+guest request or wrap-up. It does not change client order JSON, live screen math,
+reward authorization, or other packs' existing read-back contracts. Taco Bell opts
+in; its visible simulation/privacy disclosures remain unchanged.
+
 All money values are quoted decimal strings, so C# reads them as `decimal` without going through `double`
 (the same convention as `golden-order-pricing.json`). Unknown fields are rejected. The Sonic pack, abridged:
 
