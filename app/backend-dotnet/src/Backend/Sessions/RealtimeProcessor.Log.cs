@@ -124,7 +124,7 @@ internal static partial class Log
     [LoggerMessage(EventId = 1045, Level = LogLevel.Warning, Message = "Could not read order state to push a refreshed ticket after extension.set_happy_hour_mode (session={SessionId})")]
     public static partial void TicketRefreshAfterHappyHourModeFailed(this ILogger logger, Exception ex, string sessionId);
 
-    [LoggerMessage(EventId = 1046, Level = LogLevel.Information, Message = "Realtime response lifecycle stage={Stage} event={EventType} id={ResponseId} status={Status} output_types={OutputTypes} content_types={ContentTypes} error_code={ErrorCode} (session={SessionId})")]
+    [LoggerMessage(EventId = 1046, Level = LogLevel.Information, Message = "Realtime response lifecycle stage={Stage} event={EventType} id={ResponseId} status={Status} output_types={OutputTypes}     content_types={ContentTypes} error_code={ErrorCode} status_type={StatusType} status_reason={StatusReason} (session={SessionId})")]
     public static partial void RealtimeResponseLifecycle(
         this ILogger logger,
         string stage,
@@ -134,5 +134,7 @@ internal static partial class Log
         string outputTypes,
         string contentTypes,
         string errorCode,
-        string sessionId);
+            string statusType,
+            string statusReason,
+            string sessionId);
 }

@@ -47,6 +47,7 @@ public sealed class LiveAzureOrderCompletionTests
                     const response = message.response ?? {};
                     record.responseId = response.id ?? '';
                     record.status = response.status ?? '';
+                    record.statusDetails = response.status_details ?? null;
                     record.outputTypes = (response.output ?? []).map(item => item.type ?? '');
                     record.transcript = (response.output ?? [])
                       .flatMap(item => item.content ?? [])
@@ -119,7 +120,7 @@ public sealed class LiveAzureOrderCompletionTests
         [
             "--use-fake-ui-for-media-stream",
             "--use-fake-device-for-media-stream",
-            $"--use-file-for-fake-audio-capture={Path.GetFullPath(audioPath)}",
+            $"--use-file-for-fake-audio-capture={Path.GetFullPath(audioPath)}%noloop",
         ];
 
         using var playwright = await Playwright.CreateAsync();

@@ -453,7 +453,8 @@ internal sealed class RealtimeServerRelay(RealtimeSessionContext context)
             }
         }
 
-        var error = response?["status_details"]?["error"] as JsonObject;
+        var statusDetails = response?["status_details"] as JsonObject;
+        var error = statusDetails?["error"] as JsonObject;
         logger.RealtimeResponseLifecycle(
             stage,
             eventType,
@@ -462,6 +463,8 @@ internal sealed class RealtimeServerRelay(RealtimeSessionContext context)
             string.Join(",", outputTypes.Distinct(StringComparer.Ordinal)),
             string.Join(",", contentTypes.Distinct(StringComparer.Ordinal)),
             RealtimeProcessor.GetString(error, "code") ?? "",
+            RealtimeProcessor.GetString(statusDetails, "type") ?? "",
+            RealtimeProcessor.GetString(statusDetails, "reason") ?? "",
             context.SessionId);
     }
 
