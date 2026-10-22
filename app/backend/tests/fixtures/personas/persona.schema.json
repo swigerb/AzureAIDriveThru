@@ -11,6 +11,21 @@
     "models", "strategies", "features", "ui"
   ],
   "properties": {
+    "rewardsDemo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["codes", "pointsPerDollar", "rewardItem", "rewardCost"],
+      "properties": {
+        "codes": {
+          "type": "object", "minProperties": 1,
+          "propertyNames": { "pattern": "^DEMO-[A-Z]+$" },
+          "additionalProperties": { "type": "integer", "minimum": 0, "maximum": 10000 }
+        },
+        "pointsPerDollar": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "rewardItem": { "type": "string", "minLength": 1 },
+        "rewardCost": { "type": "integer", "minimum": 1, "maximum": 10000 }
+      }
+    },
     "$schema": { "type": "string" },
     "schemaVersion": { "type": "integer", "const": 1 },
     "id": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },

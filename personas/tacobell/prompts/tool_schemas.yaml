@@ -1,0 +1,31 @@
+version: "1.0.0"
+tools:
+  - name: "search"
+    type: "function"
+    description: "Search Taco Bell demo menu names, sizes and illustrative sample prices. Never send member information or check-in codes."
+    parameters:
+      type: "object"
+      properties:
+        query: { type: "string", description: "Menu item search, such as Crunchy Taco or Crunchwrap Supreme." }
+      required: ["query"]
+      additionalProperties: false
+  - name: "update_order"
+    type: "function"
+    description: "Add, remove or modify ONE demo menu item. Prices are computed by the server."
+    parameters:
+      type: "object"
+      properties:
+        action: { type: "string", enum: ["add", "remove", "modify"] }
+        item_name: { type: "string", description: "Exact menu name; free omissions in parentheses." }
+        size: { type: "string", description: "Standard for food, or a drink size confirmed by search." }
+        quantity: { type: "integer" }
+      required: ["action", "item_name", "size", "quantity"]
+      additionalProperties: false
+  - name: "get_order"
+    type: "function"
+    description: "Read the current demo ticket and authoritative simulated rewards snapshot."
+    parameters: { type: "object", properties: {}, required: [], additionalProperties: false }
+  - name: "reset_order"
+    type: "function"
+    description: "Clear the demo order and pending redemption, retaining this session's fictional check-in and earned balance."
+    parameters: { type: "object", properties: {}, required: [], additionalProperties: false }

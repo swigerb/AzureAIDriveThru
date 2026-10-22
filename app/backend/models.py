@@ -74,6 +74,7 @@ class OrderSummary(BaseModel):
     # "" (never required) for the same backward-compatible reason the other *Display fields
     # are: existing call sites that only pass the numeric fields keep working unchanged.
     finalTotalSpoken: str = ""
+    rewardsDemo: dict | None = None
 
     @model_validator(mode="after")
     def _fill_display_defaults(self) -> "OrderSummary":

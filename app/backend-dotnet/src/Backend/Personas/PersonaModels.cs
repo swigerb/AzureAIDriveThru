@@ -40,6 +40,7 @@ internal sealed record Persona
     [JsonPropertyName("strategies")] public required PersonaStrategies Strategies { get; init; }
     [JsonPropertyName("features")] public required PersonaFeatures Features { get; init; }
     [JsonPropertyName("ui")] public required PersonaUi Ui { get; init; }
+    [JsonPropertyName("rewardsDemo")] public RewardsDemoConfig? RewardsDemo { get; init; }
 
     /// <summary>Not part of the JSON, populated by PersonaCatalog once the pack's
     /// menu/menuItems.json has been separately loaded and validated.</summary>
@@ -60,6 +61,14 @@ internal sealed record PersonaLocales
 {
     [JsonPropertyName("default")] public required string Default { get; init; }
     [JsonPropertyName("supported")] public required IReadOnlyList<string> Supported { get; init; }
+}
+
+internal sealed record RewardsDemoConfig
+{
+    [JsonPropertyName("codes")] public required IReadOnlyDictionary<string, int> Codes { get; init; }
+    [JsonPropertyName("pointsPerDollar")] public required int PointsPerDollar { get; init; }
+    [JsonPropertyName("rewardItem")] public required string RewardItem { get; init; }
+    [JsonPropertyName("rewardCost")] public required int RewardCost { get; init; }
 }
 
 internal sealed record PersonaStore

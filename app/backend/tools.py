@@ -544,6 +544,12 @@ update_order_tool_schema = {
 async def update_order(args, session_id: str) -> ToolResult:
     """Update the current order by adding or removing items."""
 
+    if order_state_singleton.rewards_completed(session_id):
+        return ToolResult(json.dumps({
+            "status": "rejected", "item_added": False, "reason": "demo_order_completed",
+            "message": "Demo order already completed. Use reset_order before changing the order.",
+        }), ToolResultDirection.TO_SERVER)
+
     logger.info("Updating order for session %s with payload %s", session_id, args)
 
     # #74: this session's own bound persona menu/prompt-loader context (or the shared

@@ -1,6 +1,7 @@
 import { useState, memo } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import type { RewardsDemoSnapshot } from "./rewards-demo";
 
 export interface OrderItem {
     item: string;
@@ -20,6 +21,7 @@ export interface OrderItem {
 }
 
 export interface OrderSummaryProps {
+    rewardsDemo?: RewardsDemoSnapshot | null;
     items: OrderItem[];
     total: number;
     tax: number;
@@ -161,6 +163,12 @@ export default memo(function OrderSummary({ order, taxRate }: { order: OrderSumm
                 ))}
 
                 <div className="mt-4 space-y-2 border-t border-dashed border-primary/30 pt-4 dark:border-white/15">
+                    {Boolean(order.rewardsDemo?.discount) && (
+                        <div className="flex justify-between text-sm text-gray-900 dark:text-white">
+                            <span>Demo reward · {order.rewardsDemo?.rewardItem}</span>
+                            <span className="font-mono">-{formatMoney(order.rewardsDemo?.discount ?? 0)}</span>
+                        </div>
+                    )}
                     <div className="flex justify-between text-sm text-gray-900 dark:text-white">
                         <span>Subtotal</span>
                         <span className="font-mono dark:text-white/90">{totalDisplay ?? formatMoney(total)}</span>

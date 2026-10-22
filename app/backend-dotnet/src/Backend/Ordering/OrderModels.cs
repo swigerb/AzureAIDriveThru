@@ -74,6 +74,8 @@ internal sealed record OrderSummary(
     string SpokenReadBack,
     string FinalTotalSpoken)
 {
+    [JsonPropertyName("rewardsDemo"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public System.Text.Json.Nodes.JsonObject? RewardsDemo { get; init; }
     [JsonPropertyName("items")] public IReadOnlyList<OrderItem> Items { get; init; } = Items;
     [JsonPropertyName("total")] public decimal Total { get; init; } = Total;
     [JsonPropertyName("tax")] public decimal Tax { get; init; } = Tax;

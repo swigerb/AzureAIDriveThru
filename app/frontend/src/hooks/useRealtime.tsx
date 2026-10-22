@@ -807,6 +807,11 @@ export default function useRealTime({
         send({ type: "extension.set_happy_hour_mode", mode });
     };
 
+    const sendDemoRewards = (action: import("@/components/ui/rewards-demo").RewardsDemoAction, code?: string) => {
+        // Never queue a ledger mutation for a different/reconnected session.
+        send({ type: "extension.demo_rewards", action, ...(code ? { code } : {}) }, false);
+    };
+
     // Issue GH-180 round 2, R1: handleSelectPersona now awaits the target persona's fetch BEFORE
     // calling endSession() (so a failed fetch tears nothing down), but reconnect() still needs to
     // tell "a switch is pending" apart from "ordinary dead socket" the instant the guest confirms
@@ -883,6 +888,7 @@ export default function useRealTime({
         sendVoiceChoice,
         setMachineStatus,
         setHappyHourMode,
+        sendDemoRewards,
         endSession,
         isConnected,
         reconnect,

@@ -399,8 +399,7 @@ public sealed class PersonaCatalogTests
         var personasDir = Path.Combine(RepoRootLocator.Find(), "personas");
         var catalog = PersonaCatalog.Load(personasDir: personasDir);
 
-        // Every original pack ships per-category emoji icons (issue 164 E1/C4), but only one
-        // needs the white logo-tile treatment (its brand mark has no transparent margin).
+        // Black wordmarks need a white tile even in dark mode.
         var withIcons = catalog.Ids
             .Where(id => catalog.Get(id).Ui.CategoryIcons is { Count: > 0 })
             .ToList();
@@ -408,7 +407,8 @@ public sealed class PersonaCatalogTests
             .Where(id => catalog.Get(id).Ui.Assets.LogoTile == true)
             .ToList();
         Assert.Equal(catalog.Ids.Count, withIcons.Count);
-        Assert.Single(withTile);
+        Assert.Equal(2, withTile.Count);
+        Assert.Contains("tacobell", withTile);
         Assert.Contains(catalog.Get(withTile[0]).Ui.CategoryIcons!.Values, icon => icon == "🍔");
     }
 

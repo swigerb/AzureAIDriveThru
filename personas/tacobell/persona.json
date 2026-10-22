@@ -1,0 +1,92 @@
+{
+  "$schema": "../persona.schema.json",
+  "schemaVersion": 1,
+  "id": "tacobell",
+  "displayName": "Taco Bell",
+  "roleName": "crew associate",
+  "locales": { "default": "en", "supported": ["en"] },
+  "store": { "timezone": "America/New_York" },
+  "voice": { "default": "marin" },
+  "search": { "indexName": "tacobell-menu-items", "contentFields": ["description"] },
+  "pricing": { "taxRate": "0.08", "happyHour": null },
+  "sizes": {
+    "canonical": { "standard": "Standard", "small": "Small", "medium": "Medium", "large": "Large" },
+    "aliases": { "s": "small", "m": "medium", "l": "large", "regular": "standard" },
+    "spokenAs": {}, "hidden": ["", "standard", "n/a"], "default": null
+  },
+  "bundles": {
+    "nameMarkers": [], "convertStandalone": false,
+    "missingPartText": { "sides": "a side", "drinks": "a drink" }
+  },
+  "extras": { "allowedBaseCategories": [], "blockedBaseCategories": [], "splitCombinedNames": false },
+  "invalidModifiers": { "drink": ["beef", "lettuce", "cheese"], "taco": ["whipped cream", "espresso"] },
+  "machines": {},
+  "models": {
+    "realtime": { "default": "gpt-realtime-2.1-mini", "allowed": ["gpt-realtime-2.1", "gpt-realtime-2.1-mini"] },
+    "cascade": { "default": "gpt-5-mini", "allowed": ["gpt-5-mini"] }
+  },
+  "strategies": { "searchQueryRewrite": "none" },
+  "features": { "dayparts": false },
+  "rewardsDemo": {
+    "codes": { "DEMO-PLUS": 500, "DEMO-NEW": 0 },
+    "pointsPerDollar": 10, "rewardItem": "Crunchy Taco", "rewardCost": 250
+  },
+  "ui": {
+    "title": "Taco Bell Voice Ordering Demo",
+    "theme": {
+      "light": {
+        "primary": "268 81% 33%", "secondary": "285 65% 32%",
+        "background": "270 50% 98%", "foreground": "270 40% 12%",
+        "accents": {
+          "primaryHex": "#501098", "primaryStrong": "#3B0B71", "primaryLight": "#9A23F8",
+          "primaryTintOnDark": "#D8B4FE", "secondaryHex": "#70208A", "secondaryStrong": "#501098",
+          "secondaryTintOnDark": "#F5C4EE", "accent": "#EA42D1", "accentLight": "#F5B1EB",
+          "ink": "#23122F", "surfaceTint": "#F8F3FF", "surfaceDark": "#1E132A",
+          "surfaceDarkAlt": "#2C193D", "success": "#287A45", "neutral": "#D7CEDF"
+        },
+        "surface": { "accentForeground": "270 40% 12%", "mutedForeground": "270 15% 35%" }
+      },
+      "dark": { "primary": "270 95% 82%", "foreground": "270 40% 96%" },
+      "font": { "family": "Arial" }
+    },
+    "assets": { "logo": "assets/logo.svg", "logoTile": true, "favicon": "assets/logo.svg", "apologyClip": "assets/audio/apology-{lang}.wav" },
+    "strings": {
+      "en": {
+        "app.title": "Taco Bell Voice Ordering Demo",
+        "status.notRecordingMessage": "Live Más. Let's build your demo order.",
+        "ticket.kicker": "Live Más demo ticket",
+        "ticket.title": "Your Taco Bell Order",
+        "menu.button": "View Taco Bell Demo Menu",
+        "menu.title": "Taco Bell Favorites · Sample Prices",
+        "ticket.emptyHint": "Start with a taco or Crunchwrap, then try demo rewards."
+      }
+    },
+    "hero": {
+      "badge": "UNOFFICIAL DEMO · LIVE MÁS",
+      "headline": "Taco Bell ordering powered by Microsoft Foundry",
+      "description": "Live Más. Explore Taco Bell favorites and simulated rewards check-in. All prices and 8% tax are illustrative, not restaurant 036309 quotes, now voice activated with Microsoft Foundry + Azure AI Search grounding.",
+      "callouts": [
+        { "title": "CHECK IN", "detail": "Use fictional demo codes only. No real member data.", "tone": "primary" },
+        { "title": "FOUNDRY INFUSION", "detail": "Microsoft Foundry + Azure OpenAI keep conversations flowing", "tone": "secondary" },
+        { "title": "REWARDS READY", "detail": "Explore session-only demo points and a sample reward.", "tone": "accent" }
+      ],
+      "spotlight": [
+        {
+          "icon": "assets/taco-illustration.svg", "kicker": "TACO TIME",
+          "title": "Crunchy Taco",
+          "rows": [
+            { "label": "Sample reward", "value": "250 demo points" },
+            { "label": "Try check-in", "value": "DEMO-PLUS", "tone": "ink" }
+          ]
+        },
+        {
+          "icon": "assets/taco-illustration.svg", "kicker": "MAKE IT YOURS",
+          "title": "Crunchwrap Supreme", "body": "Explore tacos, burritos, specialties, sides and drinks.",
+          "accent": "Original illustrations. Sample menu prices. No real purchases.", "tone": "primary"
+        }
+      ]
+    },
+    "categoryIcons": { "Tacos": "🌮", "Burritos": "🌯", "Specialties": "⭐", "Nachos": "🧀", "Value Favorites": "✨", "Drinks": "🥤" },
+    "legal": "Unofficial demo, not an official Taco Bell ordering or rewards service. Taco Bell logo used for this demo with user-reported permission from Yum! Brands; no endorsement is implied. TACO BELL, the Bell logo and Live Más belong to their respective trademark owners. All prices, tax, check-in codes, balances and reward eligibility are illustrative. No real accounts, payments, purchases or rewards."
+  }
+}

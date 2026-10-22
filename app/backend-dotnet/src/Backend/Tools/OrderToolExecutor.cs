@@ -13,7 +13,7 @@ namespace Backend.Tools;
 /// "search" -- see <c>SearchTool</c>/whatever composes both into one <see cref="IToolExecutor"/>
 /// for a session's full tool set.
 /// </summary>
-internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
+internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, IRewardsDemoControl
 {
     private readonly Ordering.OrderState _order;
     private readonly MenuCatalog _menu;
@@ -52,6 +52,7 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
     public bool SetHappyHourMode(string mode) => _order.SetHappyHourMode(mode);
 
     public string GetHappyHourMode() => _order.GetHappyHourMode();
+    public bool RewardsAction(string? action, string? code) => _order.RewardsAction(action, code);
 
     /// <summary>Issue #14, Rick's PR #149 R4 review: the current order summary, serialized the
     /// same way <c>get_order</c>/<c>reset_order</c> already do (<see cref="OrderSummaryJson"/>),
@@ -72,6 +73,12 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings
 
     private ToolResult UpdateOrder(JsonElement args)
     {
+        if (_order.RewardsCompleted)
+            return new ToolResult(JsonSerializer.Serialize(new
+            {
+                status = "rejected", item_added = false, reason = "demo_order_completed",
+                message = "Demo order already completed. Use reset_order before changing the order.",
+            }), ToolResultDirection.ToServer);
         // #36: validate required args up front instead of a raw missing-property exception deep
         // inside this handler tearing down the whole realtime connection.
         string[] required = ["action", "item_name", "size", "quantity"];

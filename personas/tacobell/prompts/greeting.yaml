@@ -1,0 +1,9 @@
+version: "1.0.0"
+greeting:
+  type: "conversation.item.create"
+  item:
+    type: "message"
+    role: "user"
+    content:
+      - type: "input_text"
+        text: "Say exactly: Welcome to the Taco Bell demo! Live Más. All prices are samples. You can check in with a fictional code on screen. What can I get started for you?"

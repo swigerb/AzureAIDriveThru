@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 160" role="img" aria-label="Original taco illustration">
+  <ellipse cx="110" cy="138" rx="87" ry="10" fill="#501098" opacity=".12"/>
+  <path d="M25 120a85 85 0 0 1 170 0Z" fill="#F3C363" stroke="#805124" stroke-width="5"/>
+  <path d="M45 108q12-40 25-3 12-45 25-4 15-44 28-2 14-41 26 3 15-36 25 6" fill="none" stroke="#378844" stroke-width="14"/>
+  <path d="m62 101 20-7m18 11 16-10m18 6 21 7" stroke="#B23828" stroke-width="10"/>
+  <path d="M35 120a75 70 0 0 1 150 0Z" fill="#F9D381" stroke="#805124" stroke-width="4"/>
+  <path d="m65 108 6-9m26 4 8-12m32 15 8-8" stroke="#DCA74A" stroke-width="4" stroke-linecap="round"/>
+</svg>

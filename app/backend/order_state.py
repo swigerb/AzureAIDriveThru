@@ -11,6 +11,7 @@ import default_persona
 from menu_utils import _menu_key, get_catalog_for_persona
 from models import OrderItem, OrderSummary
 from money_utils import format_money, format_money_spoken, number_to_words, to_decimal
+from rewards_demo import RewardsDemo
 
 if TYPE_CHECKING:
     from menu_utils import MenuCatalog
@@ -223,6 +224,9 @@ class OrderState:
             if happy_hour and menu.is_happy_hour_discounted(item.item):
                 item_total *= happy_hour_discount
             total += item_total
+        rewards = session.get("_rewards_demo")
+        discount = rewards.discount(order_items) if rewards else Decimal("0")
+        total -= discount
         tax = total * tax_rate
         finalTotal = total + tax
         final_total_display = format_money(finalTotal)
@@ -235,10 +239,11 @@ class OrderState:
             taxDisplay=format_money(tax),
             finalTotalDisplay=final_total_display,
             spokenReadBack=_compose_spoken_readback(order_items, menu, finalTotal),
+            rewardsDemo=rewards.snapshot(order_items, total, discount) if rewards else None,
         )
         session["order_summary"] = summary
         # Cache the JSON representation to avoid repeated Pydantic serialization
-        session["order_summary_json"] = summary.model_dump_json()
+        session["order_summary_json"] = summary.model_dump_json(exclude_none=True)
         logger.debug("Order summary updated for session %s (items=%d, total=%s)", session_id, len(order_items), finalTotal)
 
     def _happy_hour_discounted_line_displays(self, session: dict) -> list[str]:
@@ -311,7 +316,7 @@ class OrderState:
         happy_hour_cfg = persona.manifest.pricing.happyHour
         self.sessions[session_id] = {
             "order_summary": empty_summary,
-            "order_summary_json": empty_summary.model_dump_json(),
+            "order_summary_json": empty_summary.model_dump_json(exclude_none=True),
             "session_token": session_token,
             "round_trip_index": 0,
             "round_trip_token": self._format_round_trip_token(session_token, 0),
@@ -354,8 +359,10 @@ class OrderState:
             "_happy_hour_banner": happy_hour_cfg.banner if happy_hour_cfg is not None else "",
             "_machine_overrides": {},
             "_happy_hour_mode": "auto",
+            "_rewards_demo": RewardsDemo(persona.manifest.rewardsDemo) if persona.manifest.rewardsDemo else None,
         }
         self._reset_order_state(self.sessions[session_id])
+        self._update_summary(session_id)
         logger.info("Session created: %s (persona=%s, model=%s)", session_id, persona.id, model_id)
         return session_id
 
@@ -782,6 +789,8 @@ class OrderState:
 
     def handle_order_update(self, session_id: str, action: str, item_name: str, size: str, quantity: int, price: float) -> dict:
         self._check_owner(session_id)
+        if self.rewards_completed(session_id):
+            raise ValueError("Reset the completed demo order before changing it.")
         session = self.sessions[session_id]
         order_state = session["order_state"]
         menu = self._menu_for(session)
@@ -1336,9 +1345,28 @@ class OrderState:
         """Clears all items and per-session order state from the current session's order (#41)."""
         self._check_owner(session_id)
         session = self.sessions[session_id]
+        if rewards := session.get("_rewards_demo"):
+            rewards.reset_order()
         self._reset_order_state(session)
         self._update_summary(session_id)
         logger.info("Order fully reset for session %s", session_id)
+
+    def rewards_action(self, session_id, action, code=None):
+        self._check_owner(session_id)
+        session = self.sessions[session_id]
+        rewards = session.get("_rewards_demo")
+        if rewards is None:
+            raise ValueError("Demo rewards are not enabled for this persona.")
+        if action == "reset":
+            self.reset_order(session_id)
+            return
+        rewards.act(action, code, session["order_state"], to_decimal(session["order_summary"].total))
+        self._update_summary(session_id)
+
+    def rewards_completed(self, session_id):
+        self._check_owner(session_id)
+        rewards = self.sessions[session_id].get("_rewards_demo")
+        return rewards is not None and rewards.completed
 
     def get_order_summary_json(self, session_id: str) -> str:
         """Return cached JSON string — avoids repeated Pydantic serialization."""

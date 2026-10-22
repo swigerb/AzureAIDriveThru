@@ -1,0 +1,4 @@
+[
+  { "item": "Crunchy Taco", "size": "standard", "quantity": 1, "price": 1.99, "display": "Crunchy Taco" },
+  { "item": "Crunchwrap Supreme", "size": "standard", "quantity": 1, "price": 5.99, "display": "Crunchwrap Supreme" }
+]
