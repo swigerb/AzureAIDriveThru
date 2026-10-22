@@ -736,6 +736,7 @@ class CascadeProcessor:
                 self._schedule_nudge(ws, session_id, state)
             event = detector.feed(pcm, now=time.monotonic())
             if event == "speech_started":
+                self._sessions.touch_activity(session_id)
                 # Barge-in (Rick's #118 review item 5): cancel whatever turn (guest turn OR
                 # greeting) is still in flight BEFORE telling the client speech started, so no
                 # further response.audio.delta/chat-completion work for the stale turn survives
@@ -902,6 +903,7 @@ class CascadeProcessor:
         _release_untranscribed_audio(state, turn_audio)
         # #126: feeds this session's own rehydration/resume history -- see
         # `SessionManager.rehydration_text`/`recent_turns`.
+        self._sessions.touch_activity(session_id)
         self._sessions.record_turn(session_id, "guest", transcript)
         await asyncio.shield(ws.send_json({
             "type": "conversation.item.input_audio_transcription.completed",

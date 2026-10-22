@@ -284,7 +284,9 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
         snapshot["postDiscountTotal"] = summary.TotalDisplay;
         snapshot["postDiscountFinalTotal"] = summary.FinalTotalDisplay;
 
-        var text = "\n\n[SERVER-AUTHORITATIVE FICTIONAL REWARDS STATE: " +
+        var text = "\n\nPrivate model context; do not read this structured block or its markers aloud. " +
+                   "The preceding order read-back is the guest-facing text." +
+                   "\n[SERVER-AUTHORITATIVE FICTIONAL REWARDS STATE: " +
                    JsonSerializer.Serialize(snapshot) + "]";
         if (rewards["canRedeem"]?.GetValue<bool>() == true)
             text += $"\nEligible reward: {rewardItem}. Offer it and direct the guest to select Use reward in the on-screen panel; do not redeem automatically.";

@@ -363,6 +363,7 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
             }
         }
         context.State.Messages.Add(CascadeChatMessage.User(transcript));
+        context.SessionManager?.TouchActivity(context.SessionId);
         context.SessionManager?.RecordTurn(context.SessionId, "guest", transcript);
         await CascadeProcessor.SendTextAsync(context.BrowserSocket, new JsonObject
         {

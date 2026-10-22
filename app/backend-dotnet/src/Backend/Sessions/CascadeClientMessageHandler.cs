@@ -49,6 +49,7 @@ internal sealed class CascadeClientMessageHandler(CascadeSessionContext context)
         var vadEvent = context.Detector.Feed(pcm, context.NowSeconds());
         if (vadEvent == "speech_started")
         {
+            context.SessionManager?.TouchActivity(context.SessionId);
             context.TurnCoordinator.CancelNudge("guest started speaking");
             context.TurnCoordinator.BargeIn();
         }
