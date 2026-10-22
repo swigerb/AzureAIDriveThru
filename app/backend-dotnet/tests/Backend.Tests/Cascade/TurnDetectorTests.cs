@@ -118,14 +118,54 @@ public sealed class TurnDetectorTests
     }
 
     [Fact]
-    public void FromAppConfig_ReadsVadSectionDefaults()
+    public void FromAppConfig_ReadsCascadeEnergyThreshold_NotRealtimeServerVadThreshold()
     {
         var vad = CascadeVadConfig.FromAppConfig(AppConfig.Load());
 
-        // config.yaml's own top-level `vad` block, shared with the realtime pipeline's own server_vad config.
-        Assert.Equal(0.5, vad.Threshold);
+        Assert.Equal(0.02, vad.Threshold);
         Assert.Equal(200, vad.SilenceDurationMs);
     }
+
+    [Fact]
+    public void ShippedConfig_StartsAndEndsATurnForSpeechAtRealisticMicLevel()
+    {
+        // Regression: cascade reused realtime's vad.threshold (0.5 -> -6 dBFS RMS), so real speech
+        // (about -20 dBFS, RMS ~3277) never started a turn. Low noise (~-50 dBFS) must still not.
+        var vad = CascadeVadConfig.FromAppConfig(AppConfig.Load());
+        var detector = new TurnDetector(vad.Threshold, silenceDurationMs: 10, sampleRate: 1000);
+
+        Assert.Null(detector.Feed(Pcm16(100, count: 20)));
+        Assert.Equal("speech_started", detector.Feed(Pcm16(3277, count: 20)));
+        Assert.Equal("speech_stopped", detector.Feed(Pcm16(100, count: 20)));
+    }
+
+    [Fact]
+    public void ShippedConfig_ShortPauseInsideSilenceWindowDoesNotEndTheTurn()
+    {
+        var vad = CascadeVadConfig.FromAppConfig(AppConfig.Load());
+        var detector = new TurnDetector(vad.Threshold, silenceDurationMs: 10, sampleRate: 1000);
+
+        Assert.Equal("speech_started", detector.Feed(Pcm16(3277, count: 20)));
+        Assert.Null(detector.Feed(Pcm16(100, count: 5)));
+        Assert.Null(detector.Feed(Pcm16(3277, count: 20)));
+        Assert.Null(detector.Feed(Pcm16(100, count: 5)));
+        Assert.Equal("speech_stopped", detector.Feed(Pcm16(100, count: 5)));
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("1")]
+    [InlineData("-0.1")]
+    [InlineData("loud")]
+    public void EnergyThreshold_InvalidValueFailsInsteadOfFallingBack(string raw)
+    {
+        var section = new Dictionary<object, object> { ["cascade_energy_threshold"] = raw };
+        Assert.Throws<InvalidOperationException>(() => CascadeVadConfig.GetEnergyThreshold(section));
+    }
+
+    [Fact]
+    public void EnergyThreshold_MissingKeyUsesDocumentedDefault() =>
+        Assert.Equal(TurnDetector.DefaultEnergyThreshold, CascadeVadConfig.GetEnergyThreshold(new Dictionary<object, object>()));
 
     // ── #126 echo-suppression cooldown ──────────────────────────────────────────────────────
 

@@ -117,6 +117,19 @@ def _echo_tail_seconds(configured: Any) -> float:
 _ECHO_COOLDOWN_SECONDS = _echo_tail_seconds(_audio_cfg.get("echo_cooldown_seconds", 1.5))
 
 _AUDIO_SAMPLE_RATE = 24000
+# Default `vad.cascade_energy_threshold`: RMS fraction of PCM16 full scale (about -34 dBFS). Not the
+# server_vad-style 0-1 `vad.threshold`, which is not an audio level.
+_DEFAULT_CASCADE_ENERGY_THRESHOLD = 0.02
+
+
+def _cascade_energy_threshold(value: object) -> float:
+    """Validates `vad.cascade_energy_threshold`; an invalid value fails startup instead of
+    silently falling back to a cutoff that may never (or always) detect speech."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value < 1:
+        raise ValueError(f"vad.cascade_energy_threshold must be a number in (0, 1), got {value!r}")
+    return float(value)
+
+
 _AUDIO_SAMPLE_WIDTH = 2  # PCM16, matches both mic input and speaker output (confirmed against
                           # useAudioRecorder.tsx/useAudioPlayer.tsx -- no resampling needed).
 # Rick's #82 infra notes: the Foundry chat endpoint (and the audio endpoint we reuse for
@@ -239,9 +252,9 @@ class _TurnDetector:
     """A minimal, local RMS-energy voice-activity detector (issue #82). Unlike the realtime
     pipeline, there is no upstream Realtime API doing `server_vad` turn segmentation for us --
     the whole point of "cascade" is that WE own STT/chat/TTS, so we must decide for ourselves
-    when the guest has started and finished speaking. Mirrors config.yaml's existing
-    `vad.threshold`/`vad.silence_duration_ms` (already used to configure the realtime session's
-    own `server_vad`) so both pipelines feel the same to a guest, without pretending to
+    when the guest has started and finished speaking. Uses config.yaml's
+    `vad.cascade_energy_threshold` (an RMS level, unlike the server_vad-style 0-1 `vad.threshold`) and the
+    shared `vad.silence_duration_ms`, without pretending to
     reimplement OpenAI's actual VAD algorithm -- just enough to segment turns for STT.
 
     Uses the stdlib `array` module (not the deprecated, Python-3.13-removed `audioop`) since
@@ -249,7 +262,7 @@ class _TurnDetector:
     the life of this module.
     """
 
-    def __init__(self, threshold: float = 0.5, silence_duration_ms: int = 200, sample_rate: int = _AUDIO_SAMPLE_RATE):
+    def __init__(self, threshold: float = _DEFAULT_CASCADE_ENERGY_THRESHOLD, silence_duration_ms: int = 200, sample_rate: int = _AUDIO_SAMPLE_RATE):
         self._cutoff = threshold * 32767
         self._silence_samples_needed = max(1, int(silence_duration_ms / 1000 * sample_rate))
         self._speaking = False
@@ -420,7 +433,9 @@ class CascadeProcessor:
         # string a persona.json happens to declare.
         self.allowed_voices = allowed_voices if allowed_voices is not None else _DEFAULT_ALLOWED_VOICES
         self._chat_client: ChatCompletionsClient | None = None
-        self._vad_threshold = _vad_cfg.get("threshold", 0.5)
+        self._vad_threshold = _cascade_energy_threshold(
+            _vad_cfg.get("cascade_energy_threshold", _DEFAULT_CASCADE_ENERGY_THRESHOLD)
+        )
         self._vad_silence_ms = _vad_cfg.get("silence_duration_ms", 200)
         # Rick's #118 review item 5 (429 parity): reuses rate_limit.py's shared
         # settings/constants/ladder-shape so a chat/STT/TTS 429 surfaces to the guest through

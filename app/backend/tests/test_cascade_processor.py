@@ -204,6 +204,37 @@ def _fake_tool_call(name: str, arguments: str = "{}", call_id: str = "call_1"):
     return SimpleNamespace(id=call_id, function=SimpleNamespace(name=name, arguments=arguments))
 
 
+class ShippedCascadeVadThresholdTests(unittest.TestCase):
+    """Regression: cascade reused realtime's `vad.threshold` (0.5 -> -6 dBFS RMS), so real
+    speech (about -20 dBFS, RMS ~3277) never started a turn."""
+
+    def test_processor_reads_cascade_energy_threshold_not_realtime_threshold(self):
+        self.assertEqual(_make_processor({})._vad_threshold, 0.02)
+
+    def test_shipped_config_starts_and_ends_a_turn_for_realistic_speech(self):
+        processor = _make_processor({})
+        detector = _TurnDetector(threshold=processor._vad_threshold, silence_duration_ms=200, sample_rate=24000)
+        self.assertIsNone(detector.feed(_loud_tone(2400, amplitude=100)))
+        self.assertEqual(detector.feed(_loud_tone(2400, amplitude=3277)), "speech_started")
+        self.assertEqual(detector.feed(_loud_tone(5000, amplitude=100)), "speech_stopped")
+
+    def test_shipped_config_short_pause_inside_silence_window_does_not_end_turn(self):
+        detector = _TurnDetector(threshold=_make_processor({})._vad_threshold, silence_duration_ms=200, sample_rate=24000)
+        self.assertEqual(detector.feed(_loud_tone(2400, amplitude=3277)), "speech_started")
+        self.assertIsNone(detector.feed(_loud_tone(2400, amplitude=100)))  # 100 ms < 200 ms window
+        self.assertIsNone(detector.feed(_loud_tone(2400, amplitude=3277)))
+        self.assertIsNone(detector.feed(_loud_tone(2400, amplitude=100)))
+        self.assertEqual(detector.feed(_loud_tone(2400, amplitude=100)), "speech_stopped")
+
+    def test_invalid_threshold_fails_instead_of_falling_back(self):
+        from cascade_processor import _cascade_energy_threshold
+
+        for bad in (0, 1, -0.1, "0.02", None, True):
+            with self.subTest(value=bad), self.assertRaises(ValueError):
+                _cascade_energy_threshold(bad)
+        self.assertEqual(_cascade_energy_threshold(0.05), 0.05)
+
+
 class ExecuteToolCallTests(unittest.IsolatedAsyncioTestCase):
     async def test_to_server_only_result_is_not_sent_to_client(self):
         """A TO_SERVER-only tool result (e.g. `search`) must reach the model (appended to
