@@ -57,12 +57,13 @@ ENV PYTHONUNBUFFERED=1
 # Install Python deps before copying app source for layer caching
 COPY ./app/backend/requirements.txt /app/requirements.txt
 # With a wheelhouse, install offline from its hash-locked set only after verifying every wheel
-# checksum and that the lock was resolved from this exact requirements.txt.
+# checksum and that the lock was resolved from this exact requirements.txt (line endings ignored,
+# so a CRLF Windows checkout matches the LF hash recorded by CI).
 RUN --mount=type=secret,id=pip_config,target=/etc/pip.conf \
     --mount=type=bind,from=python-wheelhouse,target=/wheelhouse \
     if [ -f /wheelhouse/requirements.lock.txt ]; then \
       (cd /wheelhouse && sha256sum -c --strict SHA256SUMS) \
-      && echo "$(cat /wheelhouse/requirements.txt.sha256)  requirements.txt" | sha256sum -c --strict - \
+      && test "$(tr -d '\r' < requirements.txt | sha256sum | cut -d' ' -f1)" = "$(cat /wheelhouse/requirements.txt.sha256)" \
       && python -m pip install --no-cache-dir --no-index --find-links /wheelhouse \
            --require-hashes -r /wheelhouse/requirements.lock.txt; \
     else \

@@ -48,7 +48,7 @@ jobs:
               lines.append(f"{name}=={version} --hash=sha256:{digest}")
           pathlib.Path("requirements.lock.txt").write_text("\n".join(lines) + "\n")
           PY
-              sha256sum /src/requirements.txt | cut -d" " -f1 > requirements.txt.sha256
+              tr -d '\r' < /src/requirements.txt | sha256sum | cut -d" " -f1 > requirements.txt.sha256
               sha256sum *.whl requirements.lock.txt requirements.txt.sha256 > SHA256SUMS
               python -m pip --version > pip-version.txt
             '
@@ -72,7 +72,7 @@ jobs:
             -v "$RUNNER_TEMP/wheelhouse:/wheelhouse:ro" \
             -w /app python:3.15-slim sh -euc '
               (cd /wheelhouse && sha256sum -c --strict SHA256SUMS)
-              echo "$(cat /wheelhouse/requirements.txt.sha256)  requirements.txt" | sha256sum -c --strict -
+              test "$(tr -d "\r" < requirements.txt | sha256sum | cut -d" " -f1)" = "$(cat /wheelhouse/requirements.txt.sha256)"
               python -m pip install --no-cache-dir --no-index --find-links /wheelhouse \
                 --require-hashes -r /wheelhouse/requirements.lock.txt
               python -m pip install --no-cache-dir --no-index --find-links /wheelhouse \
