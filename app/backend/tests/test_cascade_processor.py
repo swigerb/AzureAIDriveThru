@@ -236,6 +236,95 @@ class ShippedCascadeVadThresholdTests(unittest.TestCase):
         self.assertEqual(_cascade_energy_threshold(0.05), 0.05)
 
 
+class CascadeGuestActivityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_guest_speech_preserves_active_order_but_not_silent_or_other_sessions(self):
+        for kind in ("speech", "silence", "unusable", "echo"):
+            with self.subTest(kind=kind), patch.object(session_manager, "_IDLE_TIMEOUT_SECONDS", 300):
+                now = [0.0]
+                manager = session_manager.SessionManager(clock=lambda: now[0])
+                ws = _make_mock_ws()
+                ws.close = AsyncMock()
+                other_ws = _make_mock_ws()
+                other_ws.close = AsyncMock()
+                sid = manager.create_session(ws)
+                other_sid = manager.create_session(other_ws)
+                try:
+                    processor = _make_processor({})
+                    processor._sessions = manager
+                    detector = _TurnDetector(threshold=0.02, silence_duration_ms=200)
+                    state = _CascadeSessionState(session_id=sid, persona_id="p", deployment="d", voice="marin")
+                    now[0] = 290
+                    if kind == "echo":
+                        detector.start_echo_cooldown(30, now=290)
+                    pcm = _silence(2400) if kind == "silence" else b"\x01" if kind == "unusable" else _loud_tone(2400)
+                    with patch("cascade_processor.time.monotonic", return_value=290):
+                        await processor._handle_client_message(
+                            ws, sid, state, detector,
+                            {"type": "input_audio_buffer.append", "audio": base64.b64encode(pcm).decode()}, None,
+                        )
+                    now[0] = 310
+                    await manager.close_idle_sessions()
+                    self.assertEqual(ws.close.await_count, 0 if kind == "speech" else 1)
+                    other_ws.close.assert_awaited_once_with(code=4000, message=b"idle_timeout")
+                    if kind == "speech":
+                        now[0] = 591
+                        await manager.close_idle_sessions()
+                    ws.close.assert_awaited_once_with(code=4000, message=b"idle_timeout")
+                finally:
+                    manager.end_session(sid, "test cleanup")
+                    manager.end_session(other_sid, "test cleanup")
+
+    async def test_validated_speech_refreshes_only_its_session_activity(self):
+        processor = _make_processor({})
+        ws = _make_mock_ws()
+        detector = _TurnDetector(threshold=0.02, silence_duration_ms=200)
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+        await processor._handle_client_message(
+            ws, "s1", state, detector,
+            {"type": "input_audio_buffer.append", "audio": base64.b64encode(_loud_tone(2400)).decode()},
+            None,
+        )
+        self.assertIn("input_audio_buffer.speech_started", _sent_types(ws))
+        processor._sessions.touch_activity.assert_called_once_with("s1")
+
+    async def test_silence_unusable_pcm_and_suppressed_echo_do_not_refresh_activity(self):
+        for pcm, echo in ((_silence(2400), False), (b"\x01", False), (_loud_tone(2400), True)):
+            with self.subTest(echo=echo, bytes=len(pcm)):
+                processor = _make_processor({})
+                ws = _make_mock_ws()
+                detector = _TurnDetector(threshold=0.02, silence_duration_ms=200)
+                if echo:
+                    detector.start_echo_cooldown(10, now=0)
+                state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+                with patch("cascade_processor.time.monotonic", return_value=1):
+                    await processor._handle_client_message(
+                        ws, "s1", state, detector,
+                        {"type": "input_audio_buffer.append", "audio": base64.b64encode(pcm).decode()},
+                        None,
+                    )
+                processor._sessions.touch_activity.assert_not_called()
+                self.assertNotIn("input_audio_buffer.speech_started", _sent_types(ws))
+
+    async def test_committed_nonempty_transcription_refreshes_activity(self):
+        processor = _make_processor({})
+        processor._transcribe = AsyncMock(return_value="One taco please")
+        processor._run_turn_and_speak = AsyncMock()
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+        await processor._process_turn(ws, "s1", state, _loud_tone(2400))
+        self.assertIn("conversation.item.input_audio_transcription.completed", _sent_types(ws))
+        processor._sessions.touch_activity.assert_called_once_with("s1")
+
+    async def test_empty_transcription_does_not_refresh_activity(self):
+        processor = _make_processor({})
+        processor._transcribe = AsyncMock(return_value=" \n")
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+        await processor._process_turn(ws, "s1", state, _loud_tone(2400))
+        processor._sessions.touch_activity.assert_not_called()
+        self.assertNotIn("conversation.item.input_audio_transcription.completed", _sent_types(ws))
+
+
 class ExecuteToolCallTests(unittest.IsolatedAsyncioTestCase):
     async def test_to_server_only_result_is_not_sent_to_client(self):
         """A TO_SERVER-only tool result (e.g. `search`) must reach the model (appended to

@@ -402,6 +402,87 @@ public sealed class CascadeProcessorTests
         Assert.Equal("cascade", processor.PipelineName);
     }
 
+    [Theory]
+    [InlineData("speech", true)]
+    [InlineData("silence", false)]
+    [InlineData("unusable", false)]
+    [InlineData("echo", false)]
+    public async Task GuestActivity_OnlyDetectedSpeechRefreshesTheExistingIdleBudget(string input, bool refreshes)
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var time = new FakeTimeProvider();
+        var manager = NewSessionManager(time);
+        var processor = NewProcessor(new RoutingFoundryHandler(), new StubToolExecutor(["search"]), loader,
+            timeProvider: time, sessionManager: manager);
+        var socket = new DelayedFakeWebSocket([], TimeSpan.Zero);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        var context = processor.CreateSessionContext(socket, persona,
+            new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false), "activity-session", cts);
+        var otherSocket = new DelayedFakeWebSocket([], TimeSpan.Zero);
+        manager.CreateSession("other-session", otherSocket, persona.Id, "gpt-5-mini", null,
+            new StubToolExecutor(["search"]), "marin");
+        time.Advance(TimeSpan.FromSeconds(290));
+        if (input == "echo")
+            context.Detector.StartEchoCooldown(30, context.NowSeconds());
+        var pcm = input switch
+        {
+            "silence" => Pcm16(0, 2400),
+            "unusable" => new byte[] { 1 },
+            _ => Pcm16(20000, 2400),
+        };
+        await new CascadeClientMessageHandler(context).HandleAsync(new JsonObject
+        {
+            ["type"] = "input_audio_buffer.append", ["audio"] = Convert.ToBase64String(pcm),
+        });
+        if (context.State.BargeInTail is { } tail) await tail;
+        Assert.Equal(refreshes, socket.SentMessages.Any(m =>
+            ParseSent(m)["type"]?.GetValue<string>() == "input_audio_buffer.speech_started"));
+
+        time.Advance(TimeSpan.FromSeconds(20));
+        await manager.CloseIdleSessionsAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(refreshes ? WebSocketState.Open : WebSocketState.CloseSent, socket.State);
+        Assert.Equal(WebSocketState.CloseSent, otherSocket.State);
+        Assert.Equal("", manager.GetVoice("other-session"));
+        if (refreshes)
+        {
+            time.Advance(TimeSpan.FromSeconds(281));
+            await manager.CloseIdleSessionsAsync(TestContext.Current.CancellationToken);
+            Assert.Equal(WebSocketState.CloseSent, socket.State);
+        }
+        Assert.Equal("", manager.GetVoice("activity-session"));
+    }
+
+    [Theory]
+    [InlineData("One taco please", true)]
+    [InlineData(" \n", false)]
+    public async Task GuestActivity_OnlyCommittedNonemptyTranscriptionRefreshesIdleBudget(string transcript, bool refreshes)
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var time = new FakeTimeProvider();
+        var manager = NewSessionManager(time);
+        var handler = new RoutingFoundryHandler().EnqueueTranscript(transcript)
+            .EnqueueChatMessage("assistant", "Anything else?").EnqueueSpeech([1, 2]);
+        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader,
+            timeProvider: time, sessionManager: manager);
+        var socket = new DelayedFakeWebSocket([], TimeSpan.Zero);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        var context = processor.CreateSessionContext(socket, persona,
+            new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false), "transcript-session", cts);
+        time.Advance(TimeSpan.FromSeconds(290));
+        await context.ProcessTurnAsync(Pcm16(20000, 2400), cts.Token);
+        Assert.Equal(refreshes, socket.SentMessages.Any(m =>
+            ParseSent(m)["type"]?.GetValue<string>() == "conversation.item.input_audio_transcription.completed"));
+        time.Advance(TimeSpan.FromSeconds(20));
+        await manager.CloseIdleSessionsAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(refreshes ? WebSocketState.Open : WebSocketState.CloseSent, socket.State);
+        if (refreshes)
+        {
+            time.Advance(TimeSpan.FromSeconds(281));
+            await manager.CloseIdleSessionsAsync(TestContext.Current.CancellationToken);
+            Assert.Equal(WebSocketState.CloseSent, socket.State);
+        }
+    }
+
     [Fact]
     public void ResolveModel_DelegatesToModelDispatch_RejectingAPersonaWithNoCascadeBlock()
     {

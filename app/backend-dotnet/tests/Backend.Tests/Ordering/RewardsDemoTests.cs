@@ -317,6 +317,7 @@ public sealed class RewardsDemoTests
 
     private static void AssertNoCodes(ToolResult result)
     {
+        Assert.Contains("Private model context; do not read this structured block or its markers aloud.", result.ToText());
         Assert.DoesNotContain("DEMO-PLUS", result.ToText());
         Assert.DoesNotContain("DEMO-NEW", result.ToText());
         Assert.DoesNotContain("demoCodes", result.ToText());
