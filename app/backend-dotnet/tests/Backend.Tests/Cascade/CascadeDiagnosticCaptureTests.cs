@@ -104,6 +104,46 @@ public sealed class CascadeDiagnosticCaptureTests
         Assert.DoesNotContain("NEVER-COPY", output);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Sanitization_timeout_disables_capture_without_changing_actual_chat_wire_or_response(bool duringRequest)
+    {
+        const string response = """{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"What drink would you like?"}}]}""";
+        var handler = new QueuedFoundryHttpHandler()
+            .Enqueue(System.Net.HttpStatusCode.OK, response)
+            .Enqueue(System.Net.HttpStatusCode.OK, response);
+        var client = new FoundryChatClient(new HttpClient(handler), "https://fake.example",
+            new StaticBearerTokenProvider("NEVER-COPY-AUTH"));
+        var logger = new RecordingLogger();
+        var attempts = 0;
+        var capture = new CascadeDiagnosticCapture("synthetic", Now.AddMinutes(10), new FakeTimeProvider(Now),
+            logger, text =>
+            {
+                attempts++;
+                throw new System.Text.RegularExpressions.RegexMatchTimeoutException(
+                    "NEVER-COPY-INPUT", "NEVER-COPY-PATTERN", TimeSpan.FromMilliseconds(100));
+            });
+        var messages = new[]
+        {
+            duringRequest ? CascadeChatMessage.Assistant("NEVER-COPY-INPUT") : CascadeChatMessage.User("NEVER-COPY-GUEST"),
+        };
+        var baseline = await client.CompleteAsync(messages, "fake", [], CancellationToken.None);
+        var actual = await client.CompleteAsync(messages, "fake", [], CancellationToken.None, capture);
+        capture.Emission("tts.started");
+        capture.Request(messages);
+        capture.Choice(actual, "stop");
+
+        Assert.Equal(handler.RequestBodies[0], handler.RequestBodies[1]);
+        Assert.Equal(baseline.ToJsonString(), actual.ToJsonString());
+        Assert.Equal(1, attempts);
+        Assert.Equal(duringRequest ? 0 : 1, logger.Lines.Count);
+        Assert.DoesNotContain("NEVER-COPY", string.Join("\n", logger.Lines));
+        Assert.Equal("Synthetic cascade diagnostic capture stopped: sanitization timed out.",
+            Assert.Single(logger.Warnings));
+        Assert.DoesNotContain("NEVER-COPY", string.Join("\n", logger.Warnings));
+    }
+
     [Fact]
     public void Captures_boundary_without_changing_messages_or_copying_private_inputs()
     {

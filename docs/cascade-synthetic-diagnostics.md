@@ -41,6 +41,12 @@ stages. Request history is capped at 64 messages and trimmed from the oldest end
 to approximately 12,000 serialized characters; retained/original counts expose
 truncation. Each assistant text is capped at 1,200 characters and each capture at
 160 events and its expiry. The claim event counts toward this limit.
+If diagnostic sanitization times out, capture stops with a fixed warning that
+contains no input text; the chat request/response and guest turn continue unchanged.
+Only this diagnostic regex timeout is handled here, not model, HTTP or cancellation
+failures. Turn correlation follows the existing serialized barge-in chain: a
+cancelled turn finishes before the next turn starts and assigns its response ID.
+The real interruption/next-turn regression checks both diagnostic and emitted IDs.
 
 No auth headers, keys, operator IDs, run markers, raw guest/system/tool text,
 tool arguments, check-in fields or tool-result JSON are copied. Tool content

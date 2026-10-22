@@ -52,7 +52,8 @@ internal sealed class CascadeDiagnosticGate(IConfiguration configuration, TimePr
 }
 
 internal sealed class CascadeDiagnosticCapture(
-    string sessionId, DateTimeOffset expires, TimeProvider clock, ILogger logger)
+    string sessionId, DateTimeOffset expires, TimeProvider clock, ILogger logger,
+    Func<string, string>? sanitize = null)
 {
     private int _events;
     private int _stopped;
@@ -60,6 +61,9 @@ internal sealed class CascadeDiagnosticCapture(
     public string? ResponseId { get; set; }
 
     public void Request(IReadOnlyList<JsonObject> messages)
+        => Capture(() => RequestCore(messages));
+
+    private void RequestCore(IReadOnlyList<JsonObject> messages)
     {
         var snapshot = new JsonArray();
         foreach (var message in messages.TakeLast(64))
@@ -73,7 +77,7 @@ internal sealed class CascadeDiagnosticCapture(
             };
             // User/system/tool text may contain codes or retrieved data. Never copy it.
             if (role == "assistant")
-                entry["content"] = Sanitize(content);
+                entry["content"] = SanitizeContent(content);
             if (message["tool_call_id"] is JsonValue toolId)
                 entry["toolCallIdHash"] = Hash(toolId.GetValue<string>());
             if (message["tool_calls"] is JsonArray calls)
@@ -90,17 +94,19 @@ internal sealed class CascadeDiagnosticCapture(
         });
     }
 
-    public void Choice(JsonObject message, string? finishReason) => Write("choice", new JsonObject
+    public void Choice(JsonObject message, string? finishReason) => Capture(() => Write("choice", new JsonObject
     {
-        ["content"] = Sanitize(message["content"]?.GetValue<string>() ?? ""),
+        ["content"] = SanitizeContent(message["content"]?.GetValue<string>() ?? ""),
         ["toolCalls"] = ToolCalls(message["tool_calls"] as JsonArray),
-        ["finishReason"] = Sanitize(finishReason ?? ""),
-    });
+        ["finishReason"] = SanitizeContent(finishReason ?? ""),
+    }));
 
     public void Emission(string stage) => Write(stage, new JsonObject());
 
     private void Write(string stage, JsonObject payload)
     {
+        if (Volatile.Read(ref _stopped) != 0)
+            return;
         var sequence = Interlocked.Increment(ref _events);
         if (clock.GetUtcNow() >= expires || sequence > 160)
         {
@@ -115,20 +121,37 @@ internal sealed class CascadeDiagnosticCapture(
         logger.LogInformation("Synthetic cascade diagnostic {Diagnostic}", payload.ToJsonString());
     }
 
-    private static JsonArray ToolCalls(JsonArray? calls)
+    private JsonArray ToolCalls(JsonArray? calls)
     {
         var result = new JsonArray();
         foreach (var call in calls?.Take(16) ?? [])
             result.Add(new JsonObject
             {
                 ["idHash"] = Hash(call?["id"]?.GetValue<string>() ?? ""),
-                ["name"] = Sanitize(call?["function"]?["name"]?.GetValue<string>() ?? ""),
+                ["name"] = SanitizeContent(call?["function"]?["name"]?.GetValue<string>() ?? ""),
             });
         return result;
     }
 
     private static string Hash(string value) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+
+    private string SanitizeContent(string text) => (sanitize ?? Sanitize)(text);
+
+    private void Capture(Action action)
+    {
+        if (Volatile.Read(ref _stopped) != 0)
+            return;
+        try
+        {
+            action();
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            if (Interlocked.Exchange(ref _stopped, 1) == 0)
+                logger.LogWarning("Synthetic cascade diagnostic capture stopped: sanitization timed out.");
+        }
+    }
 
     internal static string Sanitize(string text)
     {
