@@ -596,3 +596,17 @@ def test_real_conformance_expectations_match_current_natural_voice_pack():
     assert expected["instructionsSubstring"] in loader.get_system_prompt()
     search = next(t for t in loader.get_tool_schemas() if t["name"] == "search")
     assert expected["toolDescriptionSubstring"] in search["description"]
+
+
+def test_rendered_taco_voice_separates_guest_words_from_directions_and_midorder_closing():
+    from prompt_loader import PromptLoader
+
+    persona = PersonaCatalog.load().get("tacobell")
+    prompt = PromptLoader(prompts_dir=persona.prompts_dir).get_system_prompt()
+    assert "Your response text goes directly to the guest's speaker" in prompt
+    assert "never stage directions, parenthetical acting notes, instruction labels" in prompt
+    assert "Swapped to 3 Soft Tacos. What drink and size would you like with your combo?" in prompt
+    assert "No tomatoes on all three. What drink and size would you like?" in prompt
+    assert "The window direction is only for a guest-requested wrap-up, never an acknowledgment of an item change" in prompt
+    assert "A previous wrap-up does not make a later modification a request to finish again" in prompt
+    assert "do not verbalize that behavior" in prompt
