@@ -38,6 +38,13 @@ COPY app/frontend/ ./
 RUN npm run build
 
 # ---------------------------------------------------------------------------
+# Optional prebuilt Python wheelhouse. Empty by default; override with
+# `docker build --build-context python-wheelhouse=<dir>` using the artifact from
+# .github/workflows/python-wheelhouse.yml when the build host cannot reach the package index.
+# ---------------------------------------------------------------------------
+FROM scratch AS python-wheelhouse
+
+# ---------------------------------------------------------------------------
 # Stage 2: Production Python runtime
 # ---------------------------------------------------------------------------
 FROM python:3.15-slim AS production-stage
@@ -49,8 +56,18 @@ ENV PYTHONUNBUFFERED=1
 
 # Install Python deps before copying app source for layer caching
 COPY ./app/backend/requirements.txt /app/requirements.txt
+# With a wheelhouse, install offline from its hash-locked set only after verifying every wheel
+# checksum and that the lock was resolved from this exact requirements.txt.
 RUN --mount=type=secret,id=pip_config,target=/etc/pip.conf \
-    PYYAML_FORCE_LIBYAML=0 python -m pip install --no-cache-dir -r requirements.txt
+    --mount=type=bind,from=python-wheelhouse,target=/wheelhouse \
+    if [ -f /wheelhouse/requirements.lock.txt ]; then \
+      (cd /wheelhouse && sha256sum -c --strict SHA256SUMS) \
+      && echo "$(cat /wheelhouse/requirements.txt.sha256)  requirements.txt" | sha256sum -c --strict - \
+      && python -m pip install --no-cache-dir --no-index --find-links /wheelhouse \
+           --require-hashes -r /wheelhouse/requirements.lock.txt; \
+    else \
+      PYYAML_FORCE_LIBYAML=0 python -m pip install --no-cache-dir -r requirements.txt; \
+    fi
 
 # Copy backend application source
 COPY ./app/backend/ /app
