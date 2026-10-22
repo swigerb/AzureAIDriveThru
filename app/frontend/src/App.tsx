@@ -1330,7 +1330,7 @@ function SonicApp() {
                             <OrderSummary order={useDummyData ? dummyOrder : order} taxRate={current.taxRate} />
                             {current.features.demoRewards && !useDummyData && (
                                 <RewardsDemo snapshot={order.rewardsDemo} connected={realtime.isConnected} onAction={realtime.sendDemoRewards}
-                                    onReconnect={() => { void realtime.reconnect(); }} />
+                                    onReconnect={realtime.reconnect} />
                             )}
                             <div className="mb-4 flex flex-col items-center justify-center" data-testid="conversation-controls">
                                 <Button

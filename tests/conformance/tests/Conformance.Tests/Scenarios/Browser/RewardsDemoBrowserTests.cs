@@ -53,11 +53,11 @@ public sealed class RewardsDemoBrowserTests(BrowserConformanceFixture fixture)
         var code = page.GetByLabel("Demo rewards / check-in code", new() { Exact = true });
         await Expect(code).ToBeEnabledAsync();
         await code.FillAsync("5551234567");
-        await page.GetByRole(AriaRole.Button, new() { Name = "Check in to demo order" }).ClickAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Check in", Exact = true }).ClickAsync();
         await Expect(page.GetByRole(AriaRole.Alert)).ToContainTextAsync("No value was sent");
         Assert.False(await page.EvaluateAsync<bool>("window.__rewardFrames.some(f => f.code === '5551234567')"));
         await code.FillAsync("DEMO-PLUS");
-        await page.GetByRole(AriaRole.Button, new() { Name = "Check in to demo order" }).ClickAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Check in", Exact = true }).ClickAsync();
         await Expect(page.GetByText("500", new() { Exact = false }).Filter(new() { HasText = "demo points" })).ToBeVisibleAsync();
 
         connection.Script.Enqueue(new ResponseScript([
@@ -66,20 +66,20 @@ public sealed class RewardsDemoBrowserTests(BrowserConformanceFixture fixture)
         ]));
         await page.EvaluateAsync("window.__rewardSocket.send(JSON.stringify({ type: 'response.create' }))");
         await Expect(page.GetByText("You have an eligible reward!", new() { Exact = false })).ToBeVisibleAsync();
-        await page.GetByRole(AriaRole.Button, new() { Name = "Redeem demo reward", Exact = true }).ClickAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Use reward", Exact = true }).ClickAsync();
         await Expect(page.GetByText("One item covered.", new() { Exact = false })).ToBeVisibleAsync();
         await Expect(page.GetByText("-$1.99", new() { Exact = true })).ToBeVisibleAsync();
-        await page.GetByRole(AriaRole.Button, new() { Name = "Complete demo order", Exact = true }).ClickAsync();
-        await Expect(page.GetByText("Completed · 19 fictional points earned.", new() { Exact = true })).ToBeVisibleAsync();
-        var complete = page.GetByRole(AriaRole.Button, new() { Name = "Complete demo order", Exact = true });
-        await Expect(complete).ToBeDisabledAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Complete order", Exact = true }).ClickAsync();
+        await Expect(page.GetByText("Earned 19 fictional points. No purchase was placed.", new() { Exact = true })).ToBeVisibleAsync();
+        var complete = page.GetByRole(AriaRole.Button, new() { Name = "Complete order", Exact = true });
+        await Expect(complete).ToHaveCountAsync(0);
         var screenshot = Environment.GetEnvironmentVariable("TACO_BELL_SCREENSHOT");
         if (!string.IsNullOrEmpty(screenshot))
             await page.ScreenshotAsync(new() { Path = Path.ChangeExtension(screenshot, "desktop.png"), FullPage = true });
         await page.ReloadAsync();
-        await Expect(page.GetByText("Completed · 19 fictional points earned.", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(page.GetByText("Earned 19 fictional points. No purchase was placed.", new() { Exact = true })).ToBeVisibleAsync();
         await Expect(page.GetByText("269", new() { Exact = false }).Filter(new() { HasText = "demo points" })).ToBeVisibleAsync();
-        await page.GetByRole(AriaRole.Button, new() { Name = "Start next demo order" }).ClickAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Next order", Exact = true }).ClickAsync();
         await Expect(page.GetByText("Demo check-in linked to this order", new() { Exact = true })).ToBeVisibleAsync();
         await Expect(page.GetByText("-$1.99", new() { Exact = true })).ToHaveCountAsync(0);
 
@@ -90,7 +90,7 @@ public sealed class RewardsDemoBrowserTests(BrowserConformanceFixture fixture)
         await Expect(panel).ToBeVisibleAsync();
         Assert.Equal("rgb(59, 11, 113)", await panel.EvaluateAsync<string>("e => getComputedStyle(e).backgroundColor"));
         Assert.Equal("rgb(255, 255, 255)", await panel.EvaluateAsync<string>("e => getComputedStyle(e).color"));
-        Assert.Equal("rgb(59, 11, 113)", await panel.GetByRole(AriaRole.Button, new() { Name = "Redeem demo reward", Exact = true })
+        Assert.Equal("rgb(59, 11, 113)", await panel.GetByRole(AriaRole.Button, new() { Name = "Complete order", Exact = true })
             .EvaluateAsync<string>("e => getComputedStyle(e).color"));
         await Expect(logo).ToBeVisibleAsync();
         if (!string.IsNullOrEmpty(screenshot))

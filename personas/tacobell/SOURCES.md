@@ -37,7 +37,7 @@ first. Chips and cheese and Cinnamon Twists are separate sides, never absorbed i
 drink-only bundle. Free omissions are retained on the ticket (`No Tomatoes`); this is not
 an ingredient/allergen guarantee. Shell changes replace the exact prior combo and preserve
 agreed omissions. A read-back/total does not complete the order: forgotten items can be
-added until the user explicitly selects **Complete demo order**.
+added until the user explicitly selects **Complete order**.
 
 The Edge customization regression uses deterministic synthetic recognized guest utterances
 and model tool calls through real `search`, `update_order`, `get_order` and WebSocket handlers.

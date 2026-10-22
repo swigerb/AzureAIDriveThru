@@ -121,7 +121,7 @@ public sealed class TacoBellCustomizationBrowserTests(BrowserConformanceFixture 
 
         var code = page.GetByLabel("Demo rewards / check-in code", new() { Exact = true });
         await code.FillAsync("DEMO-PLUS");
-        await page.GetByRole(AriaRole.Button, new() { Name = "Check in to demo order" }).ClickAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Check in", Exact = true }).ClickAsync();
         await Expect(page.GetByText("Demo check-in linked to this order", new() { Exact = true })).ToBeVisibleAsync();
 
         await Guest("I'd like the three taco meal with crunchy shells.");
@@ -168,14 +168,22 @@ public sealed class TacoBellCustomizationBrowserTests(BrowserConformanceFixture 
         await Expect(page.GetByRole(AriaRole.Region, new() { Name = "Simulated rewards" })).ToContainTextAsync("Cinnamon Twists");
 
         await Guest("Use my demo reward to make the Cinnamon Twists free.");
-        await page.GetByRole(AriaRole.Button, new() { Name = "Redeem demo reward", Exact = true }).ClickAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Use reward", Exact = true }).ClickAsync();
+        await Expect(ticketUi).ToContainTextAsync("-$1.49");
+        var rewardsPanel = page.GetByRole(AriaRole.Region, new() { Name = "Simulated rewards" });
+        await Expect(rewardsPanel.GetByRole(AriaRole.Button)).ToHaveCountAsync(2);
+        await page.GetByRole(AriaRole.Button, new() { Name = "Undo reward", Exact = true }).ClickAsync();
+        await Expect(ticketUi).Not.ToContainTextAsync("-$1.49");
+        await page.GetByRole(AriaRole.Button, new() { Name = "Use reward", Exact = true }).ClickAsync();
         await Expect(ticketUi).ToContainTextAsync("-$1.49");
         var free = await ReadBack();
         Assert.Equal("$12.94", free.GetProperty("finalTotalDisplay").GetString());
         Assert.Equal(1.49m, free.GetProperty("rewardsDemo").GetProperty("discount").GetDecimal());
         Assert.Equal(500, free.GetProperty("rewardsDemo").GetProperty("balance").GetInt32());
-        await page.GetByRole(AriaRole.Button, new() { Name = "Complete demo order", Exact = true }).ClickAsync();
-        await Expect(page.GetByText("Completed · 119 fictional points earned.", new() { Exact = true })).ToBeVisibleAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Complete order", Exact = true }).ClickAsync();
+        await Expect(page.GetByText("Earned 119 fictional points. No purchase was placed.", new() { Exact = true })).ToBeVisibleAsync();
+        await Expect(rewardsPanel.GetByRole(AriaRole.Button)).ToHaveCountAsync(1);
+        await Expect(rewardsPanel.GetByRole(AriaRole.Button, new() { Name = "Next order", Exact = true })).ToBeVisibleAsync();
         await Expect(page.GetByRole(AriaRole.Region, new() { Name = "Simulated rewards" })).ToContainTextAsync("369");
         await page.EvaluateAsync("window.__customSocket.send(JSON.stringify({type:'extension.demo_rewards',action:'complete'}))");
         var final = await Tool("get_order", new { });
@@ -198,6 +206,12 @@ public sealed class TacoBellCustomizationBrowserTests(BrowserConformanceFixture 
             Assert.False(await page.EvaluateAsync<bool>("document.documentElement.scrollWidth > innerWidth"));
             await page.ScreenshotAsync(new() { Path = Path.Combine(folder, "customization-mobile.png"), FullPage = true });
         }
+        await Expect(page.GetByRole(AriaRole.Button, new() { Name = "Reconnect", Exact = true })).ToBeVisibleAsync(new() { Timeout = 20000 });
+        await Expect(rewardsPanel.GetByRole(AriaRole.Button)).ToHaveCountAsync(1);
+        await Expect(rewardsPanel).Not.ToContainTextAsync("369");
+        await Expect(rewardsPanel).Not.ToContainTextAsync("Order complete");
+        if (!string.IsNullOrEmpty(folder))
+            await page.ScreenshotAsync(new() { Path = Path.Combine(folder, "completed-expired-mobile.png"), FullPage = true });
     });
 
     [Theory]
@@ -218,27 +232,22 @@ public sealed class TacoBellCustomizationBrowserTests(BrowserConformanceFixture 
         await page.GetByLabel("Demo rewards / check-in code", new() { Exact = true }).FillAsync("DEMO-PLUS");
         if (checkedIn)
         {
-            await page.GetByRole(AriaRole.Button, new() { Name = "Check in to demo order" }).ClickAsync();
+            await page.GetByRole(AriaRole.Button, new() { Name = "Check in", Exact = true }).ClickAsync();
             await Expect(page.GetByText("Demo check-in linked to this order", new() { Exact = true })).ToBeVisibleAsync();
         }
-        await Expect(page.GetByRole(AriaRole.Button, new() { Name = "Reconnect demo rewards" })).ToBeVisibleAsync(new() { Timeout = 20000 });
-        if (checkedIn)
-            await Expect(page.GetByRole(AriaRole.Button, new() { Name = "Complete demo order", Exact = true })).ToBeDisabledAsync();
-        if (!checkedIn)
-        {
-            await Expect(page.GetByLabel("Demo rewards / check-in code", new() { Exact = true })).ToBeDisabledAsync();
-            await Expect(page.GetByRole(AriaRole.Button, new() { Name = "Check in to demo order" })).ToBeDisabledAsync();
-        }
+        await Expect(page.GetByRole(AriaRole.Button, new() { Name = "Reconnect", Exact = true })).ToBeVisibleAsync(new() { Timeout = 20000 });
+        await Expect(page.GetByRole(AriaRole.Region, new() { Name = "Simulated rewards" }).GetByRole(AriaRole.Button)).ToHaveCountAsync(1);
+        await Expect(page.GetByLabel("Demo rewards / check-in code", new() { Exact = true })).ToHaveCountAsync(0);
         var fresh = fixture.Realtime.WaitForNextConnectionAsync(Timeout, ct);
-        await page.GetByRole(AriaRole.Button, new() { Name = "Reconnect demo rewards" }).ClickAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Reconnect", Exact = true }).ClickAsync();
         Assert.NotNull(await fresh);
         await Expect(page.GetByLabel("Demo rewards / check-in code", new() { Exact = true })).ToBeEnabledAsync();
         await page.GetByLabel("Demo rewards / check-in code", new() { Exact = true }).FillAsync("DEMO-NEW");
-        await page.GetByRole(AriaRole.Button, new() { Name = "Check in to demo order" }).ClickAsync();
+        await page.GetByRole(AriaRole.Button, new() { Name = "Check in", Exact = true }).ClickAsync();
         await Expect(page.GetByText("Demo check-in linked to this order", new() { Exact = true })).ToBeVisibleAsync();
         var reward = page.GetByRole(AriaRole.Region, new() { Name = "Simulated rewards" });
         await Expect(reward).ToContainTextAsync("0 demo points");
-        await Expect(page.GetByRole(AriaRole.Button, new() { Name = "Redeem demo reward", Exact = true })).ToBeDisabledAsync();
+        await Expect(page.GetByRole(AriaRole.Button, new() { Name = "Use reward", Exact = true })).ToHaveCountAsync(0);
         await Expect(page.GetByTestId("order-ticket")).ToContainTextAsync("$0.00");
     });
 }

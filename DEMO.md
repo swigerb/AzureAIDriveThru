@@ -23,10 +23,10 @@ quotes. Keep **Dummy Data** off to use the real session's simulated rewards pane
 
 Enter **DEMO-PLUS** to check in with 500 fictional points, or **DEMO-NEW** to start at zero.
 Never enter a real rewards number or code. Order two plain Crunchy Tacos, then select
-**Redeem demo reward**: one taco is covered for 250 demo points. Select **Complete demo
-order** to commit the reservation and award points once; it does not place a purchase.
+**Use reward**: one taco is covered for 250 demo points. Select **Complete order**
+to commit the reservation and award points once; it does not place a purchase.
 The sample two-taco order earns 19 points after redemption, leaving 269 fictional points.
-Reloading resumes the same ticket and ledger. **Start next demo order** clears the ticket
+Reloading resumes the same ticket and ledger. **Next order** clears the ticket
 but retains the session-only balance; ending the session discards it.
 
 For branding, source dates, authorized-logo provenance, font substitutions, sample pricing
@@ -45,8 +45,15 @@ After that total, add **Cinnamon Twists** ($1.49 sample): subtotal **$13.47**, t
 fictional 250-point reward. Redeem it to cover the $1.49 item; payable total returns to
 **$12.94**. Complete once to spend 250 and earn 119 points, leaving **369 demo points**.
 Reading the first total does not freeze the ticket; explicit completion does.
-If the session expires, rewards controls disable and **Reconnect demo rewards** starts
-a fresh session without requiring microphone permission. Enter a demo code again.
+The rewards card follows the session lifecycle: **Check in**, **Use reward** when
+eligible, then **Complete order**. **Undo reward** is a subordinate link while the
+reservation is editable. If a reward is eligible, completion remains a secondary
+outlined action so the guest can skip it. Once complete, only **Next order** remains,
+alongside earned points and the updated balance. While a request awaits confirmation,
+actions disable; failures remain visible without assuming success.
+If the session expires, the card hides stale balances and actions and shows only
+**Reconnect** with a fresh-session explanation. Reconnect without microphone permission,
+then enter a demo code again.
 
 ### Post-deployment live-model acceptance (not yet executed)
 
