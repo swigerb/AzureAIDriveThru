@@ -214,6 +214,24 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         {
             throw;
         }
+        catch (FoundryHttpException ex) when (ex.IsContentFilter)
+        {
+            // Same terminal shape the Realtime API sends for a filtered turn, so the frontend asks
+            // the guest to rephrase instead of going silent. No automatic retry.
+            context.Logger.CascadeChatContentFiltered(context.SessionId);
+            await CascadeProcessor.SendTextAsync(context.BrowserSocket, new JsonObject
+            {
+                ["type"] = "response.done",
+                ["response"] = new JsonObject
+                {
+                    ["id"] = responseId,
+                    ["status"] = "incomplete",
+                    ["status_details"] = new JsonObject { ["type"] = "incomplete", ["reason"] = "content_filter" },
+                    ["output"] = new JsonArray(),
+                },
+            }.ToJsonString(), turnCt, context.CancellationToken).ConfigureAwait(false);
+            return;
+        }
         catch (Exception ex)
         {
             context.Logger.CascadeChatCompletionFailed(ex, context.SessionId);

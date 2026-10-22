@@ -203,6 +203,14 @@ def _http_status_of(exc: Exception) -> int | None:
     return getattr(exc, "status", None)
 
 
+def _is_content_filter(exc: Exception) -> bool:
+    """A Foundry chat-completion 400 whose prompt was rejected by the content filter
+    (`error.code == "content_filter"`)."""
+    if _http_status_of(exc) != 400:
+        return False
+    return getattr(getattr(exc, "error", None), "code", None) == "content_filter"
+
+
 def _retry_hint_of(exc: Exception) -> float | None:
     """Seconds the service asked us to wait, preferring a `Retry-After` response header (both
     azure-core's `HttpResponseError.response.headers` and aiohttp's own
@@ -924,7 +932,21 @@ class CascadeProcessor:
             return
         except asyncio.CancelledError:
             raise  # barge-in: `_cancel_current_turn` owns this turn's cleanup, not us.
-        except Exception:
+        except Exception as exc:
+            if _is_content_filter(exc):
+                # Same terminal shape the Realtime API sends for a filtered turn, so the frontend
+                # asks the guest to rephrase instead of going silent. No automatic retry.
+                logger.warning("Cascade chat completion blocked by content filter (session=%s)", session_id)
+                await ws.send_json({
+                    "type": "response.done",
+                    "response": {
+                        "id": response_id,
+                        "status": "incomplete",
+                        "status_details": {"type": "incomplete", "reason": "content_filter"},
+                        "output": [],
+                    },
+                })
+                return
             # #262: a non-429 chat-completion failure (e.g. a transient 500) used to propagate
             # straight out of this method, through `_process_turn`/`_send_greeting`, into
             # `_start_turn`/`_start_greeting`'s own `except Exception: logger.exception(...)` --

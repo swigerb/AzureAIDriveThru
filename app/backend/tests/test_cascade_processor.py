@@ -852,6 +852,53 @@ class RunTurnAndSpeakFailureTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(done_msg["response"]["status"], "failed")
         self.assertEqual(done_msg["response"]["output"], [])
 
+    async def test_content_filtered_chat_completion_sends_incomplete_content_filter_response_done(self):
+        """Live regression: Foundry rejected a cascade prompt with 400 content_filter and the
+        guest only got a generic failure (no rephrase notice). Must match the Realtime API's
+        filtered-turn shape that the frontend already turns into a rephrase prompt, with no
+        automatic retry."""
+        body = json.dumps({"error": {"message": "The response was filtered", "param": "prompt",
+                                     "code": "content_filter", "status": 400}})
+
+        class _Resp:
+            status_code = 400
+            reason = "Bad Request"
+            headers = {"Content-Type": "application/json"}
+            content_type = "application/json"
+            request = None
+
+            def text(self, encoding=None):
+                return body
+
+            def body(self):
+                return body.encode()
+
+        processor = _make_processor({})
+        processor._run_chat_tool_loop = AsyncMock(side_effect=HttpResponseError(response=_Resp()))
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+
+        await processor._run_turn_and_speak(ws, "s1", state)
+
+        self.assertEqual(_sent_types(ws), ["response.created", "response.done"])
+        self.assertEqual(processor._run_chat_tool_loop.await_count, 1)
+        done = ws.send_json.await_args_list[-1].args[0]["response"]
+        self.assertEqual(done["status"], "incomplete")
+        self.assertEqual(done["status_details"], {"type": "incomplete", "reason": "content_filter"})
+        self.assertEqual(done["output"], [])
+
+    async def test_other_400_still_sends_a_failed_response_done(self):
+        err = HttpResponseError(message="bad request")
+        err.status_code = 400
+        processor = _make_processor({})
+        processor._run_chat_tool_loop = AsyncMock(side_effect=err)
+        ws = _make_mock_ws()
+        state = _CascadeSessionState(session_id="s1", persona_id="p", deployment="d", voice="marin")
+
+        await processor._run_turn_and_speak(ws, "s1", state)
+
+        self.assertEqual(ws.send_json.await_args_list[-1].args[0]["response"]["status"], "failed")
+
     async def test_non_429_tts_failure_still_sends_a_failed_response_done(self):
         processor = _make_processor({})
         processor._run_chat_tool_loop = AsyncMock(return_value="Sure thing.")

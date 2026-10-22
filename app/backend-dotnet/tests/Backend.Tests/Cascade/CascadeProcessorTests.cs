@@ -67,6 +67,18 @@ internal sealed class RoutingFoundryHandler : HttpMessageHandler
         return this;
     }
 
+    /// <summary>Foundry's real 400 body for a prompt rejected by the content filter.</summary>
+    public RoutingFoundryHandler EnqueueChatContentFilter()
+    {
+        _chatResponses.Enqueue(() => new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent(
+                """{"error":{"message":"The response was filtered","type":null,"param":"prompt","code":"content_filter","status":400}}""",
+                Encoding.UTF8, "application/json"),
+        });
+        return this;
+    }
+
     /// <summary>Simulates an HttpClient-internal timeout on the chat-completions call itself (as
     /// opposed to a tool call -- see <see cref="RecordingToolExecutor"/>'s own doc comment for that
     /// variant): throws a <see cref="TaskCanceledException"/> whose OWN cancellation token (not the
@@ -832,6 +844,41 @@ public sealed class CascadeProcessorTests
         Assert.Contains(types, t => t == "error");
         var guestDone = frames.Last(f => f["type"]!.GetValue<string>() == "response.done");
         Assert.Equal("failed", guestDone["response"]!["status"]!.GetValue<string>());
+    }
+
+    /// <summary>Live regression: Foundry rejected a cascade prompt with 400 content_filter and the
+    /// guest only got a generic failure (no rephrase notice). Must match the Realtime API's
+    /// filtered-turn shape, with no automatic retry.</summary>
+    [Fact]
+    public async Task RunSessionAsync_ChatContentFilter_SendsIncompleteContentFilterResponseDone()
+    {
+        var (persona, loader) = LoadDeltaFixture();
+        var handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Welcome!")
+            .EnqueueSpeech([1, 2])
+            .EnqueueTranscript("that'll be it")
+            .EnqueueChatContentFilter();
+        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, logger: new RecordingLogger());
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+
+        var socket = new DelayedFakeWebSocket(
+            [
+                (AppendFrame(Pcm16(20000, count: 10)), WebSocketMessageType.Text),
+                (AppendFrame(Pcm16(0, count: 4800)), WebSocketMessageType.Text),
+                ([], WebSocketMessageType.Close),
+            ],
+            ReceiveDelay);
+
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-chat-filter", TestContext.Current.CancellationToken);
+
+        var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
+        var types = frames.Select(f => f["type"]!.GetValue<string>()).ToList();
+        Assert.DoesNotContain("error", types);
+        var guestDone = frames.Last(f => f["type"]!.GetValue<string>() == "response.done")["response"]!;
+        Assert.Equal("incomplete", guestDone["status"]!.GetValue<string>());
+        Assert.Equal("content_filter", guestDone["status_details"]!["reason"]!.GetValue<string>());
+        Assert.Empty(guestDone["output"]!.AsArray());
+        Assert.Equal(2, handler.ChatRequestBodies.Count);
     }
 
     /// <summary>#262's TTS leg: a non-429 TTS failure (after a successful chat completion) must
