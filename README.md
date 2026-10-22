@@ -51,6 +51,8 @@ The browser streams microphone PCM over one `/realtime` WebSocket. The Python ba
 
 The cascade pipeline uses the same WebSocket and frontend contract. The backend segments guest audio locally, transcribes it with `gpt-4o-transcribe`, sends text and the same tool schemas to a Foundry chat model, then returns audio from `gpt-4o-mini-tts`. The catalog contains `gpt-5-mini` and `phi-4` for reasoning. The standard deployment creates both, while current persona allow-lists select `gpt-5-mini`.
 
+Cascade turns are slower than realtime: with `gpt-5-mini` and tool calls, a guest turn took roughly 10 to 35 seconds in testing before the reply played. The chat model occasionally repeats a sentence or reads a tool's upsell hint aloud. A short pause inside a guest phrase can split it into two turns; audio from a turn cancelled before its transcript commits is carried into the next turn. While a reply plays, guest audio is suppressed to avoid echo, so speech that overlaps the assistant can be lost. The cascade speech threshold (`vad.cascade_energy_threshold`) has been verified with synthetic speech, not yet with a physical microphone.
+
 ## Azure services
 
 `azd` provisions or connects these resources:
