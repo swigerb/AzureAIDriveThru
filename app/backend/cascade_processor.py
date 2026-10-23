@@ -65,6 +65,7 @@ from azure.core.exceptions import HttpResponseError
 from config_loader import get_config
 from conformance_hooks import cascade_chat_kwargs
 from menu_utils import apply_lexicon
+from model_diagnostics import DiagnosticCapture, DiagnosticGate
 from order_state import order_state_singleton
 from processors import ResolvedModel, resolve_cascade_model
 from rate_limit import (
@@ -358,6 +359,7 @@ class _CascadeSessionState:
     deployment: str
     voice: str
     messages: list[Any] = field(default_factory=list)
+    diagnostic: DiagnosticCapture | None = None
     # The currently in-flight background turn task (greeting or guest turn), if any -- set by
     # `CascadeProcessor._start_turn`/`_send_greeting`, cancelled by `_cancel_current_turn` on a
     # new `speech_started` (barge-in, Rick's #118 review item 5).
@@ -481,6 +483,8 @@ class CascadeProcessor:
         # rate-limit recovery could not be toggled off (or on, over a config.yaml default of
         # off) via the env var the way realtime's already can.
         self._rate_limit_settings = RateLimitSettings.from_config(_config, os.environ)
+        self.entra_mode = False
+        self._diagnostic_gate = DiagnosticGate()
 
     def resolve_model(self, persona, requested_model_id: str | None) -> ResolvedModel:
         """`processors.PipelineProcessor`'s model-resolution hook -- delegates to
@@ -531,9 +535,14 @@ class CascadeProcessor:
         session_id, resumed_state, leftover_msg = await self._negotiate_session(
             ws, persona, resolved_model, requested_menu_mode
         )
+        from entra_auth import PRINCIPAL_KEY
+        diagnostic = None if resumed_state is not None else self._diagnostic_gate.claim(
+            os.environ, entra=self.entra_mode, principal=request.get(PRINCIPAL_KEY),
+            marker=request.query.get("diagnostic_run", ""), persona=persona.id, session_id=session_id,
+        )
         try:
             await self._run_session(ws, session_id, persona, resolved_model,
-                                     resumed_state=resumed_state, leftover_msg=leftover_msg)
+                                     resumed_state=resumed_state, leftover_msg=leftover_msg, diagnostic=diagnostic)
         finally:
             # Covers an upstream (transcription/chat/TTS) connect failure the same way
             # RTMiddleTier.handle's own finally does -- a no-op if the loop's own exit already
@@ -647,6 +656,7 @@ class CascadeProcessor:
     async def _run_session(
         self, ws: web.WebSocketResponse, session_id: str, persona, resolved_model: ResolvedModel, *,
         resumed_state: _CascadeSessionState | None = None, leftover_msg: web.WSMessage | None = None,
+        diagnostic: DiagnosticCapture | None = None,
     ) -> None:
         prompt_loader = self.persona_prompt_loaders.get(persona.id)
         if resumed_state is not None:
@@ -654,6 +664,9 @@ class CascadeProcessor:
             # not) and started the greeting if one was needed -- nothing left to do here but
             # join its own message loop below.
             state = resumed_state
+            if state.diagnostic is not None:
+                state.diagnostic.stopped = True
+                state.diagnostic = None
         else:
             # #248: per-persona default voice -- see `_resolve_persona_voice`'s own doc comment.
             voice = _resolve_persona_voice(persona, self.default_voice, self.allowed_voices)
@@ -663,6 +676,7 @@ class CascadeProcessor:
                 deployment=resolved_model.deployment,
                 voice=voice,
                 role_name=getattr(persona.manifest, "roleName", None),
+                diagnostic=diagnostic,
             )
             if prompt_loader is not None:
                 state.messages.append(SystemMessage(content=prompt_loader.get_system_prompt()))
@@ -900,6 +914,8 @@ class CascadeProcessor:
         # cancel lands either before it (audio stays carried, no transcript emitted) or after it
         # (carry released, transcript frame still delivered via shield). Never both.
         state.messages.append(UserMessage(content=transcript))
+        if state.diagnostic:
+            state.diagnostic.guest_committed(len(transcript), len(state.messages))
         _release_untranscribed_audio(state, turn_audio)
         # #126: feeds this session's own rehydration/resume history -- see
         # `SessionManager.rehydration_text`/`recent_turns`.
@@ -971,6 +987,9 @@ class CascadeProcessor:
         Cancellation (barge-in, `_cancel_current_turn`) propagates through the awaits below
         exactly like any other `asyncio.CancelledError` -- there is no extra flag-checking."""
         response_id = new_middle_tier_item_id()
+        if state.diagnostic:
+            state.diagnostic.response_id = response_id
+            state.diagnostic.emit("response.created")
         await ws.send_json({"type": "response.created", "response": {"id": response_id}})
 
         try:
@@ -983,6 +1002,8 @@ class CascadeProcessor:
             await ws.send_json(_completed_response_done(response_id, ""))
             return
         except asyncio.CancelledError:
+            if state.diagnostic:
+                state.diagnostic.emit("cancelled")
             raise  # barge-in: `_cancel_current_turn` owns this turn's cleanup, not us.
         except Exception as exc:
             if _is_content_filter(exc):
@@ -1086,8 +1107,7 @@ class CascadeProcessor:
         messages.append(SystemMessage(content=instructions))
         completion = await self._with_rate_limit_retry(
             ws, session_id,
-            lambda: client.complete(messages=messages, model=state.deployment,
-                                    tools=[], tool_choice="none", **cascade_chat_kwargs()),
+            lambda: self._complete_observed(client, state, messages, [], "none"),
             "chat completion",
         )
         message = completion.choices[0].message
@@ -1114,12 +1134,7 @@ class CascadeProcessor:
         for _round in range(self._MAX_TOOL_ROUNDS):
             completion = await self._with_rate_limit_retry(
                 ws, session_id,
-                lambda: client.complete(
-                    messages=state.messages,
-                    model=state.deployment,
-                    tools=tool_defs or None,
-                    **cascade_chat_kwargs(),
-                ),
+                lambda: self._complete_observed(client, state, state.messages, tool_defs or None),
                 "chat completion",
             )
             message = completion.choices[0].message
@@ -1156,6 +1171,27 @@ class CascadeProcessor:
         logger.warning("Cascade tool-call loop hit the %d-round cap without a final answer (session=%s)",
                         self._MAX_TOOL_ROUNDS, session_id)
         return ""
+
+    async def _complete_observed(self, client, state, messages, tools, tool_choice=None):
+        diagnostic = state.diagnostic
+        if diagnostic and diagnostic.session_id != state.session_id:
+            logger.warning("Synthetic model diagnostics disabled: session binding mismatch.")
+            diagnostic.stopped = True
+            diagnostic = None
+        if diagnostic:
+            diagnostic.request(messages, state.deployment, tools, tool_choice)
+        kwargs = cascade_chat_kwargs()
+        if tool_choice is not None:
+            kwargs["tool_choice"] = tool_choice
+        try:
+            completion = await client.complete(messages=messages, model=state.deployment, tools=tools, **kwargs)
+        except asyncio.CancelledError:
+            if diagnostic:
+                diagnostic.emit("request.cancelled")
+            raise
+        if diagnostic:
+            diagnostic.choice(completion)
+        return completion
 
     async def _execute_tool_call(self, ws: web.WebSocketResponse, session_id: str, state: _CascadeSessionState, tool_call, previous_item_id: str) -> None:
         """Replicates `RTMiddleTier`'s own `response.output_item.done` tool-execution contract

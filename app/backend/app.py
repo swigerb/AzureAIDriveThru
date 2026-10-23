@@ -784,6 +784,7 @@ async def create_app() -> web.Application:
         # string a persona.json happens to declare.
         allowed_voices=rtmt.allowed_voices,
     )
+    cascade_processor.entra_mode = rtmt.entra_mode
     rtmt.processor_registry = ProcessorRegistry([rtmt, cascade_processor])
 
     rtmt.attach_to_app(app, "/realtime")

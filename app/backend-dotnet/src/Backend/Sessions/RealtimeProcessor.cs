@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Backend.Configuration;
+using Backend.Cascade;
 using Backend.Models;
 using Backend.Personas;
 using Backend.Prompts;
@@ -230,10 +231,12 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
         ResolvedModel resolvedModel,
         string sessionId,
         CancellationToken cancellationToken,
-        string? menuMode = null)
+        string? menuMode = null,
+        CascadeDiagnosticCapture? diagnostic = null)
     {
         var binding = ResolveSessionBinding(persona, menuMode);
         var deployment = string.IsNullOrEmpty(resolvedModel.Deployment) ? _defaultDeployment : resolvedModel.Deployment;
+        diagnostic?.Binding(resolvedModel.Id, deployment);
 
         using var upstream = new ClientWebSocket();
         if (!await ConnectUpstreamAsync(upstream, browserSocket, deployment, sessionId, cancellationToken)
@@ -241,12 +244,16 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
         {
             return;
         }
+        using var diagnosticUpstream = diagnostic is null ? null : new DiagnosticWebSocket(upstream, diagnostic, true);
+        using var diagnosticBrowser = diagnostic is null ? null : new DiagnosticWebSocket(browserSocket, diagnostic, false);
+        WebSocket observedUpstream = diagnosticUpstream ?? (WebSocket)upstream;
+        browserSocket = diagnosticBrowser ?? browserSocket;
         var state = CreateSessionState(
-            upstream, browserSocket, persona, resolvedModel, sessionId, binding.Voice, binding.ToolExecutor);
+            observedUpstream, browserSocket, persona, resolvedModel, sessionId, binding.Voice, binding.ToolExecutor);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        RegisterSession(browserSocket, upstream, persona, resolvedModel, menuMode, state, linkedCts);
+        RegisterSession(browserSocket, observedUpstream, persona, resolvedModel, menuMode, state, linkedCts);
         var context = CreateSessionContext(
-            browserSocket, upstream, persona, resolvedModel, menuMode, state, linkedCts);
+            browserSocket, observedUpstream, persona, resolvedModel, menuMode, state, linkedCts);
         await RelaySessionAsync(context, linkedCts).ConfigureAwait(false);
     }
 
