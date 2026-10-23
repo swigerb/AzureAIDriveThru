@@ -127,13 +127,7 @@ file static class PersonaSessionUpdateFallbackScenario
             $"extension.round_trip_token never reached the browser for persona '{personaId}' " +
             "(greeting never completed after the fallback recovery).");
 
-        var greetingFrame = connection.ReceivedFrames.Snapshot().FirstOrDefault(f =>
-            f.Type == "conversation.item.create" &&
-            f.Json.TryGetProperty("item", out var item) &&
-            item.TryGetProperty("type", out var itemType) &&
-            itemType.GetString() == "message");
-        Assert.True(greetingFrame is not null, $"No greeting conversation.item.create (item.type=message) frame found for persona '{personaId}'.");
-        var greetingText = greetingFrame!.Json.GetProperty("item").GetProperty("content")[0].GetProperty("text").GetString();
+        var greetingText = OrderScenarioHelpers.GreetingInstructions(connection);
         Assert.Contains(greetingExpected.GreetingSubstring, greetingText);
     }
 }

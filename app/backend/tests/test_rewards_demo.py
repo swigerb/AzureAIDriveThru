@@ -592,7 +592,7 @@ def test_real_conformance_expectations_match_current_natural_voice_pack():
     loader = PromptLoader(prompts_dir=persona.prompts_dir)
     expected = json.loads((root / "tests" / "conformance" / "testdata" / "personas" / "tacobell" / "smoke.json")
                           .read_text(encoding="utf-8"))
-    assert expected["greetingSubstring"] in loader.get_greeting()["item"]["content"][0]["text"]
+    assert expected["greetingSubstring"] in loader.get_greeting()["response"]["instructions"]
     assert expected["instructionsSubstring"] in loader.get_system_prompt()
     search = next(t for t in loader.get_tool_schemas() if t["name"] == "search")
     assert expected["toolDescriptionSubstring"] in search["description"]

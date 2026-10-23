@@ -15,12 +15,8 @@ namespace Backend.Sessions;
 /// consulted (via <see cref="RealtimeProcessor.RealtimeSessionState.GreetingSent"/>) by a
 /// successful resume that already knows the conversation started elsewhere.
 ///
-/// Pure move-and-delegate: every line below is unchanged from the original local functions
-/// (<c>ParseGreetingTimeoutSeconds</c>, <c>BuildGreetingFrame</c>, <c>SendGreetingOnceAsync</c>)
-/// except that closed-over locals became constructor parameters and <c>state.GreetingSent</c>
-/// became <see cref="RealtimeProcessor.RealtimeSessionState.GreetingSent"/> on the same shared
-/// <paramref name="state"/> instance (still the single source of truth both this gate and
-/// <c>RunSessionAsync</c>'s resume path read/write).
+/// Supports legacy guest-item greetings and validated response-scoped greetings without adding
+/// a synthetic guest instruction to conversation history.
 /// </summary>
 internal sealed class GreetingGate(
     WebSocket upstream,
@@ -33,6 +29,8 @@ internal sealed class GreetingGate(
     ILogger logger,
     CancellationToken ct)
 {
+    private readonly object _claimLock = new();
+
     private double ParseGreetingTimeoutSeconds()
     {
         var raw = BackendEnvironment.Get("CONFORMANCE_GREETING_TIMEOUT_SECONDS");
@@ -59,6 +57,12 @@ internal sealed class GreetingGate(
         {
             item["id"] = MiddleTierItemIds.NewId();
         }
+        if (greeting["type"]?.GetValue<string>() == "response.create"
+            && greeting["response"] is JsonObject response && promptLoader is not null)
+        {
+            // Response instructions override session instructions; retain the bound persona's policies.
+            response["instructions"] = $"{promptLoader.SystemPrompt}\n\n{response["instructions"]!.GetValue<string>()}";
+        }
         return greeting;
     }
 
@@ -77,17 +81,23 @@ internal sealed class GreetingGate(
         {
             logger?.NoSessionUpdatedBeforeGreeting(timeoutSeconds, sessionId);
         }
-        if (state.GreetingSent)
+        lock (_claimLock)
         {
-            return;
+            if (state.GreetingSent)
+            {
+                return;
+            }
+            state.GreetingSent = true;
         }
-        state.GreetingSent = true;
         state.Echo.StartGreetingSuppression();
         logger?.SendingGreeting(trigger, sessionId);
         var greetingFrameJson = BuildGreetingFrame().ToJsonString();
         await FramePump.SendTextAsync(upstream, """{"type":"input_audio_buffer.clear"}""", ct).ConfigureAwait(false);
         await FramePump.SendTextAsync(upstream, greetingFrameJson, ct).ConfigureAwait(false);
-        await FramePump.SendTextAsync(upstream, """{"type":"response.create"}""", ct).ConfigureAwait(false);
+        if (promptLoader?.Greeting["type"] is not "response.create")
+        {
+            await FramePump.SendTextAsync(upstream, """{"type":"response.create"}""", ct).ConfigureAwait(false);
+        }
         // Issue #13 tail: track the greeting in the context window, mirroring rtmt.py's
         // ctx_monitor.add_content(greeting_msg) right after the greeting is sent.
         sessionManager?.GetContextMonitor(state.EffectiveSessionId)?.AddContent(greetingFrameJson);

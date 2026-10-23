@@ -697,6 +697,31 @@ matches `realtime`'s observable behavior where the demo needs it:
 
 Each "yes" on `cascade` has a conformance row (`tests/conformance/.../Scenarios/Cascade/`).
 
+**Response-scoped greeting opt-in.** A pack can replace its legacy
+`conversation.item.create` greeting with the following `greeting.yaml` configuration:
+
+```yaml
+greeting:
+  type: response.create
+  response:
+    instructions: "Say exactly: Welcome! What can I get started for you?"
+    input: []
+    tools: []
+    tool_choice: none
+```
+
+Both loaders reject missing/extra fields, blank instructions, nonempty input/tools or a
+different tool choice for this opt-in. Realtime composes the full bound persona policy with
+the one-shot instruction (response instructions override session instructions), then sends
+this single response request after
+the usual configuration gate and audio-buffer clear, without a synthetic guest item or a
+second response request. Cascade translates it to a temporary system-only Foundry chat
+request with tools disabled, using the existing speech/error/cancellation path. Only the
+actual assistant answer enters persistent history. This adds no per-turn generation and
+does not change legacy pack greetings, auth or started-session resume behavior.
+An opting-in pack must not also put an unconditional greeting command in its normal
+system prompt. Request-shape tests do not establish real-model adherence.
+
 **#126 landed:** `cascade` now shares `SessionManager`'s resume handshake (grace hold + rehydration), idle
 nudge, and echo-suppression cooldown with `realtime`, through the same injected `SessionManager` instance
 (and the same `audio.echo_cooldown_seconds` key) rather than a `cascade`-specific reimplementation.

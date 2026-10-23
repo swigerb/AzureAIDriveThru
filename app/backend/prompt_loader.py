@@ -263,6 +263,13 @@ class PromptLoader:
             raise ValueError("greeting.yaml must have a 'greeting' key")
         if "type" not in greeting:
             raise ValueError("greeting must have a 'type' field")
+        if greeting["type"] == "response.create":
+            response = greeting.get("response")
+            if (set(greeting) != {"type", "response"} or not isinstance(response, dict)
+                    or set(response) != {"instructions", "input", "tools", "tool_choice"}
+                    or not isinstance(response["instructions"], str) or not response["instructions"].strip()
+                    or response["input"] != [] or response["tools"] != [] or response["tool_choice"] != "none"):
+                raise ValueError("response.create greeting requires nonempty instructions, empty input/tools and tool_choice none")
 
     def _validate_error_messages(self, messages: dict) -> None:
         """#125 (fail-fast follow-up to #116): every key in REQUIRED_ERROR_MESSAGE_KEYS must be

@@ -912,19 +912,20 @@ class CascadeProcessor:
         await self._run_turn_and_speak(ws, session_id, state)
 
     async def _send_greeting(self, ws: web.WebSocketResponse, session_id: str, state: _CascadeSessionState, prompt_loader) -> None:
-        """Cascade parity with the realtime pipeline's connect-time greeting (Rick's #118
-        review item 5, design 7.1). `RTMiddleTier`'s own greeting (session_manager.py's
-        `build_greeting_msg`) is a literal `conversation.item.create` message seeded straight
-        into the Realtime API's own upstream conversation; cascade has no such upstream
-        conversation to seed, so instead this feeds the SAME instruction text
-        (`greeting.yaml`'s `item.content[0].text`, "Say EXACTLY this greeting...") into this
-        pipeline's own normal chat-tool-loop + TTS turn machinery once, up front -- the model is
-        told to say the greeting verbatim, so this naturally produces the identical spoken
-        greeting through this pipeline's own turn-taking path rather than duplicating it."""
+        """Generate the pack's opening greeting through the existing Foundry and speech path.
+        Legacy guest-item instructions enter history; response-scoped instructions remain
+        request-only and disable tools. Both retain actual assistant output, not a canned reply."""
         if prompt_loader is None:
             return
+        greeting = prompt_loader.get_greeting()
+        if greeting.get("type") == "response.create":
+            self._sessions.mark_greeting_sent(session_id)
+            await self._run_turn_and_speak(
+                ws, session_id, state, greeting_instructions=greeting["response"]["instructions"],
+            )
+            return
         try:
-            text = prompt_loader.get_greeting()["item"]["content"][0]["text"]
+            text = greeting["item"]["content"][0]["text"]
         except (KeyError, IndexError, TypeError):
             logger.warning("Cascade: greeting.yaml has an unexpected shape; skipping the greeting (session=%s)",
                             session_id)
@@ -963,16 +964,19 @@ class CascadeProcessor:
             },
         })
 
-    async def _run_turn_and_speak(self, ws: web.WebSocketResponse, session_id: str, state: _CascadeSessionState) -> None:
-        """Shared tail of both a guest turn and the connect-time greeting: run the chat-tool
-        loop against whatever's already in `state.messages`, then speak the final answer.
+    async def _run_turn_and_speak(self, ws: web.WebSocketResponse, session_id: str, state: _CascadeSessionState,
+                                *, greeting_instructions: str | None = None) -> None:
+        """Shared tail of guest turns and greetings: run the chat-tool loop against history,
+        or one request-scoped greeting completion, then speak the final answer.
         Cancellation (barge-in, `_cancel_current_turn`) propagates through the awaits below
         exactly like any other `asyncio.CancelledError` -- there is no extra flag-checking."""
         response_id = new_middle_tier_item_id()
         await ws.send_json({"type": "response.created", "response": {"id": response_id}})
 
         try:
-            final_text = await self._run_chat_tool_loop(ws, session_id, state)
+            final_text = (await self._run_greeting_completion(ws, session_id, state, greeting_instructions)
+                          if greeting_instructions is not None
+                          else await self._run_chat_tool_loop(ws, session_id, state))
             if not final_text.strip():
                 raise ValueError("Chat tool loop returned no spoken answer; the ticket may have changed.")
         except CascadeRateLimitExhausted:
@@ -1073,6 +1077,26 @@ class CascadeProcessor:
                             op_name, attempt + 1, delay, session_id)
                 await asyncio.sleep(delay)
                 attempt += 1
+
+    async def _run_greeting_completion(self, ws: web.WebSocketResponse, session_id: str,
+                                       state: _CascadeSessionState, instructions: str) -> str:
+        client = await self._get_chat_client()
+        # This request-only list must never replace resumable history, even while awaiting cancellation.
+        messages = [message for message in state.messages if message.as_dict()["role"] == "system"]
+        messages.append(SystemMessage(content=instructions))
+        completion = await self._with_rate_limit_retry(
+            ws, session_id,
+            lambda: client.complete(messages=messages, model=state.deployment,
+                                    tools=[], tool_choice="none", **cascade_chat_kwargs()),
+            "chat completion",
+        )
+        message = completion.choices[0].message
+        if message.tool_calls:
+            raise ValueError("Greeting completion returned tool calls with tools disabled")
+        content = message.content or ""
+        if content.strip():
+            state.messages.append(AssistantMessage(content=content))
+        return content
 
     async def _run_chat_tool_loop(self, ws: web.WebSocketResponse, session_id: str, state: _CascadeSessionState) -> str:
         client = await self._get_chat_client()

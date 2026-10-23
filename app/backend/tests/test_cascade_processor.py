@@ -47,7 +47,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from aiohttp import web
-from azure.ai.inference.models import UserMessage
+from azure.ai.inference.models import SystemMessage, UserMessage
 from azure.core.exceptions import HttpResponseError
 
 import session_manager
@@ -554,6 +554,89 @@ def _greeting_payload(text: str) -> dict:
 
 
 class SendGreetingTests(unittest.IsolatedAsyncioTestCase):
+    def _scoped_fixture(self):
+        from prompt_loader import PromptLoader
+        root = Path(__file__).resolve().parents[3]
+        loader = PromptLoader(prompts_dir=root / "personas" / "tacobell" / "prompts")
+        processor = _make_processor({})
+        processor._speak = AsyncMock()
+        state = _CascadeSessionState(session_id="scoped", persona_id="tacobell", deployment="d", voice="marin")
+        state.messages.append(SystemMessage(content=loader.get_system_prompt()))
+        return processor, state, loader
+
+    async def test_scoped_greeting_keeps_only_real_assistant_and_next_tool_round_order(self):
+        import copy
+        processor, state, loader = self._scoped_fixture()
+        ws = _make_mock_ws()
+        greeting = "Welcome to Taco Bell! Are you checking in with the Taco Bell app today?"
+        responses = iter([
+            _completion_with_final_text(greeting), _completion_with_tool_call("get_order", "scoped-call"),
+            _completion_with_final_text("What can I get started for you?"),
+        ])
+        requests = []
+
+        async def complete(**kwargs):
+            requests.append(copy.deepcopy(kwargs))
+            return next(responses)
+
+        client = SimpleNamespace(complete=AsyncMock(side_effect=complete))
+        processor._get_chat_client = AsyncMock(return_value=client)
+        processor.tools["get_order"] = Tool(
+            target=AsyncMock(return_value=ToolResult("{}", ToolResultDirection.TO_SERVER)),
+            schema={"type": "function", "name": "get_order", "parameters": {"type": "object", "properties": {}}},
+        )
+        with patch("cascade_processor.order_state_singleton") as order:
+            order.advance_round_trip.return_value = SimpleNamespace()
+            await processor._send_greeting(ws, "scoped", state, loader)
+        first = requests[0]
+        self.assertEqual(first["tools"], [])
+        self.assertEqual(first["tool_choice"], "none")
+        self.assertEqual([m.as_dict()["role"] for m in first["messages"]], ["system", "system"])
+        self.assertEqual(first["messages"][-1].content, loader.get_greeting()["response"]["instructions"])
+        self.assertEqual([m.as_dict()["role"] for m in state.messages], ["system", "assistant"])
+        self.assertEqual(state.messages[-1].content, greeting)
+        state.messages.append(UserMessage(content="Ready to order."))
+        with patch("cascade_processor.order_state_singleton") as order:
+            order.advance_round_trip.return_value = SimpleNamespace()
+            await processor._run_turn_and_speak(ws, "scoped", state)
+        self.assertEqual([m.as_dict()["role"] for m in requests[1]["messages"]], ["system", "assistant", "user"])
+        self.assertNotIn("Say exactly:", json.dumps([m.as_dict() for m in requests[1]["messages"]]))
+        self.assertNotIn("Greet exactly:", json.dumps([m.as_dict() for m in requests[1]["messages"]]))
+        self.assertEqual(requests[2]["messages"][-1].tool_call_id, "scoped-call")
+        self.assertEqual(client.complete.await_count, 3)
+        self.assertEqual(processor._speak.await_count, 2)
+
+    async def test_cancelled_scoped_greeting_never_persists_instruction_or_fake_answer(self):
+        processor, state, loader = self._scoped_fixture()
+        started = asyncio.Event()
+
+        async def blocked(**kwargs):
+            started.set()
+            await asyncio.Event().wait()
+
+        client = SimpleNamespace(complete=AsyncMock(side_effect=blocked))
+        processor._get_chat_client = AsyncMock(return_value=client)
+        state.current_turn_task = asyncio.create_task(processor._send_greeting(_make_mock_ws(), "scoped", state, loader))
+        await asyncio.wait_for(started.wait(), 2)
+        await processor._cancel_current_turn(state, "guest interruption")
+        self.assertEqual([m.as_dict()["role"] for m in state.messages], ["system"])
+        self.assertNotIn("Say exactly:", state.messages[0].content)
+        processor._speak.assert_not_awaited()
+        processor._sessions.record_turn.assert_not_called()
+        processor._sessions.mark_greeting_sent.assert_called_once_with("scoped")
+
+    async def test_scoped_greeting_does_not_execute_unexpected_tool_or_fake_success(self):
+        processor, state, loader = self._scoped_fixture()
+        client = SimpleNamespace(complete=AsyncMock(return_value=_completion_with_tool_call("get_order")))
+        processor._get_chat_client = AsyncMock(return_value=client)
+        ws = _make_mock_ws()
+        await processor._send_greeting(ws, "scoped", state, loader)
+        self.assertEqual([m.as_dict()["role"] for m in state.messages], ["system"])
+        processor._speak.assert_not_awaited()
+        self.assertEqual(ws.send_json.await_args_list[-1].args[0]["response"]["status"], "failed")
+        processor._sessions.mark_greeting_sent.assert_called_once_with("scoped")
+        processor._sessions.record_turn.assert_not_called()
+
     async def test_greeting_feeds_the_instruction_text_and_speaks_the_final_answer(self):
         processor = _make_processor({})
         processor._run_chat_tool_loop = AsyncMock(return_value="Welcome to the drive-thru! What can I get started for you today?")

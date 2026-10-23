@@ -126,14 +126,7 @@ file static class PersonaSessionUpdateInstructionsScenario
         // The greeting round trip (already awaited by ConnectAndGreetAsync) must match the SAME
         // pack too -- proves the instructions check above and the greeting can't silently
         // disagree about which persona this session is actually bound to.
-        var greetingFrame = connection.ReceivedFrames.Snapshot().FirstOrDefault(f =>
-            f.Type == "conversation.item.create" &&
-            f.Json.TryGetProperty("item", out var item) &&
-            item.TryGetProperty("type", out var itemType) &&
-            itemType.GetString() == "message");
-        Assert.True(greetingFrame is not null,
-            $"No greeting conversation.item.create (item.type=message) frame found for persona '{personaId}'.");
-        var greetingText = greetingFrame!.Json.GetProperty("item").GetProperty("content")[0].GetProperty("text").GetString();
+        var greetingText = OrderScenarioHelpers.GreetingInstructions(connection);
         Assert.Contains(greetingExpected.GreetingSubstring, greetingText);
     }
 }

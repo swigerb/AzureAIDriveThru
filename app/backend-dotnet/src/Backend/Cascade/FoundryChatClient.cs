@@ -38,7 +38,8 @@ internal sealed class FoundryChatClient(HttpClient httpClient, string endpoint, 
     /// object exactly as the service returned it (see class doc for why this stays a
     /// <see cref="JsonObject"/> rather than a typed DTO). <paramref name="toolDefinitions"/> is
     /// omitted from the request body entirely when empty/null, mirroring
-    /// cascade_processor.py's own `tools=tool_defs or None`. Throws
+    /// cascade_processor.py's own `tools=tool_defs or None`, unless <paramref name="disableTools"/>
+    /// explicitly requests empty tools and tool_choice none for a one-shot greeting. Throws
     /// <see cref="FoundryHttpException"/> for a non-2xx response (its `StatusCode` is what
     /// <see cref="CascadeRateLimit.WithRetryAsync{T}"/> inspects for a 429).</summary>
     public async Task<JsonObject> CompleteAsync(
@@ -46,14 +47,20 @@ internal sealed class FoundryChatClient(HttpClient httpClient, string endpoint, 
         string deployment,
         IReadOnlyList<JsonObject>? toolDefinitions,
         CancellationToken ct,
-        CascadeDiagnosticCapture? diagnostic = null)
+        CascadeDiagnosticCapture? diagnostic = null,
+        bool disableTools = false)
     {
         var body = new JsonObject
         {
             ["messages"] = new JsonArray(messages.Select(m => (JsonNode)m.DeepClone()).ToArray()),
             ["model"] = deployment,
         };
-        if (toolDefinitions is { Count: > 0 })
+        if (disableTools)
+        {
+            body["tools"] = new JsonArray();
+            body["tool_choice"] = "none";
+        }
+        else if (toolDefinitions is { Count: > 0 })
         {
             body["tools"] = new JsonArray(toolDefinitions.Select(t => (JsonNode)t.DeepClone()).ToArray());
         }

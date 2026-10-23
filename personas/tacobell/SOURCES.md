@@ -35,8 +35,21 @@ documented preamble controls in the official
 final output as user-visible. The application continues to relay model speech;
 there is no speech filtering, muting, extra model generation, or pipeline change.
 Fake-client tests establish the instructions sent to the model, not live adherence.
-Natural-voice acceptance remains unverified for this policy. Greeting lifecycle
-and earlier spoken meta-note causes are separate unresolved questions.
+Natural-voice acceptance remains unverified for this policy.
+
+The opening greeting opts into validated, response-scoped instructions instead of a
+synthetic guest message or a persistent "greet exactly" system rule. Realtime sends one
+`response.create` composing the full bound persona policy with the one-shot instruction,
+empty `input` and `tools`, and `tool_choice: none`; its real assistant
+output remains in the default conversation. Cascade uses one existing Foundry chat request
+with temporary system instructions and no tools, then retains only its actual assistant
+answer through the existing speech/history path. Later turns retain the persona, actual
+conversation and normal tools without the one-shot instruction. No old conversation is
+deleted or filtered; started sessions still resume silently, including an interrupted greeting.
+This follows the [Realtime conversation guide](https://developers.openai.com/api/docs/guides/realtime-conversations)
+(consulted 2026-10-23). Fake-client tests establish request scope, ordering and cancellation,
+not that the observed model greeting reset or earlier spoken meta-note is eliminated;
+those causal effects and strict natural-voice acceptance remain unverified.
 
 Mild, Hot, Fire and Diablo Sauce Packet lines use explicitly illustrative zero prices
 and persist requested quantities, including two packets. Names are user-directed; store

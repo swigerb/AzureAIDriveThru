@@ -114,17 +114,8 @@ file static class PersonaSmokeScenario
             fixture, ct, persona: personaId);
         await using var _ = browser;
 
-        // 1. Greeting from the pack: the literal conversation.item.create the persona's own
-        //    prompts/greeting.yaml declares (session_manager.py's build_greeting_msg), sent
-        //    upstream before the greeting's response.create (rtmt.py's send_greeting_once).
-        var greetingFrame = connection.ReceivedFrames.Snapshot().FirstOrDefault(f =>
-            f.Type == "conversation.item.create" &&
-            f.Json.TryGetProperty("item", out var item) &&
-            item.TryGetProperty("type", out var itemType) &&
-            itemType.GetString() == "message");
-        Assert.True(greetingFrame is not null,
-            $"No greeting conversation.item.create (item.type=message) frame found for persona '{personaId}'.");
-        var greetingText = greetingFrame!.Json.GetProperty("item").GetProperty("content")[0].GetProperty("text").GetString();
+        // The pack can use a legacy guest-item greeting or a response-scoped greeting.
+        var greetingText = OrderScenarioHelpers.GreetingInstructions(connection);
         Assert.Contains(expected.GreetingSubstring, greetingText);
 
         // 2. Search returns only that pack's items (positive half; the dedicated

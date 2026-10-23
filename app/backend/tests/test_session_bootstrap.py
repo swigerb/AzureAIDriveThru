@@ -23,7 +23,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
@@ -235,14 +235,17 @@ class _RealtimeHarness(unittest.IsolatedAsyncioTestCase):
         return next(iter(self.rtmt._sessions._session_map.values()))
 
 class TacoPreamblePolicyTests(_RealtimeHarness):
-    async def test_bound_persona_preamble_policy_reaches_bootstrap_and_client_update(self):
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
         from persona_loader import PersonaCatalog
         from prompt_loader import PromptLoader
 
         self.rtmt.persona_catalog = PersonaCatalog.load()
-        loader = PromptLoader(prompts_dir=self.rtmt.persona_catalog.get("tacobell").prompts_dir)
-        self.rtmt.persona_prompt_loaders = {"tacobell": loader}
-        self.rtmt.persona_tool_schemas = {"tacobell": loader.get_tool_schemas()}
+        self.loader = PromptLoader(prompts_dir=self.rtmt.persona_catalog.get("tacobell").prompts_dir)
+        self.rtmt.persona_prompt_loaders = {"tacobell": self.loader}
+        self.rtmt.persona_tool_schemas = {"tacobell": self.loader.get_tool_schemas()}
+
+    async def test_bound_persona_preamble_policy_reaches_bootstrap_and_client_update(self):
         browser = await self.client.ws_connect("/realtime?persona=tacobell")
         await browser.send_json(BROWSER_SESSION_UPDATE)
         await self._response_done(browser)
@@ -251,7 +254,7 @@ class TacoPreamblePolicyTests(_RealtimeHarness):
         for update in updates:
             session = update["session"]
             instructions = session["instructions"]
-            self.assertEqual(instructions, loader.get_system_prompt())
+            self.assertEqual(instructions, self.loader.get_system_prompt())
             self.assertIn(
                 "For routine menu searches, order changes and rewards checks, call the tools directly without a spoken preamble.",
                 instructions,
@@ -267,6 +270,67 @@ class TacoPreamblePolicyTests(_RealtimeHarness):
             self.assertEqual([tool["name"] for tool in session["tools"]], TOOL_NAMES)
             self.assertEqual(session["tool_choice"], "auto")
         await browser.close()
+
+    async def _assert_scoped_greeting(self, acknowledge):
+        if not acknowledge:
+            self.fake._session_update = AsyncMock()
+        with patch.object(rtmt_module, "_SESSION_CONFIGURED_TIMEOUT_SEC", 2 if acknowledge else 0.01):
+            browser = await self.client.ws_connect("/realtime?persona=tacobell")
+            await browser.send_json(BROWSER_SESSION_UPDATE)
+            await self._response_done(browser)
+            await browser.send_json(BROWSER_SESSION_UPDATE)
+            await self._until(lambda: len(self._session_updates()) == 3)
+        frames = self.fake.received
+        self.assertFalse(any(frame["type"] == "conversation.item.create" for frame in frames))
+        creates = [frame for frame in frames if frame["type"] == "response.create"]
+        self.assertEqual(len(creates), 1)
+        expected = json.loads(self.loader.get_greeting_json_str())
+        expected["response"]["instructions"] = (
+            self.loader.get_system_prompt() + "\n\n" + expected["response"]["instructions"]
+        )
+        self.assertEqual(creates[0], expected)
+        self.assertEqual(creates[0]["response"]["input"], [])
+        self.assertEqual(creates[0]["response"]["tools"], [])
+        self.assertEqual(creates[0]["response"]["tool_choice"], "none")
+        create_index = frames.index(creates[0])
+        self.assertEqual(frames[create_index - 1]["type"], "input_audio_buffer.clear")
+        # Echo gating also clears on response completion; that is not a second greeting.
+        self.assertEqual(sum(frame["type"] == "input_audio_buffer.clear"
+                             for frame in frames[:create_index]), 1)
+        self.assertNotIn("Greet exactly:", self.loader.get_system_prompt())
+        self.assertNotIn("Say exactly:", self.loader.get_system_prompt())
+        await browser.close()
+
+    async def test_scoped_greeting_once_after_configuration_ack(self):
+        await self._assert_scoped_greeting(True)
+
+    async def test_scoped_greeting_once_after_configuration_timeout(self):
+        await self._assert_scoped_greeting(False)
+
+    async def test_scoped_greeting_records_only_actual_speech_and_resumes_silently(self):
+        browser = await self.client.ws_connect("/realtime?persona=tacobell")
+        await browser.send_json(BROWSER_SESSION_UPDATE)
+        await self._response_done(browser)
+        sid = self._only_session()
+        turns = self.rtmt._sessions.recent_turns(sid)
+        self.assertEqual([text for _, text in turns], ["hi"])
+        resume_id = self.rtmt._sessions.issue_resume_id(sid)
+        await browser.close()
+        await self._until(lambda: self.rtmt._sessions.is_detached(sid))
+        prior_count = len(self.fake.received)
+        again = await self.client.ws_connect("/realtime?persona=tacobell")
+        await again.send_json({"type": "extension.resume", "resume_id": resume_id})
+        events = await self._browser_events(again, duration=0.2)
+        self.assertIn("extension.session_resumed", [event["type"] for event in events])
+        resumed_frames = self.fake.received[prior_count:]
+        self.assertFalse(any(frame["type"] == "response.create" for frame in resumed_frames))
+        rehydration = [frame for frame in resumed_frames if frame["type"] == "conversation.item.create"]
+        self.assertEqual(len(rehydration), 1)
+        self.assertEqual(rehydration[0]["item"]["role"], "system")
+        self.assertIn("hi", json.dumps(rehydration[0]))
+        self.assertNotIn("Say exactly:", json.dumps(rehydration[0]))
+        self.assertNotIn("Greet exactly:", json.dumps(rehydration[0]))
+        await again.close()
 
 
 class SessionBootstrapTests(_RealtimeHarness):
