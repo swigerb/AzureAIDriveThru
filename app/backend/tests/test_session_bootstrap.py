@@ -234,6 +234,41 @@ class _RealtimeHarness(unittest.IsolatedAsyncioTestCase):
         this immediately after each guest connects)."""
         return next(iter(self.rtmt._sessions._session_map.values()))
 
+class TacoPreamblePolicyTests(_RealtimeHarness):
+    async def test_bound_persona_preamble_policy_reaches_bootstrap_and_client_update(self):
+        from persona_loader import PersonaCatalog
+        from prompt_loader import PromptLoader
+
+        self.rtmt.persona_catalog = PersonaCatalog.load()
+        loader = PromptLoader(prompts_dir=self.rtmt.persona_catalog.get("tacobell").prompts_dir)
+        self.rtmt.persona_prompt_loaders = {"tacobell": loader}
+        self.rtmt.persona_tool_schemas = {"tacobell": loader.get_tool_schemas()}
+        browser = await self.client.ws_connect("/realtime?persona=tacobell")
+        await browser.send_json(BROWSER_SESSION_UPDATE)
+        await self._response_done(browser)
+        updates = self._session_updates()
+        self.assertEqual(len(updates), 2)
+        for update in updates:
+            session = update["session"]
+            instructions = session["instructions"]
+            self.assertEqual(instructions, loader.get_system_prompt())
+            self.assertIn(
+                "For routine menu searches, order changes and rewards checks, call the tools directly without a spoken preamble.",
+                instructions,
+            )
+            self.assertIn(
+                "Give one brief acknowledgment after the relevant calls succeed, not a before-and-after pair.",
+                instructions,
+            )
+            self.assertIn("Both commentary and final messages are audible to the guest", instructions)
+            self.assertIn(
+                "Ask a necessary clarification before acting; explain an actual failure truthfully.", instructions,
+            )
+            self.assertEqual([tool["name"] for tool in session["tools"]], TOOL_NAMES)
+            self.assertEqual(session["tool_choice"], "auto")
+        await browser.close()
+
+
 class SessionBootstrapTests(_RealtimeHarness):
 
     async def test_reconnected_socket_with_live_mic_still_registers_tools(self):

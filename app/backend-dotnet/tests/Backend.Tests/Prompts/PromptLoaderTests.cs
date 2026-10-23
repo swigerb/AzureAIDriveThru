@@ -1,4 +1,6 @@
+using System.Text.Json.Nodes;
 using Backend.Prompts;
+using Backend.Realtime;
 using Backend.Tests.TestSupport;
 
 namespace Backend.Tests.Prompts;
@@ -8,6 +10,32 @@ namespace Backend.Tests.Prompts;
 /// docs/dotnet_mapping.md).</summary>
 public sealed class PromptLoaderTests : IDisposable
 {
+    [Fact]
+    public void TacoBellPreamblePolicyReachesEveryRealtimeSessionUpdate()
+    {
+        var loader = new PromptLoader(Path.Combine(RepoRootLocator.Find(), "personas"), "tacobell");
+        var tools = loader.ToolSchemas.Select(schema =>
+            (JsonObject)YamlJson.ToJsonNode((IDictionary<object, object>)schema)!).ToList();
+        var config = new RealtimeSessionConfig { SystemMessage = loader.SystemPrompt };
+        var sessions = new[]
+        {
+            RealtimeSessionBuilder.BuildBootstrapSessionUpdate(config, tools)["session"]!.AsObject(),
+            RealtimeSessionBuilder.BuildSession(config, new JsonObject { ["instructions"] = "Client override" }, tools),
+            RealtimeSessionBuilder.BuildFallbackSessionUpdate(config, tools)["session"]!.AsObject(),
+        };
+        foreach (var session in sessions)
+        {
+            var instructions = session["instructions"]!.GetValue<string>();
+            Assert.Equal(loader.SystemPrompt, instructions);
+            Assert.Contains("For routine menu searches, order changes and rewards checks, call the tools directly without a spoken preamble.", instructions);
+            Assert.Contains("Give one brief acknowledgment after the relevant calls succeed, not a before-and-after pair.", instructions);
+            Assert.Contains("Both commentary and final messages are audible to the guest", instructions);
+            Assert.Contains("Ask a necessary clarification before acting; explain an actual failure truthfully.", instructions);
+            Assert.Equal(4, session["tools"]!.AsArray().Count);
+            Assert.Equal("auto", session["tool_choice"]!.GetValue<string>());
+        }
+    }
+
     [Fact]
     public void TacoBellSpokenTextExcludesDirectionsAndKeepsMidorderChangesOpen()
     {
