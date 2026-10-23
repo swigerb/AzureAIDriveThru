@@ -66,7 +66,15 @@ public sealed class PromptLoaderScalarTypingTests : IDisposable
         var prompts = Path.Combine(_tempDir, "acme", "prompts");
         Directory.CreateDirectory(prompts);
         File.WriteAllText(Path.Combine(prompts, "system_prompt.yaml"), "sections:\n  - name: a\n    priority: 1\n    content: \"Welcome to Acme.\"\n");
-        File.WriteAllText(Path.Combine(prompts, "greeting.yaml"), "greeting:\n  type: response.create\n");
+        File.WriteAllText(Path.Combine(prompts, "greeting.yaml"), """
+            greeting:
+              type: response.create
+              response:
+                instructions: Say hello.
+                input: []
+                tools: []
+                tool_choice: none
+            """);
         File.WriteAllText(Path.Combine(prompts, "error_messages.yaml"),
             "messages:\n  generic: \"Sorry.\"\n  generic_error: \"Sorry.\"\n  item_not_on_menu: \"x\"\n  size_not_available: \"x\"\n  item_not_in_order: \"x\"\n  machine_unavailable: \"x\"\n  extras_blocked_category: \"x\"\n  extras_no_base_item: \"x\"\n  item_out_of_mode: \"x\"\n");
         File.WriteAllText(Path.Combine(prompts, "hints.yaml"), "upsell_hints: {}\n");
