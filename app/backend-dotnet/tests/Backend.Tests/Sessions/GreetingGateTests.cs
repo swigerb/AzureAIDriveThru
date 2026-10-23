@@ -37,7 +37,9 @@ public sealed class GreetingGateTests
         Assert.Equal(new[] { "input_audio_buffer.clear", "response.create" },
             frames.Select(frame => frame["type"]!.GetValue<string>()));
         var response = frames[1]["response"]!.AsObject();
-        Assert.Contains("Welcome to Taco Bell!", response["instructions"]!.GetValue<string>());
+        Assert.Equal(loader.SystemPrompt + "\n\n"
+            + "Say exactly: Welcome to Taco Bell! Are you checking in with the Taco Bell app today?",
+            response["instructions"]!.GetValue<string>());
         Assert.Empty(response["input"]!.AsArray());
         Assert.Empty(response["tools"]!.AsArray());
         Assert.Equal("none", response["tool_choice"]!.GetValue<string>());

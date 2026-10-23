@@ -57,6 +57,12 @@ internal sealed class GreetingGate(
         {
             item["id"] = MiddleTierItemIds.NewId();
         }
+        if (greeting["type"]?.GetValue<string>() == "response.create"
+            && greeting["response"] is JsonObject response && promptLoader is not null)
+        {
+            // Response instructions override session instructions; retain the bound persona's policies.
+            response["instructions"] = $"{promptLoader.SystemPrompt}\n\n{response["instructions"]!.GetValue<string>()}";
+        }
         return greeting;
     }
 

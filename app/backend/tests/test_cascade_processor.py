@@ -623,6 +623,7 @@ class SendGreetingTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Say exactly:", state.messages[0].content)
         processor._speak.assert_not_awaited()
         processor._sessions.record_turn.assert_not_called()
+        processor._sessions.mark_greeting_sent.assert_called_once_with("scoped")
 
     async def test_scoped_greeting_does_not_execute_unexpected_tool_or_fake_success(self):
         processor, state, loader = self._scoped_fixture()
@@ -633,6 +634,8 @@ class SendGreetingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([m.as_dict()["role"] for m in state.messages], ["system"])
         processor._speak.assert_not_awaited()
         self.assertEqual(ws.send_json.await_args_list[-1].args[0]["response"]["status"], "failed")
+        processor._sessions.mark_greeting_sent.assert_called_once_with("scoped")
+        processor._sessions.record_turn.assert_not_called()
 
     async def test_greeting_feeds_the_instruction_text_and_speaks_the_final_answer(self):
         processor = _make_processor({})

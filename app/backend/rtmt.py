@@ -2449,12 +2449,20 @@ class RTMiddleTier:
                         persona_prompt_loader is not None
                         and persona_prompt_loader.get_greeting()["type"] == "response.create"
                     )
-                    greeting_msg = (
-                        persona_prompt_loader.get_greeting_json_str() if scoped_greeting
-                        else self._sessions.build_greeting_msg(
+                    if scoped_greeting:
+                        greeting = persona_prompt_loader.get_greeting()
+                        # A response override must retain the normal bound persona's identity/privacy rules.
+                        greeting_msg = json.dumps({
+                            **greeting,
+                            "response": {
+                                **greeting["response"],
+                                "instructions": f"{system_message}\n\n{greeting['response']['instructions']}",
+                            },
+                        })
+                    else:
+                        greeting_msg = self._sessions.build_greeting_msg(
                             persona_prompt_loader.get_greeting_json_str() if persona_prompt_loader is not None else None
                         )
-                    )
                     await target_ws.send_str(greeting_msg)
                     if not scoped_greeting:
                         await target_ws.send_str(_RESPONSE_CREATE_MSG)

@@ -28,6 +28,9 @@ public static class OrderScenarioHelpers
                 Assert.Empty(response.GetProperty("input").EnumerateArray());
                 Assert.Empty(response.GetProperty("tools").EnumerateArray());
                 Assert.Equal("none", response.GetProperty("tool_choice").GetString());
+                var bootstrap = connection.ReceivedFrames.Snapshot().First(candidate => candidate.Type == "session.update");
+                Assert.StartsWith(bootstrap.Json.GetProperty("session").GetProperty("instructions").GetString() + "\n\n",
+                    instructions.GetString());
                 Assert.DoesNotContain(connection.ReceivedFrames.Snapshot(), candidate =>
                     candidate.Type == "conversation.item.create"
                     && candidate.Json.TryGetProperty("item", out var message)

@@ -452,7 +452,8 @@ public sealed class CascadeProcessorTests
                 await Task.Delay(Timeout.InfiniteTimeSpan, ct);
             },
         };
-        var processor = NewProcessor(handler, new StubToolExecutor(["get_order"]), loader);
+        var sessions = NewSessionManager(new FakeTimeProvider());
+        var processor = NewProcessor(handler, new StubToolExecutor(["get_order"]), loader, sessionManager: sessions);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         var socket = new DelayedFakeWebSocket([], TimeSpan.Zero);
         var context = processor.CreateSessionContext(socket, persona,
@@ -464,6 +465,7 @@ public sealed class CascadeProcessorTests
         Assert.Single(context.State.Messages);
         Assert.DoesNotContain("Say exactly:", context.State.Messages[0].ToJsonString());
         Assert.Empty(handler.SpeakRequestBodies);
+        AssertStartedWithoutFabricatedHistory(sessions, socket, persona);
     }
 
     [Fact]
@@ -478,7 +480,8 @@ public sealed class CascadeProcessorTests
                 ["function"] = new JsonObject { ["name"] = "get_order", ["arguments"] = "{}" },
             }));
         var executor = new RecordingToolExecutor(["get_order"]);
-        var processor = NewProcessor(handler, executor, loader);
+        var sessions = NewSessionManager(new FakeTimeProvider());
+        var processor = NewProcessor(handler, executor, loader, sessionManager: sessions);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         var socket = new DelayedFakeWebSocket([], TimeSpan.Zero);
         var context = processor.CreateSessionContext(socket, persona,
@@ -488,6 +491,18 @@ public sealed class CascadeProcessorTests
         Assert.Empty(executor.ReceivedArgumentsJson);
         Assert.Empty(handler.SpeakRequestBodies);
         Assert.Equal("failed", ParseSent(socket.SentMessages.Last())["response"]!["status"]!.GetValue<string>());
+        AssertStartedWithoutFabricatedHistory(sessions, socket, persona);
+    }
+
+    private static void AssertStartedWithoutFabricatedHistory(SessionManager sessions, WebSocket socket, Persona persona)
+    {
+        var resumeId = sessions.IssueResumeId("scoped");
+        sessions.Detach(socket, "scoped", "greeting interrupted or failed");
+        using var resumedSocket = new DelayedFakeWebSocket([], TimeSpan.Zero);
+        var outcome = sessions.TryResume(resumedSocket, resumeId, persona.Id, "gpt-5-mini", null, "provisional");
+        Assert.True(outcome.Accepted);
+        Assert.True(outcome.ConversationStarted);
+        Assert.Empty(outcome.RecentTurns!);
     }
 
     [Fact]

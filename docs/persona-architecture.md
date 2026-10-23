@@ -711,7 +711,9 @@ greeting:
 ```
 
 Both loaders reject missing/extra fields, blank instructions, nonempty input/tools or a
-different tool choice for this opt-in. Realtime sends this single response request after
+different tool choice for this opt-in. Realtime composes the full bound persona policy with
+the one-shot instruction (response instructions override session instructions), then sends
+this single response request after
 the usual configuration gate and audio-buffer clear, without a synthetic guest item or a
 second response request. Cascade translates it to a temporary system-only Foundry chat
 request with tools disabled, using the existing speech/error/cancellation path. Only the

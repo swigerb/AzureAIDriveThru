@@ -39,7 +39,8 @@ Natural-voice acceptance remains unverified for this policy.
 
 The opening greeting opts into validated, response-scoped instructions instead of a
 synthetic guest message or a persistent "greet exactly" system rule. Realtime sends one
-`response.create` with empty `input` and `tools`, and `tool_choice: none`; its real assistant
+`response.create` composing the full bound persona policy with the one-shot instruction,
+empty `input` and `tools`, and `tool_choice: none`; its real assistant
 output remains in the default conversation. Cascade uses one existing Foundry chat request
 with temporary system instructions and no tools, then retains only its actual assistant
 answer through the existing speech/history path. Later turns retain the persona, actual

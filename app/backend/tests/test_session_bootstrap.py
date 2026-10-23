@@ -284,7 +284,11 @@ class TacoPreamblePolicyTests(_RealtimeHarness):
         self.assertFalse(any(frame["type"] == "conversation.item.create" for frame in frames))
         creates = [frame for frame in frames if frame["type"] == "response.create"]
         self.assertEqual(len(creates), 1)
-        self.assertEqual(creates[0], self.loader.get_greeting())
+        expected = json.loads(self.loader.get_greeting_json_str())
+        expected["response"]["instructions"] = (
+            self.loader.get_system_prompt() + "\n\n" + expected["response"]["instructions"]
+        )
+        self.assertEqual(creates[0], expected)
         self.assertEqual(creates[0]["response"]["input"], [])
         self.assertEqual(creates[0]["response"]["tools"], [])
         self.assertEqual(creates[0]["response"]["tool_choice"], "none")
