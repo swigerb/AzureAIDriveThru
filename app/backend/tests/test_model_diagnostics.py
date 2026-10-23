@@ -55,7 +55,7 @@ class GateTests(unittest.TestCase):
     def test_scope_and_once_claim(self):
         gate = DiagnosticGate(lambda: NOW)
         for bad in [dict(entra=False), dict(principal=None), dict(principal={"oid": "bad"}),
-                    dict(marker="wrong"), dict(persona="sonic")]:
+                    dict(marker="wrong"), dict(persona="test-other")]:
             with self.subTest(bad=bad):
                 self.assertIsNone(self.claim(gate, **bad))
         self.assertIsNotNone(self.claim(gate))
@@ -86,6 +86,39 @@ class GateTests(unittest.TestCase):
 
 
 class BoundaryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_real_resumed_run_session_stops_and_clears_inherited_capture_before_guest_completion(self):
+        from unittest.mock import Mock
+        from aiohttp import WSMessage, WSMsgType
+        processor = helpers._make_processor({})
+        lines = []
+        capture = DiagnosticCapture("one", NOW + 600, lambda: NOW, lines.append)
+        capture.emit("prior")
+        state = helpers._CascadeSessionState(session_id="one", persona_id="tacobell", deployment="d", voice="marin", diagnostic=capture)
+        state.messages = [SystemMessage(content="PRIVATE-SYSTEM")]
+        state.detector = SimpleNamespace(feed=lambda *args, **kwargs: "speech_stopped",
+                                         take_buffer=lambda: b"fake", reset=Mock())
+        finished = asyncio.Event()
+        processor._speak = AsyncMock(side_effect=lambda *args, **kwargs: finished.set())
+        processor._transcribe = AsyncMock(return_value="I've checked in now.")
+        client = SimpleNamespace(complete=AsyncMock(return_value=completion("Welcome back!")))
+        processor._get_chat_client = AsyncMock(return_value=client)
+        ws = helpers._make_mock_ws()
+        async def frames():
+            yield WSMessage(WSMsgType.TEXT, '{"type":"input_audio_buffer.append","audio":"ZmFrZQ=="}', None)
+            await asyncio.wait_for(finished.wait(), 2)
+        ws.__aiter__.side_effect = frames
+        persona = SimpleNamespace(id="tacobell")
+        with patch("cascade_processor.order_state_singleton") as order:
+            order.advance_round_trip.return_value = SimpleNamespace()
+            await processor._run_session(ws, "one", persona, SimpleNamespace(deployment="d"),
+                                         resumed_state=state, diagnostic=None)
+        self.assertIsNone(state.diagnostic)
+        self.assertTrue(capture.stopped)
+        client.complete.assert_awaited_once()
+        capture.emit("late")
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(any(call.args[0].get("delta") == "Welcome back!" for call in ws.send_json.await_args_list))
+
     async def test_actual_loader_greeting_and_guest_request_keep_policy_hash_and_tool_scope(self):
         processor, state, loader = helpers.SendGreetingTests()._scoped_fixture()
         lines = []

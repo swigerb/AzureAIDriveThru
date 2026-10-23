@@ -78,8 +78,9 @@ UTF-8 SHA256 (uppercase hex); schema hashes use the emitted JSON serialization.
 record hashed response/item/call IDs, provider phase if present, sanitized assistant
 content and status. Commentary and final remain audible; nothing is suppressed.
 Audio bytes, input transcription and raw tool output are never logged.
-Frames exceeding128KiB are omitted; capture events exceeding16,000 serialized
-characters stop capture with a fixed warning. Frame assembly uses short locks
+Text frames exceeding128KiB stop capture with a fixed no-content warning while
+transport continues unchanged; capture events exceeding16,000 serialized
+characters likewise stop capture with a fixed warning. Frame assembly uses short locks
 without awaits; socket ownership remains with the existing caller.
 
 Python cascade observes each actual SDK completion invocation and its returned

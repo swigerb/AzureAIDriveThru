@@ -125,9 +125,12 @@ public sealed class DiagnosticWebSocketTests
         await FramePump.SendTextAsync(socket, oversized, CancellationToken.None);
         Assert.Equal(oversized, Encoding.UTF8.GetString(inner.SentMessages[0].Data));
         Assert.Empty(logger.Lines);
+        Assert.Equal("Synthetic cascade diagnostic capture stopped: text frame limit reached.", Assert.Single(logger.Warnings));
+        await FramePump.SendTextAsync(socket, """{"type":"response.cancel"}""", CancellationToken.None);
+        Assert.Empty(logger.Lines);
         await FramePump.SendTextAsync(socket, "not-json", CancellationToken.None);
         await FramePump.SendTextAsync(socket, """{"type":"response.cancel"}""", CancellationToken.None);
-        Assert.Equal(3, inner.SentMessages.Count);
+        Assert.Equal(4, inner.SentMessages.Count);
         Assert.Empty(logger.Lines);
     }
 }

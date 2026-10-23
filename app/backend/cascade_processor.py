@@ -664,6 +664,9 @@ class CascadeProcessor:
             # not) and started the greeting if one was needed -- nothing left to do here but
             # join its own message loop below.
             state = resumed_state
+            if state.diagnostic is not None:
+                state.diagnostic.stopped = True
+                state.diagnostic = None
         else:
             # #248: per-persona default voice -- see `_resolve_persona_voice`'s own doc comment.
             voice = _resolve_persona_voice(persona, self.default_voice, self.allowed_voices)

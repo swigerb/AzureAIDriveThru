@@ -49,8 +49,12 @@ internal sealed class DiagnosticWebSocket(WebSocket inner, CascadeDiagnosticCapt
     {
         if (type != WebSocketMessageType.Text)
             return;
-        if (pending.Length + bytes.Length > 131072)
+        if (!overflow && pending.Length + bytes.Length > 131072)
+        {
             overflow = true;
+            pending.SetLength(0);
+            capture.StopForFrameLimit();
+        }
         if (!overflow)
             pending.Write(bytes);
         if (!end)

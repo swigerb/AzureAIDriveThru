@@ -106,6 +106,12 @@ internal sealed class CascadeDiagnosticCapture(
 
     public void Stop() => Interlocked.Exchange(ref _stopped, 1);
 
+    public void StopForFrameLimit()
+    {
+        if (Interlocked.Exchange(ref _stopped, 1) == 0)
+            logger.LogWarning("Synthetic cascade diagnostic capture stopped: text frame limit reached.");
+    }
+
     public void Binding(string model, string deployment) => Capture(() => Write("binding", new JsonObject
     {
         ["model"] = model == "gpt-realtime-2.1" ? model : "[hashed]",
