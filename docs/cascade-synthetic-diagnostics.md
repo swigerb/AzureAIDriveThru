@@ -89,8 +89,10 @@ content lengths, system-policy hashes, sanitized assistant history/choices,
 tool names/schema hashes, paired call-ID hashes, request index and finish reason
 identify the earliest visible wrong choice. Guest commits increment a guest index
 and clear the previous response ID; the next response and its requests share that
-index and the newly assigned response ID. Cancellation retains its actual response
-ID. Original guest/tool content has no
+index and the SHA256 hash of the newly assigned local response ID. Cancellation
+retains that same hash; pre-response commits have a null hash. The local ID remains
+unchanged on the browser wire, but its raw value is not copied to Python diagnostic
+events. Original guest/tool content has no
 hash because predictable-content hashes can disclose excluded values. This cannot
 verify exact guest wording or private tool wording from diagnostics alone. The
 browser's authoritative snapshot does not prove identical model-facing tool text.
