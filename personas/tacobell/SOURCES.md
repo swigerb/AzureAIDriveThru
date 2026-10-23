@@ -27,6 +27,17 @@ software, or internal-instruction narration. A direct question about real accoun
 integration must still be answered truthfully. Visible simulation/privacy disclosures stay
 in place; this voice style does not enable real transactions.
 
+The persona explicitly skips spoken preambles for routine menu, order and rewards
+tool calls and asks for one acknowledgment after success. This follows the model's
+documented preamble controls in the official
+[Realtime prompting guide](https://developers.openai.com/api/docs/guides/voice-prompting)
+(consulted 2026-10-22), which describes default preambles and both commentary and
+final output as user-visible. The application continues to relay model speech;
+there is no speech filtering, muting, extra model generation, or pipeline change.
+Fake-client tests establish the instructions sent to the model, not live adherence.
+Natural-voice acceptance remains unverified for this policy. Greeting lifecycle
+and earlier spoken meta-note causes are separate unresolved questions.
+
 Mild, Hot, Fire and Diablo Sauce Packet lines use explicitly illustrative zero prices
 and persist requested quantities, including two packets. Names are user-directed; store
 availability and complimentary pricing were not verified from a current store feed.
