@@ -2,16 +2,20 @@
 import asyncio
 import copy
 import json
-import unittest
 import sys
+import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from azure.ai.inference.models import ChatCompletions, SystemMessage, UserMessage
-from model_diagnostics import DiagnosticGate, DiagnosticCapture, digest, sanitize
+from datetime import UTC
+
 import test_cascade_processor as helpers
+from azure.ai.inference.models import ChatCompletions, SystemMessage, UserMessage
+
+from model_diagnostics import DiagnosticCapture, DiagnosticGate, digest, sanitize
 from rtmt import Tool, ToolResult, ToolResultDirection
 
 OID = "11111111-1111-1111-1111-111111111111"
@@ -20,12 +24,12 @@ NOW = 1792706400
 
 
 def settings():
-    from datetime import datetime, timezone
+    from datetime import datetime
     return {
         "CascadeDiagnostics__Enabled": "true",
         "CascadeDiagnostics__OperatorObjectId": OID,
         "CascadeDiagnostics__RunMarker": MARKER,
-        "CascadeDiagnostics__ExpiresUtc": datetime.fromtimestamp(NOW + 600, timezone.utc).isoformat(),
+        "CascadeDiagnostics__ExpiresUtc": datetime.fromtimestamp(NOW + 600, UTC).isoformat(),
     }
 
 
@@ -88,6 +92,7 @@ class GateTests(unittest.TestCase):
 class BoundaryTests(unittest.IsolatedAsyncioTestCase):
     async def test_real_resumed_run_session_stops_and_clears_inherited_capture_before_guest_completion(self):
         from unittest.mock import Mock
+
         from aiohttp import WSMessage, WSMsgType
         processor = helpers._make_processor({})
         lines = []

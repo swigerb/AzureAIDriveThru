@@ -48,7 +48,6 @@ import wave
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote
-from model_diagnostics import DiagnosticGate, DiagnosticCapture
 
 import aiohttp
 from aiohttp import web
@@ -66,6 +65,7 @@ from azure.core.exceptions import HttpResponseError
 from config_loader import get_config
 from conformance_hooks import cascade_chat_kwargs
 from menu_utils import apply_lexicon
+from model_diagnostics import DiagnosticCapture, DiagnosticGate
 from order_state import order_state_singleton
 from processors import ResolvedModel, resolve_cascade_model
 from rate_limit import (
