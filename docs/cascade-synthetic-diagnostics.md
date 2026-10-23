@@ -41,7 +41,7 @@ observer stops when it sees a browser resume request, even if that resume fails.
 
 ## Evidence and privacy
 
-Structured `Synthetic cascade diagnostic` console events contain a synthetic
+C# cascade's structured `Synthetic cascade diagnostic` console events contain a synthetic
 session ID, response ID and stage. They record ordered roles, original content
 lengths, sanitized assistant content, tool names and consistently hashed tool-call
 IDs, final choice content/finish reason, and transcript/TTS/completion/cancellation
@@ -86,8 +86,10 @@ Python cascade observes each actual SDK completion invocation and its returned
 choice, including tool rounds, scoped greeting and retry invocations. Ordered roles,
 content lengths, system-policy hashes, sanitized assistant history/choices,
 tool names/schema hashes, paired call-ID hashes, request index and finish reason
-identify the earliest visible wrong choice. Guest commit and cancellation stages
-are correlated to the existing response ID; original guest/tool content has no
+identify the earliest visible wrong choice. Guest commits increment a guest index
+and clear the previous response ID; the next response and its requests share that
+index and the newly assigned response ID. Cancellation retains its actual response
+ID. Original guest/tool content has no
 hash because predictable-content hashes can disclose excluded values. This cannot
 verify exact guest wording or private tool wording from diagnostics alone. The
 browser's authoritative snapshot does not prove identical model-facing tool text.
