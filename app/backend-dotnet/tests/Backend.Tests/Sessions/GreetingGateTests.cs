@@ -8,6 +8,10 @@ using Backend.Tests.Realtime;
 using Backend.Tools;
 using Backend.Tests.TestSupport;
 using Microsoft.Extensions.Logging.Abstractions;
+using Backend.Cascade;
+using Backend.Tests.Cascade;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Backend.Tests.Sessions;
 
@@ -29,7 +33,11 @@ public sealed class GreetingGateTests
         if (configured) state.SessionConfigured.TrySetResult(true);
         var loader = new PromptLoader(Path.Combine(RepoRootLocator.Find(), "personas"), "tacobell");
         var upstream = new FakeWebSocket([]);
-        var gate = new GreetingGate(upstream, loader, state, null, TimeProvider.System,
+        var logger = new CascadeDiagnosticCaptureTests.RecordingLogger();
+        var capture = new CascadeDiagnosticCapture("scoped-session", DateTimeOffset.UtcNow.AddMinutes(10),
+            TimeProvider.System, logger);
+        using var observed = new DiagnosticWebSocket(upstream, capture, true);
+        var gate = new GreetingGate(observed, loader, state, null, TimeProvider.System,
             0.01, "scoped-session", NullLogger.Instance, CancellationToken.None);
         await Task.WhenAll(gate.SendOnceAsync("ack"), gate.SendOnceAsync("timeout"));
         await gate.SendOnceAsync("duplicate");
@@ -45,6 +53,12 @@ public sealed class GreetingGateTests
         Assert.Equal("none", response["tool_choice"]!.GetValue<string>());
         Assert.DoesNotContain("Greet exactly:", loader.SystemPrompt);
         Assert.DoesNotContain("Say exactly:", loader.SystemPrompt);
+        var observation = JsonNode.Parse(Assert.Single(logger.Lines))!;
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(response["instructions"]!.GetValue<string>()))),
+            observation["instructionsHash"]!.GetValue<string>());
+        Assert.True(observation["toolsPresent"]!.GetValue<bool>());
+        Assert.Equal(0, observation["inputCount"]!.GetValue<int>());
+        Assert.DoesNotContain("Welcome to Taco Bell", logger.Lines[0]);
     }
 
     [Fact]

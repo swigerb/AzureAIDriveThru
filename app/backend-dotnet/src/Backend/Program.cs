@@ -402,6 +402,7 @@ app.UseWebSockets(new WebSocketOptions
 // return. The resolved processor's ProcessAsync (RealtimeProcessor is a stub this wave -- #13
 // lands the real upstream relay) then owns the session's mailbox loop as before.
 var cascadeDiagnosticGate = new CascadeDiagnosticGate(builder.Configuration, TimeProvider.System);
+var realtimeDiagnosticGate = new CascadeDiagnosticGate(builder.Configuration, TimeProvider.System, "RealtimeDiagnostics", "realtime");
 app.MapGet("/realtime", async (HttpContext context) =>
 {
     if (!context.WebSockets.IsWebSocketRequest)
@@ -545,7 +546,11 @@ app.MapGet("/realtime", async (HttpContext context) =>
             // bootstrap, voice lock, greeting gate, tool-call dispatch, echo suppression/barge-in,
             // rejected-session-update recovery, rate-limit notice) instead of draining the generic
             // per-session mailbox -- see RealtimeProcessor.RunSessionAsync's own doc comment.
-            await realtimeProc.RunSessionAsync(socket, persona, resolvedModel, sessionId, context.RequestAborted, menuMode)
+            var diagnostic = realtimeDiagnosticGate.TryClaim(
+                entraSettings.Mode == EntraMode.Entra, context.User.Identity?.IsAuthenticated == true,
+                context.User.FindFirst("oid")?.Value, context.Request.Query["diagnostic_run"].ToString(),
+                persona.Id, pipelineName, sessionId, logger);
+            await realtimeProc.RunSessionAsync(socket, persona, resolvedModel, sessionId, context.RequestAborted, menuMode, diagnostic)
                 .ConfigureAwait(false);
         }
         else if (processor is CascadeProcessor cascadeProc)
