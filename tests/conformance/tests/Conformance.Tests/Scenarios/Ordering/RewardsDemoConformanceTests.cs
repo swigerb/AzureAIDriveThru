@@ -32,6 +32,8 @@ public sealed class RewardsDemoConformanceTests(ConformanceFixture fixture)
         var ct = TestContext.Current.CancellationToken;
         var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, persona: "tacobell");
         await using var first = browser;
+        Assert.Contains("Say exactly: Welcome to Taco Bell!", OrderScenarioHelpers.GreetingInstructions(connection));
+        Assert.Single(connection.ReceivedFrames.Snapshot(), frame => frame.Type == "response.create");
         var invalid = await Act(browser, "check_in", "123456", ct);
         Assert.False(invalid.GetProperty("rewardsDemo").GetProperty("checkedIn").GetBoolean());
         var checkedIn = await Act(browser, "check_in", "DEMO-PLUS", ct);
@@ -53,7 +55,8 @@ public sealed class RewardsDemoConformanceTests(ConformanceFixture fixture)
         var nextConnection = fixture.Realtime.WaitForNextConnectionAsync(Timeout, ct);
         await using var resumed = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, persona: "tacobell", cancellationToken: ct);
         await resumed.SendExtensionResumeAsync(resumeId, ct);
-        Assert.NotNull(await nextConnection);
+        var resumedConnection = await nextConnection;
+        Assert.NotNull(resumedConnection);
         var restored = await resumed.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_resumed", Timeout, ct);
         Assert.NotNull(restored);
         Assert.Equal(329, restored.Json.GetProperty("order_summary").GetProperty("rewardsDemo").GetProperty("balance").GetInt32());
@@ -62,6 +65,12 @@ public sealed class RewardsDemoConformanceTests(ConformanceFixture fixture)
         Assert.Empty(reset.GetProperty("items").EnumerateArray());
         Assert.Equal(329, reset.GetProperty("rewardsDemo").GetProperty("balance").GetInt32());
         Assert.False(reset.GetProperty("rewardsDemo").GetProperty("completed").GetBoolean());
+        await Task.Delay(TimeSpan.FromMilliseconds(300), ct);
+        Assert.DoesNotContain(resumedConnection.ReceivedFrames.Snapshot(), frame => frame.Type == "response.create");
+        var rehydration = resumedConnection.ReceivedFrames.Snapshot().Single(frame => frame.Type == "conversation.item.create");
+        Assert.Equal("system", rehydration.Json.GetProperty("item").GetProperty("role").GetString());
+        Assert.DoesNotContain("Say exactly:", rehydration.Json.GetRawText());
+        Assert.DoesNotContain("Greet exactly:", rehydration.Json.GetRawText());
     });
 
     [Theory]

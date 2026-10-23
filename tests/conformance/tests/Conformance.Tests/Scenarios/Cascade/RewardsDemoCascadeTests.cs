@@ -11,6 +11,71 @@ namespace Conformance.Tests.Scenarios.Cascade;
 public sealed class RewardsDemoCascadeTests(CascadeConformanceFixture fixture)
 {
     [Fact]
+    public Task Cascade_greeting_instruction_is_request_scoped_and_resume_preserves_only_real_speech() =>
+        fixture.RunAsync(async () =>
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var before = fixture.Chat.RequestCount;
+        var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(
+            fixture, fixture.Chat, "gpt-5-mini", ct, persona: "tacobell");
+        await using var browser = connection.Browser;
+        var greeting = fixture.Chat.Requests[before].RawBody;
+        Assert.Empty(greeting.GetProperty("tools").EnumerateArray());
+        Assert.Equal("none", greeting.GetProperty("tool_choice").GetString());
+        Assert.All(greeting.GetProperty("messages").EnumerateArray(), message =>
+            Assert.Equal("system", message.GetProperty("role").GetString()));
+        Assert.Contains("Say exactly: Welcome to Taco Bell!",
+            greeting.GetProperty("messages").EnumerateArray().Last().GetProperty("content").GetString());
+        Assert.Equal(before + 1, fixture.Chat.RequestCount);
+        var metadata = browser.ReceivedFrames.Snapshot().Single(frame => frame.Type == "extension.session_metadata");
+        var resumeId = metadata.Json.GetProperty("resumeId").GetString()!;
+        fixture.Chat.EnqueueMessage(new JsonObject
+        {
+            ["role"] = "assistant", ["content"] = null,
+            ["tool_calls"] = new JsonArray(new JsonObject
+            {
+                ["id"] = "scoped-order", ["type"] = "function",
+                ["function"] = new JsonObject { ["name"] = "get_order", ["arguments"] = "{}" },
+            }),
+        });
+        fixture.Chat.EnqueueMessage(new JsonObject { ["role"] = "assistant", ["content"] = "What can I get started for you?" });
+        fixture.Realtime.NextTranscript = "Ready to order.";
+        await CascadeScenarioHelpers.SendGuestTurnAsync(browser, ct);
+        Assert.NotNull(await browser.ReceivedFrames.WaitForAsync(
+            frame => frame.Sequence > connection.GreetingWatermark && frame.Type == "extension.round_trip_token",
+            CascadeScenarioHelpers.FrameTimeout, ct));
+        var next = fixture.Chat.Requests[before + 1].RawBody;
+        Assert.NotEmpty(next.GetProperty("tools").EnumerateArray());
+        Assert.Equal(new[] { "system", "assistant", "user" },
+            next.GetProperty("messages").EnumerateArray().Select(message => message.GetProperty("role").GetString()));
+        Assert.Contains("Welcome to the drive-thru!", next.GetRawText());
+        Assert.DoesNotContain("Say exactly:", next.GetRawText());
+        Assert.DoesNotContain("Greet exactly:", next.GetRawText());
+        var result = fixture.Chat.Requests[before + 2].RawBody.GetProperty("messages").EnumerateArray().Last();
+        Assert.Equal("scoped-order", result.GetProperty("tool_call_id").GetString());
+        Assert.Equal(before + 3, fixture.Chat.RequestCount);
+
+        await browser.CloseAsync(cancellationToken: ct);
+        await browser.WaitForCloseAsync(CascadeScenarioHelpers.FrameTimeout, ct);
+        await using var resumed = await CascadeScenarioHelpers.ConnectAsync(fixture, "gpt-5-mini", ct, persona: "tacobell");
+        await resumed.SendExtensionResumeAsync(resumeId, ct);
+        Assert.NotNull(await resumed.ReceivedFrames.WaitForAsync(
+            frame => frame.Type == "extension.session_resumed", CascadeScenarioHelpers.FrameTimeout, ct));
+        await Task.Delay(TimeSpan.FromMilliseconds(500), ct);
+        Assert.Equal(before + 3, fixture.Chat.RequestCount);
+        Assert.DoesNotContain(resumed.ReceivedFrames.Snapshot(), frame => frame.Type == "response.created");
+        fixture.Chat.EnqueueMessage(new JsonObject { ["role"] = "assistant", ["content"] = "Take your time." });
+        fixture.Realtime.NextTranscript = "One moment, please.";
+        await CascadeScenarioHelpers.SendGuestTurnAsync(resumed, ct);
+        Assert.NotNull(await resumed.ReceivedFrames.WaitForAsync(
+            frame => frame.Type == "extension.round_trip_token", CascadeScenarioHelpers.FrameTimeout, ct));
+        var rehydrated = fixture.Chat.Requests[before + 3].RawBody.GetRawText();
+        Assert.Contains("Welcome to the drive-thru!", rehydrated);
+        Assert.DoesNotContain("Say exactly:", rehydrated);
+        Assert.DoesNotContain("Greet exactly:", rehydrated);
+    });
+
+    [Fact]
     public Task Cascade_checkin_tool_order_redemption_and_completion_use_the_same_ledger() => fixture.RunAsync(async () =>
     {
         var ct = TestContext.Current.CancellationToken;

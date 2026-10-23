@@ -19,7 +19,8 @@ internal sealed class CascadeToolCallDispatcher(
     FoundryChatClient chatClient,
     IReadOnlyList<JsonObject> toolDefinitions)
 {
-    private async Task<JsonObject> CallChatCompletionAsync(CancellationToken turnCt)
+    private async Task<JsonObject> CallChatCompletionAsync(
+        CancellationToken turnCt, IReadOnlyList<JsonObject>? messages = null, bool disableTools = false)
     {
         if (context.Diagnostic is { } diagnostic && diagnostic.SessionId != context.SessionId)
         {
@@ -28,7 +29,8 @@ internal sealed class CascadeToolCallDispatcher(
         }
         return await CascadeRateLimit.WithRetryAsync(
             rateLimitSettings,
-            () => chatClient.CompleteAsync(context.State.Messages, context.State.Deployment, toolDefinitions, turnCt, context.Diagnostic),
+            () => chatClient.CompleteAsync(messages ?? context.State.Messages, context.State.Deployment,
+                toolDefinitions, turnCt, context.Diagnostic, disableTools),
             "chat completion", context.NotifyClientAsync, context.SessionId, context.Logger, turnCt,
             context.TimeProvider).ConfigureAwait(false);
     }
@@ -199,5 +201,21 @@ internal sealed class CascadeToolCallDispatcher(
         }
         context.Logger.CascadeChatToolLoopCapped(CascadeProcessor.MaxToolRounds, context.SessionId);
         return "";
+    }
+
+    public async Task<string> RunGreetingAsync(string instructions, CancellationToken turnCt)
+    {
+        // Keep the one-shot instruction out of the resumable conversation, including on cancellation.
+        var messages = context.State.Messages
+            .Where(message => message["role"]?.GetValue<string>() == "system")
+            .Select(message => (JsonObject)message.DeepClone()).ToList();
+        messages.Add(CascadeChatMessage.System(instructions));
+        var message = await CallChatCompletionAsync(turnCt, messages, disableTools: true).ConfigureAwait(false);
+        if (message["tool_calls"] is JsonArray { Count: > 0 })
+            throw new InvalidOperationException("Greeting completion returned tool calls with tools disabled");
+        var content = CascadeProcessor.GetString(message, "content") ?? "";
+        if (!string.IsNullOrWhiteSpace(content))
+            context.State.Messages.Add(CascadeChatMessage.Assistant(content));
+        return content;
     }
 }

@@ -17,6 +17,31 @@ public static class OrderScenarioHelpers
 {
     public static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
 
+    public static string GreetingInstructions(FakeRealtimeConnection connection)
+    {
+        foreach (var frame in connection.ReceivedFrames.Snapshot())
+        {
+            if (frame.Type == "response.create"
+                && frame.Json.TryGetProperty("response", out var response)
+                && response.TryGetProperty("instructions", out var instructions))
+            {
+                Assert.Empty(response.GetProperty("input").EnumerateArray());
+                Assert.Empty(response.GetProperty("tools").EnumerateArray());
+                Assert.Equal("none", response.GetProperty("tool_choice").GetString());
+                Assert.DoesNotContain(connection.ReceivedFrames.Snapshot(), candidate =>
+                    candidate.Type == "conversation.item.create"
+                    && candidate.Json.TryGetProperty("item", out var message)
+                    && message.TryGetProperty("role", out var role) && role.GetString() == "user");
+                return instructions.GetString()!;
+            }
+            if (frame.Type == "conversation.item.create"
+                && frame.Json.TryGetProperty("item", out var item)
+                && item.TryGetProperty("type", out var type) && type.GetString() == "message")
+                return item.GetProperty("content")[0].GetProperty("text").GetString()!;
+        }
+        throw new Xunit.Sdk.XunitException("No configured greeting frame reached the upstream.");
+    }
+
     /// <summary>
     /// Connects a fresh browser client, asserts no connections leaked from a previous scenario,
     /// waits for the accepted upstream connection, starts the session, and waits for the

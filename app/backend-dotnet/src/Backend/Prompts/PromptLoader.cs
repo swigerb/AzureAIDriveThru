@@ -272,6 +272,21 @@ internal sealed class PromptLoader
         {
             throw new PromptLoadException($"greeting must have a 'type' field (persona '{PersonaId}').");
         }
+        if (greeting["type"] is "response.create")
+        {
+            var response = greeting.TryGetValue("response", out var rawResponse)
+                ? rawResponse as IDictionary<object, object> : null;
+            if (greeting.Count != 2 || response is null || response.Count != 4
+                || !response.TryGetValue("instructions", out var instructions)
+                || instructions is not string text || string.IsNullOrWhiteSpace(text)
+                || !response.TryGetValue("input", out var input) || input is not IList<object> { Count: 0 }
+                || !response.TryGetValue("tools", out var tools) || tools is not IList<object> { Count: 0 }
+                || !response.TryGetValue("tool_choice", out var choice) || choice is not "none")
+            {
+                throw new PromptLoadException(
+                    "response.create greeting requires nonempty instructions, empty input/tools and tool_choice none");
+            }
+        }
         return (IReadOnlyDictionary<object, object>)greeting;
     }
 

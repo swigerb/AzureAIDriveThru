@@ -1,9 +1,8 @@
 version: "1.0.0"
 greeting:
-  type: "conversation.item.create"
-  item:
-    type: "message"
-    role: "user"
-    content:
-      - type: "input_text"
-        text: "Say exactly: Welcome to Taco Bell! Are you checking in with the Taco Bell app today?"
+  type: "response.create"
+  response:
+    instructions: "Say exactly: Welcome to Taco Bell! Are you checking in with the Taco Bell app today?"
+    input: []
+    tools: []
+    tool_choice: "none"

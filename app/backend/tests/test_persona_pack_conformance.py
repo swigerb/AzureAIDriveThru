@@ -78,6 +78,8 @@ _KNOWN_PRE_EXISTING_UPSELL_HINT_GAPS: frozenset[tuple[str, str]] = frozenset()
 def _greeting_text(persona: Persona) -> str:
     loader = PromptLoader(brand=persona.id, prompts_dir=persona.prompts_dir)
     greeting = loader.get_greeting()
+    if greeting["type"] == "response.create":
+        return greeting["response"]["instructions"]
     return greeting["item"]["content"][0]["text"]
 
 

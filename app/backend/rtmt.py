@@ -2445,11 +2445,19 @@ class RTMiddleTier:
                     echo.start_greeting_suppression(verbose)
                     # Flush any stale audio that arrived before session was configured
                     await target_ws.send_str(_INPUT_AUDIO_CLEAR_MSG)
-                    greeting_msg = self._sessions.build_greeting_msg(
-                        persona_prompt_loader.get_greeting_json_str() if persona_prompt_loader is not None else None
+                    scoped_greeting = (
+                        persona_prompt_loader is not None
+                        and persona_prompt_loader.get_greeting()["type"] == "response.create"
+                    )
+                    greeting_msg = (
+                        persona_prompt_loader.get_greeting_json_str() if scoped_greeting
+                        else self._sessions.build_greeting_msg(
+                            persona_prompt_loader.get_greeting_json_str() if persona_prompt_loader is not None else None
+                        )
                     )
                     await target_ws.send_str(greeting_msg)
-                    await target_ws.send_str(_RESPONSE_CREATE_MSG)
+                    if not scoped_greeting:
+                        await target_ws.send_str(_RESPONSE_CREATE_MSG)
                     if session_id is not None:
                         self._sessions.mark_greeting_sent(session_id)
                     # Track greeting in context window

@@ -34,6 +34,7 @@ internal sealed class RoutingFoundryHandler : HttpMessageHandler
     public List<string> SpeakRequestBodies { get; } = [];
     public int TranscribeRequestCount => TranscribeRequestBodies.Count;
     public List<byte[]> TranscribeRequestBodies { get; } = [];
+    public Func<CancellationToken, Task>? BeforeChatCompletion { get; set; }
 
     public RoutingFoundryHandler EnqueueChatMessage(string role, string? content, JsonArray? toolCalls = null)
     {
@@ -147,6 +148,8 @@ internal sealed class RoutingFoundryHandler : HttpMessageHandler
         if (path.EndsWith("/chat/completions", StringComparison.Ordinal))
         {
             ChatRequestBodies.Add(request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken));
+            if (BeforeChatCompletion is not null)
+                await BeforeChatCompletion(cancellationToken);
             return Dequeue(_chatResponses, "chat completion")();
         }
         if (path.EndsWith("/audio/transcriptions", StringComparison.Ordinal))
@@ -357,7 +360,7 @@ public sealed class CascadeProcessorTests
                 "marin",
                 echoCooldownSeconds),
             new CascadeProcessorDependencies(
-                new Dictionary<string, PromptLoader> { ["test-delta"] = loader },
+                new Dictionary<string, PromptLoader> { [loader.PersonaId] = loader },
                 toolExecutor,
                 new HttpClient(handler),
                 logger ?? NullLogger<CascadeProcessor>.Instance,
@@ -392,6 +395,100 @@ public sealed class CascadeProcessorTests
             ["type"] = "extension.set_voice",
             ["voice"] = voice,
         }.ToJsonString());
+
+    [Fact]
+    public async Task ScopedGreetingRequestNeverPersistsIntentAndRetainsActualAssistantForNextToolRound()
+    {
+        var persona = PersonaCatalog.Load().Get("tacobell");
+        var loader = new PromptLoader(Path.Combine(RepoRootLocator.Find(), "personas"), persona.Id);
+        const string greeting = "Welcome to Taco Bell! Are you checking in with the Taco Bell app today?";
+        var handler = new RoutingFoundryHandler().EnqueueChatMessage("assistant", greeting)
+            .EnqueueChatMessage("assistant", null, new JsonArray(new JsonObject
+            {
+                ["id"] = "scoped-call", ["type"] = "function",
+                ["function"] = new JsonObject { ["name"] = "get_order", ["arguments"] = "{}" },
+            }))
+            .EnqueueChatMessage("assistant", "What can I get started for you?")
+            .EnqueueSpeech([1, 2]).EnqueueSpeech([3, 4]);
+        var processor = NewProcessor(handler, new StubToolExecutor(["get_order"]), loader);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        var socket = new DelayedFakeWebSocket([], TimeSpan.Zero);
+        var context = processor.CreateSessionContext(socket, persona,
+            new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", false), "scoped", cts);
+        await context.SendGreetingAsync(cts.Token);
+        var request = JsonNode.Parse(handler.ChatRequestBodies[0])!;
+        Assert.Empty(request["tools"]!.AsArray());
+        Assert.Equal("none", request["tool_choice"]!.GetValue<string>());
+        Assert.All(request["messages"]!.AsArray(), message =>
+            Assert.Equal("system", message!["role"]!.GetValue<string>()));
+        Assert.Contains("Say exactly:", request["messages"]!.AsArray().Last()!["content"]!.GetValue<string>());
+        Assert.Equal(new[] { "system", "assistant" },
+            context.State.Messages.Select(message => message["role"]!.GetValue<string>()));
+        Assert.Equal(greeting, context.State.Messages.Last()["content"]!.GetValue<string>());
+        context.State.Messages.Add(CascadeChatMessage.User("Ready to order."));
+        await context.TurnCoordinator.RunTurnAndSpeakAsync(cts.Token);
+        var next = JsonNode.Parse(handler.ChatRequestBodies[1])!["messages"]!.AsArray();
+        Assert.Equal(new[] { "system", "assistant", "user" },
+            next.Select(message => message!["role"]!.GetValue<string>()));
+        Assert.DoesNotContain("Say exactly:", next.ToJsonString());
+        Assert.DoesNotContain("Greet exactly:", next.ToJsonString());
+        Assert.Equal("scoped-call", JsonNode.Parse(handler.ChatRequestBodies[2])!["messages"]!
+            .AsArray().Last()!["tool_call_id"]!.GetValue<string>());
+        Assert.Equal(3, handler.ChatRequestBodies.Count);
+        Assert.Equal(2, handler.SpeakRequestBodies.Count);
+    }
+
+    [Fact]
+    public async Task ScopedGreetingCancelledDuringCompletionNeverPersistsIntentOrFakeAnswer()
+    {
+        var persona = PersonaCatalog.Load().Get("tacobell");
+        var loader = new PromptLoader(Path.Combine(RepoRootLocator.Find(), "personas"), persona.Id);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = new RoutingFoundryHandler
+        {
+            BeforeChatCompletion = async ct =>
+            {
+                started.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            },
+        };
+        var processor = NewProcessor(handler, new StubToolExecutor(["get_order"]), loader);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        var socket = new DelayedFakeWebSocket([], TimeSpan.Zero);
+        var context = processor.CreateSessionContext(socket, persona,
+            new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", false), "scoped", cts);
+        var greeting = context.SendGreetingAsync(cts.Token);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => greeting);
+        Assert.Single(context.State.Messages);
+        Assert.DoesNotContain("Say exactly:", context.State.Messages[0].ToJsonString());
+        Assert.Empty(handler.SpeakRequestBodies);
+    }
+
+    [Fact]
+    public async Task ScopedGreetingUnexpectedToolCallFailsWithoutExecutingOrSpeaking()
+    {
+        var persona = PersonaCatalog.Load().Get("tacobell");
+        var loader = new PromptLoader(Path.Combine(RepoRootLocator.Find(), "personas"), persona.Id);
+        var handler = new RoutingFoundryHandler().EnqueueChatMessage("assistant", null,
+            new JsonArray(new JsonObject
+            {
+                ["id"] = "unexpected", ["type"] = "function",
+                ["function"] = new JsonObject { ["name"] = "get_order", ["arguments"] = "{}" },
+            }));
+        var executor = new RecordingToolExecutor(["get_order"]);
+        var processor = NewProcessor(handler, executor, loader);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        var socket = new DelayedFakeWebSocket([], TimeSpan.Zero);
+        var context = processor.CreateSessionContext(socket, persona,
+            new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", false), "scoped", cts);
+        await context.SendGreetingAsync(cts.Token);
+        Assert.Single(context.State.Messages);
+        Assert.Empty(executor.ReceivedArgumentsJson);
+        Assert.Empty(handler.SpeakRequestBodies);
+        Assert.Equal("failed", ParseSent(socket.SentMessages.Last())["response"]!["status"]!.GetValue<string>());
+    }
 
     [Fact]
     public void PipelineName_IsCascade()
@@ -1489,6 +1586,38 @@ public sealed class CascadeProcessorTests
         var resumeId = sessionManager.IssueResumeId(priorSessionId)!;
         sessionManager.Detach(priorSocket, priorSessionId, "test setup");
         return resumeId;
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ScopedGreetingResumeStaysSilentUnlessConversationNeverStarted(bool started)
+    {
+        var persona = PersonaCatalog.Load().Get("tacobell");
+        var loader = new PromptLoader(Path.Combine(RepoRootLocator.Find(), "personas"), persona.Id);
+        var model = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", false);
+        var time = new FakeTimeProvider();
+        var sessions = NewSessionManager(time);
+        var resumeId = SeedDetachedResumableSession(sessions, "prior-scoped", persona, model.Id, started);
+        var handler = new RoutingFoundryHandler();
+        if (!started)
+            handler.EnqueueChatMessage("assistant", "Welcome to Taco Bell!").EnqueueSpeech([1, 2]);
+        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader,
+            timeProvider: time, sessionManager: sessions);
+        var socket = new DelayedFakeWebSocket(
+            [(ResumeFrame(resumeId), WebSocketMessageType.Text), ([], WebSocketMessageType.Close)], ReceiveDelay);
+        await processor.RunSessionAsync(socket, persona, model, "new-scoped", TestContext.Current.CancellationToken);
+        var frames = socket.SentMessages.Select(ParseSent).ToList();
+        Assert.Contains(frames, frame => frame["type"]!.GetValue<string>() == "extension.session_resumed");
+        Assert.Equal(started ? 0 : 1, handler.ChatRequestBodies.Count);
+        Assert.Equal(started ? 0 : 1, handler.SpeakRequestBodies.Count);
+        if (!started)
+        {
+            var request = JsonNode.Parse(handler.ChatRequestBodies.Single())!;
+            Assert.All(request["messages"]!.AsArray(), message =>
+                Assert.Equal("system", message!["role"]!.GetValue<string>()));
+            Assert.Equal("none", request["tool_choice"]!.GetValue<string>());
+        }
     }
 
     [Fact]

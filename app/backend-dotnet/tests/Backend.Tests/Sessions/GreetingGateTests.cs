@@ -1,10 +1,12 @@
 using System.Net.WebSockets;
 using System.Text.Json.Nodes;
 using Backend.Configuration;
+using Backend.Prompts;
 using Backend.Realtime;
 using Backend.Sessions;
 using Backend.Tests.Realtime;
 using Backend.Tools;
+using Backend.Tests.TestSupport;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Backend.Tests.Sessions;
@@ -18,6 +20,50 @@ namespace Backend.Tests.Sessions;
 /// </summary>
 public sealed class GreetingGateTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ResponseScopedGreetingClearsOnceAndNeverCreatesGuestIntent(bool configured)
+    {
+        var state = NewState("scoped-session");
+        if (configured) state.SessionConfigured.TrySetResult(true);
+        var loader = new PromptLoader(Path.Combine(RepoRootLocator.Find(), "personas"), "tacobell");
+        var upstream = new FakeWebSocket([]);
+        var gate = new GreetingGate(upstream, loader, state, null, TimeProvider.System,
+            0.01, "scoped-session", NullLogger.Instance, CancellationToken.None);
+        await Task.WhenAll(gate.SendOnceAsync("ack"), gate.SendOnceAsync("timeout"));
+        await gate.SendOnceAsync("duplicate");
+        var frames = upstream.SentMessages.Select(message => JsonNode.Parse(message.Data)!.AsObject()).ToList();
+        Assert.Equal(new[] { "input_audio_buffer.clear", "response.create" },
+            frames.Select(frame => frame["type"]!.GetValue<string>()));
+        var response = frames[1]["response"]!.AsObject();
+        Assert.Contains("Welcome to Taco Bell!", response["instructions"]!.GetValue<string>());
+        Assert.Empty(response["input"]!.AsArray());
+        Assert.Empty(response["tools"]!.AsArray());
+        Assert.Equal("none", response["tool_choice"]!.GetValue<string>());
+        Assert.DoesNotContain("Greet exactly:", loader.SystemPrompt);
+        Assert.DoesNotContain("Say exactly:", loader.SystemPrompt);
+    }
+
+    [Fact]
+    public async Task ResponseScopedGreetingIsSilentOnResumeAndCancelledBeforeConfiguration()
+    {
+        var loader = new PromptLoader(Path.Combine(RepoRootLocator.Find(), "personas"), "tacobell");
+        var state = NewState("scoped-session");
+        state.GreetingSent = true;
+        var upstream = new FakeWebSocket([]);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var gate = new GreetingGate(upstream, loader, state, null, TimeProvider.System,
+            1, "scoped-session", NullLogger.Instance, cts.Token);
+        await gate.SendOnceAsync("resume");
+        Assert.Empty(upstream.SentMessages);
+        state.GreetingSent = false;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => gate.SendOnceAsync("cancelled"));
+        Assert.False(state.GreetingSent);
+        Assert.Empty(upstream.SentMessages);
+    }
+
     private static RealtimeProcessor.RealtimeSessionState NewState(string sessionId) => new()
     {
         SessionId = sessionId,

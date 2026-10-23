@@ -199,6 +199,27 @@ class TestMissingFiles:
 # ===========================================================================
 
 class TestValidationErrors:
+    @pytest.mark.parametrize("field,value", [
+        ("instructions", ""), ("instructions", []), ("input", [{}]), ("input", None),
+        ("tools", [{"type": "function", "name": "search"}]), ("tool_choice", "auto"),
+        ("extra", True),
+    ])
+    def test_response_scoped_greeting_rejects_unsafe_overrides(self, brand_dir, field, value):
+        response = {"instructions": "Say hello.", "input": [], "tools": [], "tool_choice": "none"}
+        response[field] = value
+        (brand_dir / "greeting.yaml").write_text(
+            yaml.dump({"greeting": {"type": "response.create", "response": response}}), encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="response.create greeting requires"):
+            PromptLoader(prompts_dir=brand_dir)
+
+    def test_response_scoped_greeting_rejects_extra_frame_fields(self, brand_dir):
+        greeting = {"type": "response.create", "event_id": "untrusted",
+                    "response": {"instructions": "Say hello.", "input": [], "tools": [], "tool_choice": "none"}}
+        (brand_dir / "greeting.yaml").write_text(yaml.dump({"greeting": greeting}), encoding="utf-8")
+        with pytest.raises(ValueError, match="response.create greeting requires"):
+            PromptLoader(prompts_dir=brand_dir)
+
     def test_empty_sections_list_raises(self, brand_dir):
         (brand_dir / "system_prompt.yaml").write_text(
             yaml.dump({"version": "1.0.0", "sections": []}), encoding="utf-8"

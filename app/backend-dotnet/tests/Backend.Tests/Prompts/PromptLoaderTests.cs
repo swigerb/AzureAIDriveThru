@@ -125,6 +125,42 @@ public sealed class PromptLoaderTests : IDisposable
         Assert.Contains("type", exc.Message);
     }
 
+    [Theory]
+    [InlineData("instructions", "\"\"")]
+    [InlineData("instructions", "[]")]
+    [InlineData("input", "[{}]")]
+    [InlineData("input", "null")]
+    [InlineData("tools", "[{\"type\":\"function\",\"name\":\"search\"}]")]
+    [InlineData("tool_choice", "\"auto\"")]
+    [InlineData("extra", "true")]
+    public void ResponseScopedGreetingRejectsUnsafeOverrides(string field, string json)
+    {
+        var greeting = JsonNode.Parse("""
+            {"greeting":{"type":"response.create","response":{
+                "instructions":"Say hello.","input":[],"tools":[],"tool_choice":"none"}}}
+            """)!;
+        greeting["greeting"]!["response"]![field] = JsonNode.Parse(json);
+        File.WriteAllText(Path.Combine(_personasDir, "acme", "prompts", "greeting.yaml"), greeting.ToJsonString());
+        var exc = Assert.Throws<PromptLoadException>(() => new PromptLoader(_personasDir, "acme"));
+        Assert.Contains("response.create greeting requires", exc.Message);
+    }
+
+    [Fact]
+    public void ResponseScopedGreetingRejectsExtraFrameFields()
+    {
+        File.WriteAllText(Path.Combine(_personasDir, "acme", "prompts", "greeting.yaml"), """
+            greeting:
+              type: response.create
+              event_id: untrusted
+              response:
+                instructions: Say hello.
+                input: []
+                tools: []
+                tool_choice: none
+            """);
+        Assert.Throws<PromptLoadException>(() => new PromptLoader(_personasDir, "acme"));
+    }
+
     [Fact]
     public void ToolSchemasEmptyList_Throws()
     {

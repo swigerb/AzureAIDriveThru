@@ -191,7 +191,7 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         cts?.Dispose();
     }
 
-    public async Task RunTurnAndSpeakAsync(CancellationToken turnCt)
+    public async Task RunTurnAndSpeakAsync(CancellationToken turnCt, string? greetingInstructions = null)
     {
         var responseId = MiddleTierItemIds.NewId();
         if (context.Diagnostic is { } diagnostic)
@@ -208,7 +208,9 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         string finalText;
         try
         {
-            finalText = await context.ToolCallDispatcher.RunChatToolLoopAsync(turnCt).ConfigureAwait(false);
+            finalText = greetingInstructions is null
+                ? await context.ToolCallDispatcher.RunChatToolLoopAsync(turnCt).ConfigureAwait(false)
+                : await context.ToolCallDispatcher.RunGreetingAsync(greetingInstructions, turnCt).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(finalText))
                 throw new InvalidOperationException("Chat tool loop returned no spoken answer; the ticket may have changed.");
         }
@@ -393,12 +395,15 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
             return;
         }
         string? text;
+        bool scoped;
         try
         {
             var greeting = (JsonObject)YamlJson.ToJsonNode(
                 (IDictionary<object, object>)context.PromptLoader.Greeting)!;
-            text = CascadeProcessor.GetString(
-                (greeting["item"]?["content"] as JsonArray)?[0] as JsonObject, "text");
+            scoped = greeting["type"]?.GetValue<string>() == "response.create";
+            text = scoped ? greeting["response"]!["instructions"]!.GetValue<string>()
+                : CascadeProcessor.GetString(
+                    (greeting["item"]?["content"] as JsonArray)?[0] as JsonObject, "text");
         }
         catch (Exception ex)
         {
@@ -410,8 +415,9 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
             context.Logger.CascadeGreetingTextMissing(context.SessionId);
             return;
         }
-        context.State.Messages.Add(CascadeChatMessage.User(text));
+        if (!scoped)
+            context.State.Messages.Add(CascadeChatMessage.User(text));
         context.SessionManager?.MarkConversationStarted(context.SessionId);
-        await RunTurnAndSpeakAsync(turnCt).ConfigureAwait(false);
+        await RunTurnAndSpeakAsync(turnCt, scoped ? text : null).ConfigureAwait(false);
     }
 }
