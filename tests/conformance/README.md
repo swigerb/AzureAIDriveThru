@@ -1328,6 +1328,11 @@ This is deliberately **not** applied to the Windows-only Job Object tests elsewh
 when `!OperatingSystem.IsWindows()`, a platform fact about the machine the suite itself is running
 on, not about which backend is under test, and are unrelated to `BackendUnderTest`.
 
+The same attribute is also used for rows that assert something the Python backend simply does not
+do, as opposed to a bug it has: the C# security headers (`Scenarios/Http/SecurityHeadersConformanceTests.cs`
+and the real-browser `Scenarios/Browser/SecurityHeadersBrowserTests.cs`). They are not part of the
+count above. See "Security headers and Content-Security-Policy" in `docs/dotnet_mapping.md`.
+
 ### Tool-error unhandled-error-count contract (PR #38 review item 2)
 
 `ConformanceFixture.RunAsync(Func<Task> body)` asserts, by default, that a scenario introduces

@@ -411,6 +411,25 @@ next provision if the env value is still `true`) takes the dotnet app dark again
 the Python app or its traffic at all -- the two Container Apps are provisioned and scaled
 completely independently.
 
+### Security headers and HSTS
+
+The C# app sends a Content-Security-Policy, `X-Content-Type-Options`, `X-Frame-Options`,
+`Referrer-Policy` and `Permissions-Policy` on every response, plus `Strict-Transport-Security` for
+HTTPS requests (the container speaks plain HTTP behind the ingress, so it keys off
+`X-Forwarded-Proto: https`). The Python app does not send them. After a deploy, look at the headers
+and confirm there is no `server:` line:
+
+```bash
+curl -s -D - -o /dev/null https://<dotnet-app-fqdn>/
+```
+
+Then open the app signed in and check the browser console for `Refused to ...` messages, including
+after opening Settings. `includeSubDomains` is part of the HSTS value; if the app is ever served from
+an apex custom domain that has HTTP-only subdomains, change it in
+`app/backend-dotnet/src/Backend/Http/SecurityHeaders.cs` first. There is no runtime switch, so roll
+back by deploying the previous image digest (`az containerapp update --image <repo>@sha256:<digest>`).
+The policy and the reason for each allowance are in `docs/dotnet_mapping.md`.
+
 ### Teardown of just the dotnet app
 
 To remove the dotnet app alone (keep the Python app, Foundry account, Search service, and shared

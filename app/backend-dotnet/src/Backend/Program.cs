@@ -44,6 +44,8 @@ string host = BackendEnvironment.Get(BackendEnvironment.Host) ?? "127.0.0.1";
 // review nit) -- both backends bind the same default when PORT is unset.
 string port = BackendEnvironment.Get(BackendEnvironment.Port) ?? "8000";
 builder.WebHost.UseUrls($"http://{host}:{port}");
+// "Server: Kestrel" tells a scanner which server to target and adds nothing for a client.
+builder.WebHost.ConfigureKestrel(static options => options.AddServerHeader = false);
 
 var startupChecks = new StartupChecks();
 
@@ -314,6 +316,12 @@ SessionTokenService tokenService = app.Services.GetRequiredService<SessionTokenS
 SecurityConfig securityConfig = app.Services.GetRequiredService<SecurityConfig>();
 
 SessionRegistry sessionRegistry = app.Services.GetRequiredService<SessionRegistry>();
+
+// ── Browser-hardening headers (CSP, nosniff, framing, referrer, permissions, HSTS) on EVERY
+// response -- first in the pipeline so a static file (which short-circuits everything after it),
+// a 401 from the Entra fallback policy and a 404 all carry them. HSTS is for real deployments only:
+// never in Development. See SecurityHeaders for the policy and the reason behind each allowance. ──
+app.UseSecurityHeaders(emitHsts: !app.Environment.IsDevelopment());
 
 // ── Static files (shared with the Python backend -- frontend unchanged by the port) -- placed
 // BEFORE UseRouting/UseAuthentication/UseAuthorization below so a static-file request never
