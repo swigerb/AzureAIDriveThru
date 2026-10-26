@@ -191,6 +191,12 @@ builder.Services.AddSingleton<SessionRegistry>();
 // through DI keeps the hosted service on the same singleton the processors use.
 builder.Services.AddHostedService<SessionSweepService>();
 
+// Keep this the LAST service registration: it removes the framework's Data Protection hosted
+// service, and any AddAuthentication/AddDataProtection call after it would register that service
+// again. Nothing here consumes Data Protection, so no key ring is created or written (see
+// EphemeralDataProtection for the full rationale and the trade-off).
+EphemeralDataProtection.Configure(builder.Services);
+
 WebApplication app = builder.Build();
 ILogger logger = app.Logger;
 IHttpClientFactory httpClientFactory = app.Services.GetRequiredService<IHttpClientFactory>();

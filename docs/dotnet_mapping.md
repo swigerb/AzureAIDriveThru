@@ -1031,6 +1031,62 @@ waits for the one write that may be in flight. Caveats: the refusal is permanent
 the cost is one uncontended `SemaphoreSlim` wait and release per browser send; only the browser
 socket is wrapped (the upstream audio socket has no such race).
 
+### Data Protection keys
+
+The follow-up was worded "persist the Data Protection keys". The backend now creates no key ring at
+all, and persisting is deferred until something needs it.
+
+Entra mode's `AddAuthentication` registers ASP.NET Data Protection as a side effect, and the
+framework's own hosted service then built a key ring on every start: an unencrypted `key-<guid>.xml`
+under `/home/app/.aspnet/DataProtection-Keys`, plus the `FileSystemXmlRepository` "may not be
+persisted outside of the container" and `XmlKeyManager` "No XML encryptor configured" warnings.
+Nothing in this backend consumes Data Protection (JwtBearer validation is stateless;
+`SessionTokenService` is an HMAC over `APP_SESSION_SECRET`), so those keys protected nothing.
+`Auth/EphemeralDataProtection.Configure`, called last in `Program.cs`, switches to the in-memory
+provider and removes that hosted service.
+
+Reproduced on the net11.0 SDK in a Linux container, where startup matches production:
+
+| Variant | Startup output | Key files |
+|---|---|---|
+| default, or `UseEphemeralDataProtectionProvider()` alone | both warnings | 1 |
+| ephemeral provider plus the hosted service removed by full type name, after all auth registration | silent | 0 |
+| the same removal, matched by assembly instead | removes nothing, as noisy as the default | 1 |
+| the same removal, run before `AddAuthentication` | the service is registered again, as noisy as the default | 1 |
+| removal without the ephemeral provider | silent, but the first consumer creates the file-system key ring on demand | 0, then 1 |
+
+Both halves are therefore needed, and the order matters: `AddAuthentication` and `AddDataProtection`
+register the service with `TryAddEnumerable`, which an earlier removal does not survive. The service
+type is internal and does not live in the assembly that defines `IDataProtectionProvider`, so it is
+matched by full name; `Backend.Tests` pins that name to the real registration, so a framework rename
+fails a test instead of turning the removal into a silent no-op. On the net11.0 SDK
+`ServiceDescriptor.ImplementationType` is `null` for keyed, instance and factory registrations (it
+does not throw), so the scan leaves those alone.
+
+What this gives up: keys live in memory only, so a restart or a second replica cannot read a payload
+another instance protected. Today that costs nothing. The first feature that does use Data Protection
+(cookie authentication, antiforgery, an `IDataProtector`) needs persisted keys shared by every
+replica, and must drop the call. The framework's "Using ephemeral data protection provider" line would
+say so, but `appsettings.json` caps `Microsoft.AspNetCore` at Warning, so it stays hidden unless
+`Logging:LogLevel:Microsoft.AspNetCore.DataProtection` is lowered.
+
+Real persistence (a blob container for the ring and a Key Vault key to protect it at rest) was left
+out. It needs new infra (a Key Vault, a container, role assignments) that can only ship through
+`azd provision`, which `DEPLOY.md` treats as a guarded operation on production; the Azure Data
+Protection NuGet packages (a `packages.lock.json` change); and a startup dependency on both. The
+storage account has `allowSharedKeyAccess: false`, so an Azure Files mount is not an option, and the
+documents container is Search-indexed, so it must not hold keys. It can be added when a consumer
+exists. A provider that throws on use (fail closed) was rejected because a framework upgrade that
+starts resolving the provider would then break production.
+
+`DataProtectionConformanceTests` boots the real `Program.cs` in Entra mode in its own process and
+asserts that no line from `Microsoft.AspNetCore.DataProtection` is logged. The C# backend ignores
+`LOG_LEVEL`, and `appsettings.json` caps `Microsoft.AspNetCore` at Warning, so where the key ring is
+built without a warning (Windows, DPAPI) the old noise would be filtered and the assertion would pass
+for nothing; the row therefore sets that one category to Trace. Mutation-checked: removing the call,
+or moving it ahead of the auth registration, makes it fail with the lines the key ring logs. It skips
+on the Python leg.
+
 ## Spikes #44 and #23
 
 See the comments left on those issues directly for this wave's position. Summary:

@@ -430,6 +430,17 @@ an apex custom domain that has HTTP-only subdomains, change it in
 back by deploying the previous image digest (`az containerapp update --image <repo>@sha256:<digest>`).
 The policy and the reason for each allowance are in `docs/dotnet_mapping.md`.
 
+### Data Protection keys
+
+The C# app does not persist ASP.NET Data Protection keys because it creates none: the framework's
+startup key ring is disabled (`app/backend-dotnet/src/Backend/Auth/EphemeralDataProtection.cs`), and
+nothing in the app protects a payload with Data Protection (JwtBearer is stateless; session tokens are
+an HMAC over `APP_SESSION_SECRET`). After a deploy the container's startup logs should no longer
+carry the `FileSystemXmlRepository` "may not be persisted outside of the container" warning or the
+`XmlKeyManager` "No XML encryptor configured" warning. If a feature that does use Data Protection is
+ever added (cookie authentication, antiforgery, `IDataProtector`), it needs keys persisted somewhere
+every replica can read; see `docs/dotnet_mapping.md` first.
+
 ### Teardown of just the dotnet app
 
 To remove the dotnet app alone (keep the Python app, Foundry account, Search service, and shared
