@@ -1,3 +1,5 @@
+using System.Text.Json;
+using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 
@@ -25,23 +27,23 @@ namespace Conformance.Tests;
 [Collection(Gpt15ForcedReasoningConformanceCollection.Name)]
 public sealed class SessionUpdateFallbackTests(Gpt15ForcedReasoningConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Rejected_reasoning_bootstrap_recovers_via_exactly_one_minimal_fallback_with_no_error_reaching_the_browser() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        bool noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(s_frameTimeout, ct);
         Assert.True(noneOpen, $"Expected no open upstream connections at test start, but " +
             $"{fixture.Realtime.OpenConnectionCount} are still open — a previous test leaked a connection.");
 
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
-        var bootstrap = await connection!.ReceivedFrames.WaitForAsync(f => f.Sequence == 0, FrameTimeout, ct);
+        RecordedFrame? bootstrap = await connection!.ReceivedFrames.WaitForAsync(f => f.Sequence == 0, s_frameTimeout, ct);
         Assert.True(bootstrap is not null, "Bootstrap session.update never arrived.");
         Assert.True(bootstrap!.Json.GetProperty("session").TryGetProperty("reasoning", out _),
             "Precondition failed: this fixture forces reasoning_model=true, so the bootstrap must " +
@@ -50,12 +52,12 @@ public sealed class SessionUpdateFallbackTests(Gpt15ForcedReasoningConformanceFi
         // The fake rejects it unconditionally (real GA behaviour for a 1.5-named deployment) --
         // rtmt.py should recover with exactly one fallback session.update, with no browser-side
         // interaction needed at all.
-        var fallback = await connection.ReceivedFrames.WaitForAsync(
-            f => f.Sequence > bootstrap.Sequence && f.Type == "session.update", FrameTimeout, ct);
+        RecordedFrame? fallback = await connection.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > bootstrap.Sequence && f.Type == "session.update", s_frameTimeout, ct);
         Assert.True(fallback is not null, "Expected a fallback session.update after the bootstrap's reasoning was rejected.");
 
-        var fallbackSession = fallback!.Json.GetProperty("session");
-        var fallbackKeys = fallbackSession.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray();
+        JsonElement fallbackSession = fallback!.Json.GetProperty("session");
+        string[] fallbackKeys = [.. fallbackSession.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal)];
         Assert.Equal(["instructions", "tool_choice", "tools", "type"], fallbackKeys);
         Assert.False(fallbackSession.TryGetProperty("reasoning", out _), "Fallback must not repeat the rejected `reasoning` field.");
         Assert.False(fallbackSession.TryGetProperty("audio", out _), "Fallback must be minimal (no audio/voice).");
@@ -65,18 +67,18 @@ public sealed class SessionUpdateFallbackTests(Gpt15ForcedReasoningConformanceFi
         // tool_choice and instructions must be the exact same content as the bootstrap's own
         // (both come from the same process-wide RTMiddleTier.tools/system_message), not merely
         // present-and-non-empty.
-        var bootstrapSession = bootstrap.Json.GetProperty("session");
-        var bootstrapToolNames = bootstrapSession.GetProperty("tools").EnumerateArray()
-            .Select(t => t.GetProperty("name").GetString()).OrderBy(n => n, StringComparer.Ordinal).ToArray();
-        var fallbackToolNames = fallbackSession.GetProperty("tools").EnumerateArray()
-            .Select(t => t.GetProperty("name").GetString()).OrderBy(n => n, StringComparer.Ordinal).ToArray();
+        JsonElement bootstrapSession = bootstrap.Json.GetProperty("session");
+        string?[] bootstrapToolNames = [.. bootstrapSession.GetProperty("tools").EnumerateArray()
+            .Select(t => t.GetProperty("name").GetString()).OrderBy(n => n, StringComparer.Ordinal)];
+        string?[] fallbackToolNames = [.. fallbackSession.GetProperty("tools").EnumerateArray()
+            .Select(t => t.GetProperty("name").GetString()).OrderBy(n => n, StringComparer.Ordinal)];
         Assert.NotEmpty(bootstrapToolNames);
         Assert.Equal(bootstrapToolNames, fallbackToolNames);
 
         Assert.Equal("auto", fallbackSession.GetProperty("tool_choice").GetString());
         Assert.Equal(bootstrapSession.GetProperty("tool_choice").GetString(), fallbackSession.GetProperty("tool_choice").GetString());
 
-        var bootstrapInstructions = bootstrapSession.GetProperty("instructions").GetString();
+        string? bootstrapInstructions = bootstrapSession.GetProperty("instructions").GetString();
         Assert.False(string.IsNullOrWhiteSpace(bootstrapInstructions), "Precondition failed: bootstrap instructions must be non-empty.");
         Assert.Equal(bootstrapInstructions, fallbackSession.GetProperty("instructions").GetString());
 
@@ -84,8 +86,8 @@ public sealed class SessionUpdateFallbackTests(Gpt15ForcedReasoningConformanceFi
         // every later session.update (including the browser's own) must also omit it -- proving
         // this isn't a one-off fix-up of just the bootstrap's own payload.
         await browser.SendStartSessionAsync(cancellationToken: ct);
-        var browserUpdate = await connection.ReceivedFrames.WaitForAsync(
-            f => f.Sequence > fallback.Sequence && f.Type == "session.update", FrameTimeout, ct);
+        RecordedFrame? browserUpdate = await connection.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > fallback.Sequence && f.Type == "session.update", s_frameTimeout, ct);
         Assert.True(browserUpdate is not null, "The browser's session.update was never forwarded upstream.");
         Assert.False(browserUpdate!.Json.GetProperty("session").TryGetProperty("reasoning", out _),
             "Reasoning must stay switched off for the rest of the process once rejected once.");
@@ -99,8 +101,8 @@ public sealed class SessionUpdateFallbackTests(Gpt15ForcedReasoningConformanceFi
         // that a bug forwarding either rejection to the browser would provably have already
         // arrived in ReceivedFrames on the SAME socket, strictly before this sentinel, by the time
         // we snapshot it below.
-        var roundTripToken = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        RecordedFrame? roundTripToken = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token", s_frameTimeout, ct);
         Assert.True(roundTripToken is not null, "extension.round_trip_token never reached the browser (greeting never completed).");
 
         // Neither the bootstrap's rejection nor the fallback recovery ever surfaces to the
@@ -109,7 +111,7 @@ public sealed class SessionUpdateFallbackTests(Gpt15ForcedReasoningConformanceFi
 
         // No loop: exactly bootstrap + one fallback + the browser's own update -- never a second,
         // repeated fallback for the same rejection, and never an error frame anywhere in the log.
-        var updateCount = connection.ReceivedFrames.Snapshot().Count(f => f.Type == "session.update");
+        int updateCount = connection.ReceivedFrames.Snapshot().Count(f => f.Type == "session.update");
         Assert.Equal(3, updateCount);
         Assert.DoesNotContain(connection.ReceivedFrames.Snapshot(), f => f.Type == "error" && f.Sequence > browserUpdate.Sequence);
     },
@@ -130,21 +132,21 @@ public sealed class SessionUpdateFallbackTests(Gpt15ForcedReasoningConformanceFi
 [Collection(ConformanceCollection.Name)]
 public sealed class UnrelatedErrorsDoNotTriggerFallbackTests(ConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Unrelated_response_cancel_error_never_triggers_a_session_update_fallback() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        bool noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(s_frameTimeout, ct);
         Assert.True(noneOpen, $"Expected no open upstream connections at test start, but " +
             $"{fixture.Realtime.OpenConnectionCount} are still open — a previous test leaked a connection.");
 
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
         await browser.SendStartSessionAsync(cancellationToken: ct);
 
@@ -152,21 +154,21 @@ public sealed class UnrelatedErrorsDoNotTriggerFallbackTests(ConformanceFixture 
         // browser's session.updates are acknowledged by then, so the guard's in-flight queue is
         // provably empty before the unrelated error below is sent (the actual condition that
         // makes an unrelated error safe to ignore, not merely an unrelated `param`).
-        var roundTripToken = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        RecordedFrame? roundTripToken = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token", s_frameTimeout, ct);
         Assert.True(roundTripToken is not null, "extension.round_trip_token never reached the browser (greeting never completed).");
 
-        var updateCountBefore = connection!.ReceivedFrames.Snapshot().Count(f => f.Type == "session.update");
+        int updateCountBefore = connection!.ReceivedFrames.Snapshot().Count(f => f.Type == "session.update");
 
         // Nothing is active on this connection right now (the greeting's response already
         // completed) -- response.cancel here is rejected as an unrelated, ordinary error.
         await browser.SendResponseCancelAsync(cancellationToken: ct);
-        var error = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "error", FrameTimeout, ct);
+        RecordedFrame? error = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "error", s_frameTimeout, ct);
         Assert.True(error is not null, "Expected the response.cancel-with-nothing-active error to reach the browser.");
 
         // Proves it was relayed straight through, not recovered/consumed as a session.update
         // rejection: no new session.update was ever sent upstream because of it.
-        var updateCountAfter = connection.ReceivedFrames.Snapshot().Count(f => f.Type == "session.update");
+        int updateCountAfter = connection.ReceivedFrames.Snapshot().Count(f => f.Type == "session.update");
         Assert.Equal(updateCountBefore, updateCountAfter);
     },
     // rtmt.py's "error" case logs this unrelated OpenAI Realtime API error at ERROR level before
@@ -207,14 +209,14 @@ public sealed class UnrelatedErrorsDoNotTriggerFallbackTests(ConformanceFixture 
 [Collection(Gpt15ConformanceCollection.Name)]
 public sealed class SecondSessionUpdateRejectionLoopGuardTests(Gpt15ConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Rejecting_the_fallback_itself_sends_no_second_fallback_and_the_error_reaches_the_browser() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        bool noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(s_frameTimeout, ct);
         Assert.True(noneOpen, $"Expected no open upstream connections at test start, but " +
             $"{fixture.Realtime.OpenConnectionCount} are still open — a previous test leaked a connection.");
 
@@ -223,16 +225,16 @@ public sealed class SecondSessionUpdateRejectionLoopGuardTests(Gpt15ConformanceF
         // fallback (which must NOT trigger a second one).
         fixture.Realtime.RejectNextSessionUpdates(2, code: "invalid_value", echoEventId: true);
 
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
-        var bootstrap = await connection!.ReceivedFrames.WaitForAsync(f => f.Sequence == 0, FrameTimeout, ct);
+        RecordedFrame? bootstrap = await connection!.ReceivedFrames.WaitForAsync(f => f.Sequence == 0, s_frameTimeout, ct);
         Assert.True(bootstrap is not null, "Bootstrap session.update never arrived.");
 
-        var fallback = await connection.ReceivedFrames.WaitForAsync(
-            f => f.Sequence > bootstrap.Sequence && f.Type == "session.update", FrameTimeout, ct);
+        RecordedFrame? fallback = await connection.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > bootstrap.Sequence && f.Type == "session.update", s_frameTimeout, ct);
         Assert.True(fallback is not null, "Expected exactly one fallback after the bootstrap's scripted rejection.");
 
         // PR #42 review item 7: don't assert "no error reached the browser yet" here -- the
@@ -244,7 +246,7 @@ public sealed class SecondSessionUpdateRejectionLoopGuardTests(Gpt15ConformanceF
         // The fallback itself was ALSO scripted-rejected. If the guard looped (M1: "rejected
         // fallback triggers another fallback"), it would send a THIRD session.update instead of
         // ever letting this second rejection reach the browser -- assert the opposite of that.
-        var error = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "error", FrameTimeout, ct);
+        RecordedFrame? error = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "error", s_frameTimeout, ct);
         Assert.True(error is not null, "Expected the fallback's own rejection to reach the browser once the guard refuses to loop.");
         Assert.Equal("invalid_value", error!.Json.GetProperty("error").GetProperty("code").GetString());
 
@@ -252,7 +254,7 @@ public sealed class SecondSessionUpdateRejectionLoopGuardTests(Gpt15ConformanceF
         // back. This exercises the guard's event_id-echoing branch of the fake; it does NOT by
         // itself prove event_id-keyed correlation over simpler order-based matching, since only
         // one session.update is ever outstanding at a time here (see the class docstring above).
-        var fallbackEventId = fallback!.Json.GetProperty("event_id").GetString();
+        string? fallbackEventId = fallback!.Json.GetProperty("event_id").GetString();
         Assert.Equal(fallbackEventId, error.Json.GetProperty("error").GetProperty("event_id").GetString());
 
         // Sentinel round trip: our scripted-rejection budget (2) is now exhausted, so the
@@ -260,18 +262,18 @@ public sealed class SecondSessionUpdateRejectionLoopGuardTests(Gpt15ConformanceF
         // normally and the greeting must complete -- proving forward progress, and that nothing
         // async is still queued to send a belated extra fallback.
         await browser.SendStartSessionAsync(cancellationToken: ct);
-        var roundTripToken = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        RecordedFrame? roundTripToken = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token", s_frameTimeout, ct);
         Assert.True(roundTripToken is not null, "extension.round_trip_token never reached the browser -- the greeting never completed after the scripted-rejection budget was exhausted.");
 
         // No loop: exactly bootstrap + one fallback + the browser's own update -- never a third,
         // looped session.update for the fallback's own rejection.
-        var updateCount = connection.ReceivedFrames.Snapshot().Count(f => f.Type == "session.update");
+        int updateCount = connection.ReceivedFrames.Snapshot().Count(f => f.Type == "session.update");
         Assert.Equal(3, updateCount);
 
         // Exactly one `error` ever reached the browser (the fallback's own rejection) -- the
         // bootstrap's original rejection stayed fully invisible to it.
-        var browserErrorCount = browser.ReceivedFrames.Snapshot().Count(f => f.Type == "error");
+        int browserErrorCount = browser.ReceivedFrames.Snapshot().Count(f => f.Type == "error");
         Assert.Equal(1, browserErrorCount);
     },
     // Three deterministic backend ERROR-level log lines are this scenario's own subject matter:

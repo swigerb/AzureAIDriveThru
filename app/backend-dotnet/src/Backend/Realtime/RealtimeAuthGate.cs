@@ -71,7 +71,7 @@ internal static class RealtimeAuthGate
         // `security.require_session_token` still governs this unchanged. ──
         if (entraMode || security.RequireSessionToken)
         {
-            if (!tokenService.TryValidate(token ?? string.Empty, out var tokenOid))
+            if (!tokenService.TryValidate(token ?? string.Empty, out string? tokenOid))
             {
                 logger.RejectedInvalidSessionToken();
                 return UnauthorizedWithBearerChallenge("Invalid or expired token");

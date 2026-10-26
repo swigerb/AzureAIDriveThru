@@ -1,6 +1,4 @@
-using System.Linq;
 using System.Text.Json;
-using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 
@@ -34,9 +32,12 @@ public sealed class ComboAbsorptionTests(HappyHourJustBeforeOpenFixture fixture)
     {
         var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
         var data = new TheoryData<int>();
-        for (var i = 0; i < golden.ComboAbsorptionScenarios.Count; i++)
+        for (int i = 0; i < golden.ComboAbsorptionScenarios.Count; i++)
         {
-            if (!golden.ComboAbsorptionScenarios[i].HappyHour) data.Add(i);
+            if (!golden.ComboAbsorptionScenarios[i].HappyHour)
+            {
+                data.Add(i);
+            }
         }
         return data;
     }
@@ -46,19 +47,19 @@ public sealed class ComboAbsorptionTests(HappyHourJustBeforeOpenFixture fixture)
     [MemberData(nameof(AbsorptionScenarioIndexes))]
     public Task Combo_absorption_scenarios_match_the_golden_line_item_count_and_total(int scenarioIndex) => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var repoRoot = RepoPaths.FindRepoRoot();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string repoRoot = RepoPaths.FindRepoRoot();
         var golden = GoldenOrderPricingData.Load(repoRoot);
-        var scenario = golden.ComboAbsorptionScenarios[scenarioIndex];
+        ComboAbsorptionScenario scenario = golden.ComboAbsorptionScenarios[scenarioIndex];
 
-        var mode = OrderScenarioHelpers.MenuModeForItem(repoRoot, scenario.Steps[0].Item);
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
-        await using var _ = browser;
+        string mode = OrderScenarioHelpers.MenuModeForItem(repoRoot, scenario.Steps[0].Item);
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
+        await using RealtimeBrowserClient _ = browser;
 
-        var steps = scenario.Steps.Select(s => (s.Action, s.Item, s.Size, s.Quantity, s.Price));
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(connection, browser, steps, roundTripIndex, ct);
+        IEnumerable<(string Action, string Item, string Size, int Quantity, decimal Price)> steps = scenario.Steps.Select(s => (s.Action, s.Item, s.Size, s.Quantity, s.Price));
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(connection, browser, steps, roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
         Assert.Equal(scenario.ExpectedLineItemCount, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(scenario.ExpectedTotal, order.GetProperty("total").GetDecimal());
 
@@ -85,7 +86,7 @@ public sealed class ComboAbsorptionTests(HappyHourJustBeforeOpenFixture fixture)
         // sent two units of that side in one call).
         if (scenario.ExpectedStandaloneQuantityAfterConversion is int expectedStandaloneQty)
         {
-            var standaloneItem = order.GetProperty("items").EnumerateArray()
+            JsonElement standaloneItem = order.GetProperty("items").EnumerateArray()
                 .Single(i => !i.GetProperty("item").GetString()!.Contains("Combo"));
             Assert.Equal(expectedStandaloneQty, standaloneItem.GetProperty("quantity").GetInt32());
         }
@@ -95,11 +96,11 @@ public sealed class ComboAbsorptionTests(HappyHourJustBeforeOpenFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Combo_conversion_carries_parenthesized_mods_from_the_standalone_item() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [
                 ("add", "SONIC® Cheeseburger (No Onions)", "standard", 1, 5.29m),
@@ -107,8 +108,8 @@ public sealed class ComboAbsorptionTests(HappyHourJustBeforeOpenFixture fixture)
             ],
             roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
-        var items = order.GetProperty("items");
+        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        JsonElement items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Contains("(No Onions)", items[0].GetProperty("item").GetString());
         OrderScenarioHelpers.AssertMoneyEqual(9.19m, order.GetProperty("total").GetDecimal());
@@ -118,14 +119,14 @@ public sealed class ComboAbsorptionTests(HappyHourJustBeforeOpenFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Reset_order_clears_the_previous_orders_absorbed_component_display() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
         // Establish stale absorbed_side_display/absorbed_drink_display state (order_state.py:98-99,
         // 179-191) with a combo whose side (Tots) and drink (Cherry Limeade) both get absorbed and
         // recorded onto the *session*, not just the order line.
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [
                 ("add", "SONIC® Cheeseburger Combo", "standard", 1, 9.19m),
@@ -142,8 +143,8 @@ public sealed class ComboAbsorptionTests(HappyHourJustBeforeOpenFixture fixture)
             ],
             roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
-        var comboDisplay = order.GetProperty("items").EnumerateArray()
+        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        string? comboDisplay = order.GetProperty("items").EnumerateArray()
             .Single(i => i.GetProperty("item").GetString()!.Contains("Combo"))
             .GetProperty("display").GetString();
 
@@ -156,7 +157,7 @@ public sealed class ComboAbsorptionTests(HappyHourJustBeforeOpenFixture fixture)
     {
         var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
         var data = new TheoryData<int>();
-        for (var i = 0; i < golden.Combos.Items.Count; i++)
+        for (int i = 0; i < golden.Combos.Items.Count; i++)
         {
             data.Add(i);
         }
@@ -168,22 +169,22 @@ public sealed class ComboAbsorptionTests(HappyHourJustBeforeOpenFixture fixture)
     [MemberData(nameof(ComboItemIndexes))]
     public Task All_ten_real_combo_menu_items_price_correctly_to_the_cent(int comboIndex) => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var repoRoot = RepoPaths.FindRepoRoot();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string repoRoot = RepoPaths.FindRepoRoot();
         var golden = GoldenOrderPricingData.Load(repoRoot);
         Assert.Equal(10, golden.Combos.ExpectedCount);
-        var combo = golden.Combos.Items[comboIndex];
+        ComboMenuItem combo = golden.Combos.Items[comboIndex];
 
-        var mode = OrderScenarioHelpers.MenuModeForItem(repoRoot, combo.Name);
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
-        await using var _ = browser;
+        string mode = OrderScenarioHelpers.MenuModeForItem(repoRoot, combo.Name);
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", combo.Name, combo.Size, 1, combo.Price)],
             roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
         OrderScenarioHelpers.AssertMoneyEqual(combo.Price, order.GetProperty("total").GetDecimal());
         OrderScenarioHelpers.AssertMoneyEqual(combo.ExpectedTax, order.GetProperty("tax").GetDecimal());
         OrderScenarioHelpers.AssertMoneyEqual(combo.ExpectedFinalTotal, order.GetProperty("finalTotal").GetDecimal());
@@ -208,17 +209,17 @@ public sealed class ComboAbsorptionHappyHourTests(HappyHourAtOpenFixture fixture
     [Trait("Dotnet", "ready")]
     public Task Combo_plus_extra_standalone_drink_is_discounted_during_happy_hour() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
-        var scenario = golden.ComboAbsorptionScenarios.Single(s => s.HappyHour);
+        ComboAbsorptionScenario scenario = golden.ComboAbsorptionScenarios.Single(s => s.HappyHour);
 
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var steps = scenario.Steps.Select(s => (s.Action, s.Item, s.Size, s.Quantity, s.Price));
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(connection, browser, steps, roundTripIndex, ct);
+        IEnumerable<(string Action, string Item, string Size, int Quantity, decimal Price)> steps = scenario.Steps.Select(s => (s.Action, s.Item, s.Size, s.Quantity, s.Price));
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(connection, browser, steps, roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
         Assert.Equal(scenario.ExpectedLineItemCount, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(scenario.ExpectedTotal, order.GetProperty("total").GetDecimal());
     });
@@ -227,7 +228,7 @@ public sealed class ComboAbsorptionHappyHourTests(HappyHourAtOpenFixture fixture
     {
         var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
         var data = new TheoryData<int>();
-        for (var i = 0; i < golden.Combos.Items.Count; i++)
+        for (int i = 0; i < golden.Combos.Items.Count; i++)
         {
             data.Add(i);
         }
@@ -239,22 +240,22 @@ public sealed class ComboAbsorptionHappyHourTests(HappyHourAtOpenFixture fixture
     [MemberData(nameof(ComboItemIndexes))]
     public Task All_ten_real_combo_menu_items_price_correctly_to_the_cent_during_happy_hour(int comboIndex) => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var repoRoot = RepoPaths.FindRepoRoot();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string repoRoot = RepoPaths.FindRepoRoot();
         var golden = GoldenOrderPricingData.Load(repoRoot);
         Assert.Equal(10, golden.Combos.ExpectedCount);
-        var combo = golden.Combos.Items[comboIndex];
+        ComboMenuItem combo = golden.Combos.Items[comboIndex];
 
-        var mode = OrderScenarioHelpers.MenuModeForItem(repoRoot, combo.Name);
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
-        await using var _ = browser;
+        string mode = OrderScenarioHelpers.MenuModeForItem(repoRoot, combo.Name);
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", combo.Name, combo.Size, 1, combo.Price)],
             roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
         // A combo's bundle price is never itself classified as a "drink" line, so happy hour
         // being active must make no difference at all -- identical to the off-happy-hour Theory.
         OrderScenarioHelpers.AssertMoneyEqual(combo.Price, order.GetProperty("total").GetDecimal());

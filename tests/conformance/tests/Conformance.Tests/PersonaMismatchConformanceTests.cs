@@ -1,3 +1,4 @@
+using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 
@@ -26,50 +27,50 @@ namespace Conformance.Tests;
 [Collection(TwoPersonaConformanceCollection.Name)]
 public sealed class PersonaMismatchConformanceTests(TwoPersonaConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task A_resume_id_issued_under_one_persona_is_rejected_as_persona_mismatch_under_another() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
         // First connection: bound to test-alpha explicitly.
-        var firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        var first = await RealtimeBrowserClient.ConnectAsync(
+        Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        RealtimeBrowserClient first = await RealtimeBrowserClient.ConnectAsync(
             fixture.Backend!.BaseUri, persona: TwoPersonaConformanceFixture.PersonaA, cancellationToken: ct);
-        Assert.True(await firstConnectionTask is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Assert.True(await firstConnectionTask is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await first.SendStartSessionAsync(cancellationToken: ct);
-        var firstMetadata = await first.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        RecordedFrame? firstMetadata = await first.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata", s_frameTimeout, ct);
         Assert.True(firstMetadata is not null);
         Assert.Equal(TwoPersonaConformanceFixture.PersonaA, firstMetadata!.Json.GetProperty("persona").GetString());
-        var resumeId = firstMetadata.Json.GetProperty("resumeId").GetString();
+        string? resumeId = firstMetadata.Json.GetProperty("resumeId").GetString();
         Assert.False(string.IsNullOrEmpty(resumeId));
 
         // Drop without extension.end_session -- a genuine, resumable detach.
         await first.CloseAsync(cancellationToken: ct);
-        await first.WaitForCloseAsync(FrameTimeout, ct);
+        await first.WaitForCloseAsync(s_frameTimeout, ct);
         await first.DisposeAsync();
 
         // Second connection: bound to test-beta, presenting test-alpha's resume id as its first
         // frame. The id is valid (right length, actually issued, session still live) but for a
         // DIFFERENT persona than this socket's own -- must be persona_mismatch, not "unknown".
-        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var second = await RealtimeBrowserClient.ConnectAsync(
+        Task<FakeRealtimeConnection?> secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient second = await RealtimeBrowserClient.ConnectAsync(
             fixture.Backend!.BaseUri, persona: TwoPersonaConformanceFixture.PersonaB, cancellationToken: ct);
-        Assert.True(await secondConnectionTask is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Assert.True(await secondConnectionTask is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await second.SendExtensionResumeAsync(resumeId!, ct);
 
-        var rejected = await second.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.resume_rejected", FrameTimeout, ct);
+        RecordedFrame? rejected = await second.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.resume_rejected", s_frameTimeout, ct);
         Assert.True(rejected is not null, "Expected extension.resume_rejected for a persona-mismatched resume id.");
         Assert.Equal("persona_mismatch", rejected!.Json.GetProperty("reason").GetString());
 
         // The socket continues normally under its OWN persona (test-beta) -- a fresh, re-announced
         // session, never the test-alpha one it tried (and failed) to resume.
-        var freshMetadata = await second.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_metadata" && f.Sequence > rejected.Sequence, FrameTimeout, ct);
+        RecordedFrame? freshMetadata = await second.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata" && f.Sequence > rejected.Sequence, s_frameTimeout, ct);
         Assert.True(freshMetadata is not null, "Expected a fresh re-announce after the persona_mismatch rejection.");
         Assert.Equal(TwoPersonaConformanceFixture.PersonaB, freshMetadata!.Json.GetProperty("persona").GetString());
         Assert.NotEqual(resumeId, freshMetadata.Json.GetProperty("resumeId").GetString());

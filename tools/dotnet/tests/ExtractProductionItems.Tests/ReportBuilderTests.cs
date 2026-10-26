@@ -27,11 +27,11 @@ public sealed class ReportBuilderTests
             Item("p-2", "Alpha Thing", "Alpha"),
         };
 
-        var report = ProductionItemsExtractor.BuildReport(production, uiItems: []);
-        var reportText = string.Join("\n", report);
+        IReadOnlyList<string> report = ProductionItemsExtractor.BuildReport(production, uiItems: []);
+        string reportText = string.Join("\n", report);
 
-        var zetaIndex = reportText.IndexOf("  Zeta  (1 items)", StringComparison.Ordinal);
-        var alphaIndex = reportText.IndexOf("  Alpha  (1 items)", StringComparison.Ordinal);
+        int zetaIndex = reportText.IndexOf("  Zeta  (1 items)", StringComparison.Ordinal);
+        int alphaIndex = reportText.IndexOf("  Alpha  (1 items)", StringComparison.Ordinal);
         Assert.True(zetaIndex >= 0 && alphaIndex >= 0);
         Assert.True(zetaIndex < alphaIndex, "Zeta (first-occurring, tied count) must be listed before Alpha.");
     }
@@ -46,11 +46,11 @@ public sealed class ReportBuilderTests
             Item("p-3", "Three", "Common"),
         };
 
-        var report = ProductionItemsExtractor.BuildReport(production, uiItems: []);
-        var reportText = string.Join("\n", report);
+        IReadOnlyList<string> report = ProductionItemsExtractor.BuildReport(production, uiItems: []);
+        string reportText = string.Join("\n", report);
 
-        var commonIndex = reportText.IndexOf("  Common  (2 items)", StringComparison.Ordinal);
-        var rareIndex = reportText.IndexOf("  Rare  (1 items)", StringComparison.Ordinal);
+        int commonIndex = reportText.IndexOf("  Common  (2 items)", StringComparison.Ordinal);
+        int rareIndex = reportText.IndexOf("  Rare  (1 items)", StringComparison.Ordinal);
         Assert.True(commonIndex >= 0 && rareIndex >= 0);
         Assert.True(commonIndex < rareIndex, "The 2-item category must be listed before the 1-item category.");
     }
@@ -71,7 +71,7 @@ public sealed class ReportBuilderTests
             Item("p-3", "Banana", "Drinks"),
         };
 
-        var report = ProductionItemsExtractor.BuildReport(production, uiItems: []);
+        IReadOnlyList<string> report = ProductionItemsExtractor.BuildReport(production, uiItems: []);
 
         var bulletLines = report.Where(l => l.StartsWith("  • ", StringComparison.Ordinal)).ToList();
         Assert.Equal(["  • Banana", "  • Cherry", "  • apple"], bulletLines);
@@ -94,7 +94,7 @@ public sealed class ReportBuilderTests
             Item("p-2", "\uFF01 Combo", "Drinks"),
         };
 
-        var report = ProductionItemsExtractor.BuildReport(production, uiItems: []);
+        IReadOnlyList<string> report = ProductionItemsExtractor.BuildReport(production, uiItems: []);
 
         var bulletLines = report.Where(l => l.StartsWith("  • ", StringComparison.Ordinal)).ToList();
         Assert.Equal(["  • \uFF01 Combo", "  • \U0001F600 Combo"], bulletLines);
@@ -109,7 +109,7 @@ public sealed class ReportBuilderTests
                 Sizes: [new SizeVariant("Mini", 1.5), new SizeVariant("Small", 2.0)]),
         };
 
-        var report = ProductionItemsExtractor.BuildReport(production, uiItems: []);
+        IReadOnlyList<string> report = ProductionItemsExtractor.BuildReport(production, uiItems: []);
 
         Assert.Contains("    Sizes: Mini=$1.50, Small=$2.00", report);
     }
@@ -120,7 +120,7 @@ public sealed class ReportBuilderTests
         var production = new List<ProductionItem> { Item("p-1", "Cherry Limeade", "Drinks") };
         var uiItems = new List<UiItem> { new("Cherry Limeade", "Drinks") };
 
-        var report = ProductionItemsExtractor.BuildReport(production, uiItems);
+        IReadOnlyList<string> report = ProductionItemsExtractor.BuildReport(production, uiItems);
 
         Assert.Contains("     (none — UI is clean)", report);
     }
@@ -131,7 +131,7 @@ public sealed class ReportBuilderTests
         var production = new List<ProductionItem> { Item("p-1", "Cherry Limeade", "Drinks") };
         var uiItems = new List<UiItem> { new("Cherry Limeade", "Drinks") };
 
-        var report = ProductionItemsExtractor.BuildReport(production, uiItems);
+        IReadOnlyList<string> report = ProductionItemsExtractor.BuildReport(production, uiItems);
 
         Assert.Contains("     (none)", report);
     }
@@ -146,10 +146,10 @@ public sealed class ReportBuilderTests
             new("Alpha Combo", "Combos"),
         };
 
-        var report = ProductionItemsExtractor.BuildReport(production, uiItems);
+        IReadOnlyList<string> report = ProductionItemsExtractor.BuildReport(production, uiItems);
 
-        var zetaIndex = report.ToList().IndexOf("     • zeta combo");
-        var alphaIndex = report.ToList().IndexOf("     • alpha combo");
+        int zetaIndex = report.ToList().IndexOf("     • zeta combo");
+        int alphaIndex = report.ToList().IndexOf("     • alpha combo");
         Assert.True(alphaIndex >= 0 && zetaIndex >= 0);
         Assert.True(alphaIndex < zetaIndex);
     }
@@ -160,10 +160,10 @@ public sealed class ReportBuilderTests
         // print(f"\nTotal production items: {n}") must contribute a BLANK line followed by the
         // text line, not one line containing a literal "\n" -- confirms the Append helper's
         // s.Split('\n') model against a case callers can assert on precisely.
-        var report = ProductionItemsExtractor.BuildReport(production: [], uiItems: []);
+        IReadOnlyList<string> report = ProductionItemsExtractor.BuildReport(production: [], uiItems: []);
         var lines = report.ToList();
 
-        var totalIndex = lines.IndexOf("Total production items: 0");
+        int totalIndex = lines.IndexOf("Total production items: 0");
         Assert.True(totalIndex > 0);
         Assert.Equal("", lines[totalIndex - 1]);
     }

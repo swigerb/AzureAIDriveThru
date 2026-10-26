@@ -17,10 +17,10 @@ internal static class PersonaHappyHourBanner
 {
     public static string Read(string personasDir, string personaId)
     {
-        var personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
-        using var stream = File.OpenRead(personaJsonPath);
+        string personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
+        using FileStream stream = File.OpenRead(personaJsonPath);
         using var document = JsonDocument.Parse(stream);
-        var banner = document.RootElement.GetProperty("pricing").GetProperty("happyHour").GetProperty("banner").GetString();
+        string? banner = document.RootElement.GetProperty("pricing").GetProperty("happyHour").GetProperty("banner").GetString();
         if (string.IsNullOrEmpty(banner))
         {
             throw new InvalidOperationException(

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.WebSockets;
 using System.Text.Json;
+using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 
@@ -47,9 +48,9 @@ public static class ModelSelectionConformanceTestHelpers
     {
         using var socket = new ClientWebSocket();
         socket.Options.CollectHttpResponseDetails = true;
-        var wsUri = await RealtimeUris.WithDefaultCredentialsAsync(backendBaseUri, query, ct);
+        Uri wsUri = await RealtimeUris.WithDefaultCredentialsAsync(backendBaseUri, query, ct);
 
-        var ex = await Assert.ThrowsAsync<WebSocketException>(() => socket.ConnectAsync(wsUri, ct));
+        WebSocketException ex = await Assert.ThrowsAsync<WebSocketException>(() => socket.ConnectAsync(wsUri, ct));
         Assert.Equal(expectedStatus, socket.HttpStatusCode);
         Assert.NotEqual(WebSocketState.Open, socket.State);
         Assert.NotNull(ex);
@@ -71,8 +72,8 @@ public static class ModelSelectionConformanceTestHelpers
     public static async Task<string> RealtimeConnectBodyAsync(
         Uri backendBaseUri, string query, HttpStatusCode expectedStatus, CancellationToken ct)
     {
-        using var http = ConformanceHttpClient.Create();
-        var fullQuery = await RealtimeUris.BuildQueryAsync(backendBaseUri, query, ct);
+        using HttpClient http = ConformanceHttpClient.Create();
+        string fullQuery = await RealtimeUris.BuildQueryAsync(backendBaseUri, query, ct);
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(backendBaseUri, $"/realtime?{fullQuery}"));
         request.Headers.TryAddWithoutValidation("Connection", "Upgrade");
         request.Headers.TryAddWithoutValidation("Upgrade", "websocket");
@@ -80,8 +81,8 @@ public static class ModelSelectionConformanceTestHelpers
         request.Headers.TryAddWithoutValidation(
             "Sec-WebSocket-Key", Convert.ToBase64String(Guid.NewGuid().ToByteArray()));
 
-        using var response = await http.SendAsync(request, ct);
-        var body = await response.Content.ReadAsStringAsync(ct);
+        using HttpResponseMessage response = await http.SendAsync(request, ct);
+        string body = await response.Content.ReadAsStringAsync(ct);
         Assert.Equal(expectedStatus, response.StatusCode);
         return body;
     }
@@ -104,7 +105,7 @@ public sealed class ModelSelectionRejectionConformanceTests(ModelSelectionConfor
     [Fact]
     public Task Unknown_model_id_is_rejected_with_404() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         await ModelSelectionConformanceTestHelpers.AssertRealtimeConnectIs404Async(
             fixture.Backend!.BaseUri, "model=totally-not-a-catalogued-model", ct);
     });
@@ -112,7 +113,7 @@ public sealed class ModelSelectionRejectionConformanceTests(ModelSelectionConfor
     [Fact]
     public Task Model_not_in_this_personas_own_allowed_list_is_rejected_with_404() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         // gpt-realtime-2.1 IS in the real catalog for the realtime pipeline, but test-gamma's own
         // `models.realtime.allowed` is `["gpt-realtime-2.1-mini"]` only -- disallowed, not unknown.
         await ModelSelectionConformanceTestHelpers.AssertRealtimeConnectIs404Async(
@@ -123,7 +124,7 @@ public sealed class ModelSelectionRejectionConformanceTests(ModelSelectionConfor
     [Fact]
     public Task Catalogued_and_allowed_but_undeployed_model_is_rejected_with_404() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         // gpt-realtime-2.1-mini is catalogued for realtime AND in test-alpha's own allowed list,
         // but this fixture sets no AZURE_AI_MODEL_DEPLOYMENTS entry for it, and it is NOT
         // test-alpha's own pipeline default (so the AZURE_OPENAI_REALTIME_DEPLOYMENT back-compat
@@ -136,7 +137,7 @@ public sealed class ModelSelectionRejectionConformanceTests(ModelSelectionConfor
     [Fact]
     public Task Model_catalogued_for_a_different_pipeline_is_rejected_with_404() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         // test-alpha (this fixture's default persona) declares only `models.realtime`; gpt-5-mini
         // is catalogued for `cascade`. On Python, `dispatch_processor` picks CascadeProcessor, then
         // `resolve_cascade_model` raises because test-alpha has no `models.cascade` (gpt-5-mini is
@@ -151,7 +152,7 @@ public sealed class ModelSelectionRejectionConformanceTests(ModelSelectionConfor
         // wrong-pipeline 404 shape.
         await ModelSelectionConformanceTestHelpers.AssertRealtimeConnectIs404Async(
             fixture.Backend!.BaseUri, $"persona={ModelSelectionConformanceFixture.PersonaAlpha}&model=gpt-5-mini", ct);
-        var body = await ModelSelectionConformanceTestHelpers.RealtimeConnectBodyAsync(
+        string body = await ModelSelectionConformanceTestHelpers.RealtimeConnectBodyAsync(
             fixture.Backend!.BaseUri,
             $"persona={ModelSelectionConformanceFixture.PersonaAlpha}&model=gpt-5-mini",
             HttpStatusCode.NotFound, ct);
@@ -161,8 +162,8 @@ public sealed class ModelSelectionRejectionConformanceTests(ModelSelectionConfor
     [Fact]
     public Task Unknown_persona_404_body_is_exactly_the_python_shape() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var body = await ModelSelectionConformanceTestHelpers.RealtimeConnectBodyAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string body = await ModelSelectionConformanceTestHelpers.RealtimeConnectBodyAsync(
             fixture.Backend!.BaseUri, "persona=totally-not-a-persona", HttpStatusCode.NotFound, ct);
         // rtmt.py's `_websocket_handler`: `web.Response(status=404, text=f"Unknown or disabled
         // persona: '{persona_id}'")` -- plain text, single-quoted id, no trailing punctuation.
@@ -172,8 +173,8 @@ public sealed class ModelSelectionRejectionConformanceTests(ModelSelectionConfor
     [Fact]
     public Task Unknown_model_404_body_is_exactly_the_python_shape() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var body = await ModelSelectionConformanceTestHelpers.RealtimeConnectBodyAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string body = await ModelSelectionConformanceTestHelpers.RealtimeConnectBodyAsync(
             fixture.Backend!.BaseUri, "model=totally-not-a-catalogued-model", HttpStatusCode.NotFound, ct);
         // rtmt.py's `dispatch_processor`/`resolve_realtime_model` except-clauses both return the
         // identical fixed body regardless of the underlying reason (Rick's PR #122 review item
@@ -209,25 +210,25 @@ public sealed class ModelSelectionRejectionConformanceTests(ModelSelectionConfor
 [Collection(ModelDeploymentMapConformanceCollection.Name)]
 public sealed class ModelSelectionConformanceTests(ModelDeploymentMapConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = ModelSelectionConformanceTestHelpers.FrameTimeout;
+    private static readonly TimeSpan s_frameTimeout = ModelSelectionConformanceTestHelpers.FrameTimeout;
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Api_persona_detail_lists_only_the_selectable_models_shaped_for_the_picker() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        using var http = ConformanceHttpClient.Create();
-        using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/api/personas/sonic"), ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        using HttpClient http = ConformanceHttpClient.Create();
+        using HttpResponseMessage response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/api/personas/sonic"), ct);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         using var document = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(ct));
-        var realtime = document.RootElement.GetProperty("models").GetProperty("realtime");
+        JsonElement realtime = document.RootElement.GetProperty("models").GetProperty("realtime");
         Assert.Equal("gpt-realtime-2.1-mini", realtime.GetProperty("default").GetString());
 
-        var models = realtime.GetProperty("models").EnumerateArray().ToArray();
+        JsonElement[] models = [.. realtime.GetProperty("models").EnumerateArray()];
         Assert.Equal(2, models.Length);
 
-        var byId = models.ToDictionary(m => m.GetProperty("id").GetString()!);
+        Dictionary<string, JsonElement> byId = models.ToDictionary(m => m.GetProperty("id").GetString()!);
         Assert.Equal("GPT Realtime 2.1", byId["gpt-realtime-2.1"].GetProperty("label").GetString());
         Assert.True(byId["gpt-realtime-2.1"].GetProperty("reasoning").GetBoolean());
         Assert.Equal("GPT Realtime 2.1 mini", byId["gpt-realtime-2.1-mini"].GetProperty("label").GetString());
@@ -238,13 +239,13 @@ public sealed class ModelSelectionConformanceTests(ModelDeploymentMapConformance
     [Trait("Dotnet", "ready")]
     public Task Explicit_model_reaches_the_fake_upstream_as_its_own_mapped_deployment() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(
             fixture.Backend!.BaseUri, model: "gpt-realtime-2.1", cancellationToken: ct);
-        var connection = await connectionTask;
+        FakeRealtimeConnection? connection = await connectionTask;
 
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         // Rick's PR #106 review item 2: `?model=` must reach the fake upstream as THAT model's OWN
         // AZURE_AI_MODEL_DEPLOYMENTS entry, never the AZURE_OPENAI_REALTIME_DEPLOYMENT back-compat
         // default (which this fixture never even sets to gpt-realtime-2.1's mapped name).
@@ -256,11 +257,11 @@ public sealed class ModelSelectionConformanceTests(ModelDeploymentMapConformance
     public Task Omitted_model_binds_to_the_persona_default_visible_alongside_persona_and_pipeline_in_session_metadata() =>
         fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
         await browser.SendStartSessionAsync(cancellationToken: ct);
-        var metadata = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        RecordedFrame? metadata = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata", s_frameTimeout, ct);
 
         Assert.True(metadata is not null, "Expected extension.session_metadata for a fresh session.");
         Assert.Equal("sonic", metadata!.Json.GetProperty("persona").GetString());
@@ -272,25 +273,25 @@ public sealed class ModelSelectionConformanceTests(ModelDeploymentMapConformance
     [Trait("Dotnet", "ready")]
     public Task Reasoning_is_sent_for_both_of_sonics_selectable_realtime_models() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
-        var defaultConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using (var defaultBrowser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct))
+        Task<FakeRealtimeConnection?> defaultConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using (RealtimeBrowserClient defaultBrowser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct))
         {
-            var defaultConnection = await defaultConnectionTask;
-            Assert.True(defaultConnection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
-            var defaultBootstrap = await defaultConnection!.ReceivedFrames.WaitForAsync(f => f.Sequence == 0, FrameTimeout, ct);
+            FakeRealtimeConnection? defaultConnection = await defaultConnectionTask;
+            Assert.True(defaultConnection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
+            RecordedFrame? defaultBootstrap = await defaultConnection!.ReceivedFrames.WaitForAsync(f => f.Sequence == 0, s_frameTimeout, ct);
             Assert.True(defaultBootstrap is not null, "Bootstrap session.update never arrived.");
             Assert.True(defaultBootstrap!.Json.GetProperty("session").TryGetProperty("reasoning", out _),
                 "gpt-realtime-2.1-mini (sonic's own default, issue #306) is a catalog reasoning model -- `reasoning` must be sent.");
         }
 
-        var altConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var altBrowser = await RealtimeBrowserClient.ConnectAsync(
+        Task<FakeRealtimeConnection?> altConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient altBrowser = await RealtimeBrowserClient.ConnectAsync(
             fixture.Backend!.BaseUri, model: "gpt-realtime-2.1", cancellationToken: ct);
-        var altConnection = await altConnectionTask;
-        Assert.True(altConnection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
-        var altBootstrap = await altConnection!.ReceivedFrames.WaitForAsync(f => f.Sequence == 0, FrameTimeout, ct);
+        FakeRealtimeConnection? altConnection = await altConnectionTask;
+        Assert.True(altConnection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
+        RecordedFrame? altBootstrap = await altConnection!.ReceivedFrames.WaitForAsync(f => f.Sequence == 0, s_frameTimeout, ct);
         Assert.True(altBootstrap is not null, "Bootstrap session.update never arrived.");
         Assert.True(altBootstrap!.Json.GetProperty("session").TryGetProperty("reasoning", out _),
             "gpt-realtime-2.1 is also catalogued with reasoning: true -- `reasoning` must be sent for it too, " +
@@ -303,36 +304,36 @@ public sealed class ModelSelectionConformanceTests(ModelDeploymentMapConformance
     [Trait("Dotnet", "ready")]
     public Task A_resume_omitting_model_after_binding_to_a_non_default_model_is_rejected_as_model_mismatch() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
-        var firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        var first = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, model: "gpt-realtime-2.1", cancellationToken: ct);
-        Assert.True(await firstConnectionTask is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        RealtimeBrowserClient first = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, model: "gpt-realtime-2.1", cancellationToken: ct);
+        Assert.True(await firstConnectionTask is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await first.SendStartSessionAsync(cancellationToken: ct);
-        var firstMetadata = await first.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        RecordedFrame? firstMetadata = await first.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_metadata", s_frameTimeout, ct);
         Assert.True(firstMetadata is not null);
         Assert.Equal("gpt-realtime-2.1", firstMetadata!.Json.GetProperty("model").GetString());
-        var resumeId = firstMetadata.Json.GetProperty("resumeId").GetString();
+        string? resumeId = firstMetadata.Json.GetProperty("resumeId").GetString();
         Assert.False(string.IsNullOrEmpty(resumeId));
 
         await first.CloseAsync(cancellationToken: ct);
-        await first.WaitForCloseAsync(FrameTimeout, ct);
+        await first.WaitForCloseAsync(s_frameTimeout, ct);
         await first.DisposeAsync();
 
         // Second connection: `?model=` OMITTED -- resolves to sonic's own default
         // (gpt-realtime-2.1-mini, issue #306), which is NOT the model the presented resume id was
         // bound to.
-        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var second = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        Assert.True(await secondConnectionTask is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient second = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        Assert.True(await secondConnectionTask is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await second.SendExtensionResumeAsync(resumeId!, ct);
 
-        var rejected = await second.ReceivedFrames.WaitForAsync(f => f.Type == "extension.resume_rejected", FrameTimeout, ct);
+        RecordedFrame? rejected = await second.ReceivedFrames.WaitForAsync(f => f.Type == "extension.resume_rejected", s_frameTimeout, ct);
         Assert.True(rejected is not null, "Expected extension.resume_rejected for a model-mismatched resume id.");
         Assert.Equal("model_mismatch", rejected!.Json.GetProperty("reason").GetString());
 
-        var freshMetadata = await second.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_metadata" && f.Sequence > rejected.Sequence, FrameTimeout, ct);
+        RecordedFrame? freshMetadata = await second.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata" && f.Sequence > rejected.Sequence, s_frameTimeout, ct);
         Assert.True(freshMetadata is not null, "Expected a fresh re-announce after the model_mismatch rejection.");
         Assert.Equal("gpt-realtime-2.1-mini", freshMetadata!.Json.GetProperty("model").GetString());
         Assert.NotEqual(resumeId, freshMetadata.Json.GetProperty("resumeId").GetString());
@@ -342,37 +343,37 @@ public sealed class ModelSelectionConformanceTests(ModelDeploymentMapConformance
     [Trait("Dotnet", "ready")]
     public Task A_resume_with_an_explicit_model_after_binding_to_the_default_is_rejected_as_model_mismatch() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
         // First connection: `?model=` OMITTED -- binds to sonic's own default (gpt-realtime-2.1-mini, issue #306).
-        var firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        var first = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        Assert.True(await firstConnectionTask is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        RealtimeBrowserClient first = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        Assert.True(await firstConnectionTask is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await first.SendStartSessionAsync(cancellationToken: ct);
-        var firstMetadata = await first.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        RecordedFrame? firstMetadata = await first.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_metadata", s_frameTimeout, ct);
         Assert.True(firstMetadata is not null);
         Assert.Equal("gpt-realtime-2.1-mini", firstMetadata!.Json.GetProperty("model").GetString());
-        var resumeId = firstMetadata.Json.GetProperty("resumeId").GetString();
+        string? resumeId = firstMetadata.Json.GetProperty("resumeId").GetString();
         Assert.False(string.IsNullOrEmpty(resumeId));
 
         await first.CloseAsync(cancellationToken: ct);
-        await first.WaitForCloseAsync(FrameTimeout, ct);
+        await first.WaitForCloseAsync(s_frameTimeout, ct);
         await first.DisposeAsync();
 
         // Second connection: bound to an explicit, DIFFERENT model than the resume id was issued
         // under -- the reverse direction of the mismatch above.
-        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var second = await RealtimeBrowserClient.ConnectAsync(
+        Task<FakeRealtimeConnection?> secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient second = await RealtimeBrowserClient.ConnectAsync(
             fixture.Backend!.BaseUri, model: "gpt-realtime-2.1", cancellationToken: ct);
-        Assert.True(await secondConnectionTask is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Assert.True(await secondConnectionTask is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await second.SendExtensionResumeAsync(resumeId!, ct);
 
-        var rejected = await second.ReceivedFrames.WaitForAsync(f => f.Type == "extension.resume_rejected", FrameTimeout, ct);
+        RecordedFrame? rejected = await second.ReceivedFrames.WaitForAsync(f => f.Type == "extension.resume_rejected", s_frameTimeout, ct);
         Assert.True(rejected is not null, "Expected extension.resume_rejected for a model-mismatched resume id.");
         Assert.Equal("model_mismatch", rejected!.Json.GetProperty("reason").GetString());
 
-        var freshMetadata = await second.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_metadata" && f.Sequence > rejected.Sequence, FrameTimeout, ct);
+        RecordedFrame? freshMetadata = await second.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata" && f.Sequence > rejected.Sequence, s_frameTimeout, ct);
         Assert.True(freshMetadata is not null, "Expected a fresh re-announce after the model_mismatch rejection.");
         Assert.Equal("gpt-realtime-2.1", freshMetadata!.Json.GetProperty("model").GetString());
         Assert.NotEqual(resumeId, freshMetadata.Json.GetProperty("resumeId").GetString());

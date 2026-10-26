@@ -10,7 +10,7 @@ namespace Backend.Tools;
 /// construct their own, potentially drifting, <see cref="JsonSerializerOptions"/>).</summary>
 internal static class OrderSummaryJson
 {
-    private static readonly JsonSerializerOptions Options = new();
+    private static readonly JsonSerializerOptions s_options = new();
 
-    public static string Serialize(OrderSummary summary) => JsonSerializer.Serialize(summary, Options);
+    public static string Serialize(OrderSummary summary) => JsonSerializer.Serialize(summary, s_options);
 }

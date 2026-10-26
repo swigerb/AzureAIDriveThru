@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Backend.Ordering;
+using Backend.Personas;
 using Backend.Prompts;
 using Backend.Tests.TestSupport;
 using Backend.Tools;
@@ -24,10 +25,10 @@ public sealed class OrderToolExecutorUpsellHintSpokenLexiconTests
 
     private static OrderToolExecutor NewExecutor()
     {
-        var persona = ZetaFixture.Load();
-        var order = PersonaOrderFactory.CreateOrderState(persona);
-        var menu = PersonaOrderFactory.GetMenuCatalog(persona);
-        var fixturesDir = Path.Combine(RepoRootLocator.Find(), "app", "backend", "tests", "fixtures", "personas");
+        Persona persona = ZetaFixture.Load();
+        OrderState order = PersonaOrderFactory.CreateOrderState(persona);
+        MenuCatalog menu = PersonaOrderFactory.GetMenuCatalog(persona);
+        string fixturesDir = Path.Combine(RepoRootLocator.Find(), "app", "backend", "tests", "fixtures", "personas");
         var promptLoader = new PromptLoader(fixturesDir, ZetaFixture.PersonaId);
         return new OrderToolExecutor(order, menu, promptLoader, MaxItemQuantity, MaxOrderItems);
     }
@@ -45,11 +46,11 @@ public sealed class OrderToolExecutorUpsellHintSpokenLexiconTests
     [Fact]
     public async Task UpsellHintText_IsPassedThroughMenuSpoken_BeforeReachingDeltaText()
     {
-        var executor = NewExecutor();
-        var result = await executor.ExecuteAsync(
+        OrderToolExecutor executor = NewExecutor();
+        ToolResult result = await executor.ExecuteAsync(
             "update_order", Args("add", "Zeta Cola", "regular", 1, 1.99m), TestContext.Current.CancellationToken);
 
-        var text = result.ToText();
+        string text = result.ToText();
         // The item's own spokenName wins over the single-word spokenAs entry (longest match).
         Assert.Contains("Zorb Bite Treats", text);
         Assert.DoesNotContain("ZORBS", text);

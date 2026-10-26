@@ -40,17 +40,17 @@ internal sealed class CodePointComparer : IComparer<string>
             return 1;
         }
 
-        var xi = 0;
-        var yi = 0;
+        int xi = 0;
+        int yi = 0;
         while (xi < x.Length && yi < y.Length)
         {
             // Ignoring the OperationStatus: a lone/invalid surrogate (never expected in real menu
             // data) decodes to Rune.ReplacementChar with 1 code unit consumed, a safe fallback
             // that never throws.
-            Rune.DecodeFromUtf16(x.AsSpan(xi), out var xRune, out var xConsumed);
-            Rune.DecodeFromUtf16(y.AsSpan(yi), out var yRune, out var yConsumed);
+            Rune.DecodeFromUtf16(x.AsSpan(xi), out Rune xRune, out int xConsumed);
+            Rune.DecodeFromUtf16(y.AsSpan(yi), out Rune yRune, out int yConsumed);
 
-            var comparison = xRune.Value.CompareTo(yRune.Value);
+            int comparison = xRune.Value.CompareTo(yRune.Value);
             if (comparison != 0)
             {
                 return comparison;

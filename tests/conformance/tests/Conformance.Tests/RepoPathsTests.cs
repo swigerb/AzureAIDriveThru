@@ -16,15 +16,15 @@ public sealed class RepoPathsTests
     [Fact]
     public void Finds_repo_root_when_git_is_a_directory()
     {
-        var scratch = CreateScratchRoot(nameof(Finds_repo_root_when_git_is_a_directory));
+        string scratch = CreateScratchRoot(nameof(Finds_repo_root_when_git_is_a_directory));
         try
         {
-            var repoRoot = Path.Combine(scratch, "fakerepo");
+            string repoRoot = Path.Combine(scratch, "fakerepo");
             Directory.CreateDirectory(Path.Combine(repoRoot, "app"));
             Directory.CreateDirectory(Path.Combine(repoRoot, ".git"));
             File.WriteAllText(Path.Combine(repoRoot, "azure.yaml"), "# fake");
 
-            var deepStart = Path.Combine(repoRoot, "tests", "conformance", "tests", "Conformance.Tests", "bin", "Debug", "net11.0");
+            string deepStart = Path.Combine(repoRoot, "tests", "conformance", "tests", "Conformance.Tests", "bin", "Debug", "net11.0");
             Directory.CreateDirectory(deepStart);
 
             Assert.Equal(repoRoot, RepoPaths.FindRepoRoot(deepStart));
@@ -38,17 +38,17 @@ public sealed class RepoPathsTests
     [Fact]
     public void Finds_repo_root_when_git_is_a_worktree_pointer_file()
     {
-        var scratch = CreateScratchRoot(nameof(Finds_repo_root_when_git_is_a_worktree_pointer_file));
+        string scratch = CreateScratchRoot(nameof(Finds_repo_root_when_git_is_a_worktree_pointer_file));
         try
         {
-            var repoRoot = Path.Combine(scratch, "fakerepo-worktree");
+            string repoRoot = Path.Combine(scratch, "fakerepo-worktree");
             Directory.CreateDirectory(Path.Combine(repoRoot, "app"));
             File.WriteAllText(Path.Combine(repoRoot, "azure.yaml"), "# fake");
             // A git worktree's ".git" is a plain file, not a directory — it contains a single
             // line like "gitdir: /path/to/main/.git/worktrees/<name>".
             File.WriteAllText(Path.Combine(repoRoot, ".git"), "gitdir: /elsewhere/.git/worktrees/fake\n");
 
-            var deepStart = Path.Combine(repoRoot, "tests", "conformance", "tests", "Conformance.Tests", "bin", "Debug", "net11.0");
+            string deepStart = Path.Combine(repoRoot, "tests", "conformance", "tests", "Conformance.Tests", "bin", "Debug", "net11.0");
             Directory.CreateDirectory(deepStart);
 
             Assert.Equal(repoRoot, RepoPaths.FindRepoRoot(deepStart));
@@ -62,12 +62,12 @@ public sealed class RepoPathsTests
     [Fact]
     public void Throws_a_clear_error_when_no_repo_root_marker_is_found()
     {
-        var scratch = CreateScratchRoot(nameof(Throws_a_clear_error_when_no_repo_root_marker_is_found));
+        string scratch = CreateScratchRoot(nameof(Throws_a_clear_error_when_no_repo_root_marker_is_found));
         try
         {
             // No 'app', 'azure.yaml', or '.git' anywhere under scratch — the walk-up must fail
             // once it exhausts every ancestor directory rather than returning a wrong answer.
-            var deepStart = Path.Combine(scratch, "unrelated", "deeply", "nested");
+            string deepStart = Path.Combine(scratch, "unrelated", "deeply", "nested");
             Directory.CreateDirectory(deepStart);
 
             // The real repo root is somewhere above the OS drive root in CI/dev sandboxes, so we
@@ -99,7 +99,7 @@ public sealed class RepoPathsTests
     {
         // Kept under this project's own build output (gitignored via obj/) rather than the OS
         // temp directory, per repo convention of not scattering test artifacts outside the tree.
-        var scratch = Path.Combine(AppContext.BaseDirectory, "repo-paths-test-scratch", $"{testName}-{Guid.NewGuid():N}");
+        string scratch = Path.Combine(AppContext.BaseDirectory, "repo-paths-test-scratch", $"{testName}-{Guid.NewGuid():N}");
         Directory.CreateDirectory(scratch);
         return scratch;
     }

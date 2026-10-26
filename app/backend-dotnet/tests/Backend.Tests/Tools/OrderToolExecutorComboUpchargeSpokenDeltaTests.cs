@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Backend.Ordering;
+using Backend.Personas;
 using Backend.Tests.TestSupport;
 using Backend.Tools;
 
@@ -24,9 +25,9 @@ public sealed class OrderToolExecutorComboUpchargeSpokenDeltaTests
 
     private static OrderToolExecutor NewExecutor()
     {
-        var persona = EtaFixture.Load();
-        var menu = PersonaOrderFactory.GetMenuCatalog(persona);
-        var order = PersonaOrderFactory.CreateOrderState(persona);
+        Persona persona = EtaFixture.Load();
+        MenuCatalog menu = PersonaOrderFactory.GetMenuCatalog(persona);
+        OrderState order = PersonaOrderFactory.CreateOrderState(persona);
         return new OrderToolExecutor(order, menu, promptLoader: null, MaxItemQuantity, MaxOrderItems, menuMode: null);
     }
 
@@ -43,14 +44,14 @@ public sealed class OrderToolExecutorComboUpchargeSpokenDeltaTests
     [Fact]
     public async Task AbsorbedLargeDrinkUpchargeDelta_HasNoDollarSign()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var executor = NewExecutor();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        OrderToolExecutor executor = NewExecutor();
         await executor.ExecuteAsync("update_order", Args("add", EtaFixture.Bundle, "standard", 1, 7.99m), ct);
         await executor.ExecuteAsync("update_order", Args("add", EtaFixture.Side, "medium", 1, 2.79m), ct);
 
-        var result = await executor.ExecuteAsync("update_order", Args("add", EtaFixture.Drink, "large", 1, 3.39m), ct);
+        ToolResult result = await executor.ExecuteAsync("update_order", Args("add", EtaFixture.Drink, "large", 1, 3.39m), ct);
 
-        var text = result.ToText();
+        string text = result.ToText();
         Assert.Contains("fifty cents upcharge", text);
         Assert.DoesNotContain("$", text);
     }
@@ -58,15 +59,15 @@ public sealed class OrderToolExecutorComboUpchargeSpokenDeltaTests
     [Fact]
     public async Task ResizedAbsorbedComponentUpchargeDelta_HasNoDollarSign()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var executor = NewExecutor();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        OrderToolExecutor executor = NewExecutor();
         await executor.ExecuteAsync("update_order", Args("add", EtaFixture.Bundle, "standard", 1, 7.99m), ct);
         await executor.ExecuteAsync("update_order", Args("add", EtaFixture.Side, "medium", 1, 2.79m), ct);
         await executor.ExecuteAsync("update_order", Args("add", EtaFixture.Drink, "medium", 1, 2.89m), ct);
 
-        var result = await executor.ExecuteAsync("update_order", Args("modify", EtaFixture.Drink, "large", 1, 3.39m), ct);
+        ToolResult result = await executor.ExecuteAsync("update_order", Args("modify", EtaFixture.Drink, "large", 1, 3.39m), ct);
 
-        var text = result.ToText();
+        string text = result.ToText();
         Assert.Contains("fifty cents upcharge", text);
         Assert.DoesNotContain("$", text);
     }

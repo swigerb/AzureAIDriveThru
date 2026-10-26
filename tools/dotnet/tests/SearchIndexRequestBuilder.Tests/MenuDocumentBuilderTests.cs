@@ -43,14 +43,14 @@ public sealed class MenuDocumentBuilderTests
     [Fact]
     public void Build_PreservesFileOrder_NeverSorts()
     {
-        var documents = BuildFromSyntheticMenu();
+        List<MenuDocumentBuilder.PreparedDocument> documents = BuildFromSyntheticMenu();
         Assert.Equal(["Classic Cheeseburger", "Fries"], documents.Select(d => d.Fields["name"]!.GetValue<string>()));
     }
 
     [Fact]
     public void Build_SanitizesDocId_LowercasingAndReplacingSpacesAndPunctuation()
     {
-        var documents = BuildFromSyntheticMenu();
+        List<MenuDocumentBuilder.PreparedDocument> documents = BuildFromSyntheticMenu();
 
         // "Burgers & Fries!" + "_" + "Classic_Cheeseburger", lowercased, then every character
         // outside [a-zA-Z0-9_-] (here: '&', '!', and the spaces already turned into '_' by the
@@ -74,7 +74,7 @@ public sealed class MenuDocumentBuilderTests
     [Fact]
     public void Build_SanitizesDocId_ReplacesOneAstralEmoji_WithASingleUnderscore_NotTwo()
     {
-        const string menuJsonWithEmoji = """
+        const string MenuJsonWithEmoji = """
             {
               "menuItems": [
                 {
@@ -89,7 +89,7 @@ public sealed class MenuDocumentBuilderTests
               ]
             }
             """;
-        var documents = MenuDocumentBuilder.Build(JsonNode.Parse(menuJsonWithEmoji)!);
+        List<MenuDocumentBuilder.PreparedDocument> documents = MenuDocumentBuilder.Build(JsonNode.Parse(MenuJsonWithEmoji)!);
 
         Assert.Equal("drinks_party_shake", documents[0].Fields["id"]!.GetValue<string>());
     }
@@ -97,8 +97,8 @@ public sealed class MenuDocumentBuilderTests
     [Fact]
     public void Build_DefaultsMissingOptionalFields_ToEmptyString_NotOmitted()
     {
-        var documents = BuildFromSyntheticMenu();
-        var fries = documents[1];
+        List<MenuDocumentBuilder.PreparedDocument> documents = BuildFromSyntheticMenu();
+        MenuDocumentBuilder.PreparedDocument fries = documents[1];
 
         // Fries omits longDescription/origin/caffeineContent/brewingMethod/popularity/menuPeriod
         // entirely -- setup_search_index.py's own prepare_documents (and the #165 comment
@@ -117,7 +117,7 @@ public sealed class MenuDocumentBuilderTests
     [Fact]
     public void Build_CombinesTextForEmbedding_AsCategoryNameDescriptionLongDescription()
     {
-        var documents = BuildFromSyntheticMenu();
+        List<MenuDocumentBuilder.PreparedDocument> documents = BuildFromSyntheticMenu();
         Assert.Equal(
             "Burgers & Fries! Classic Cheeseburger A juicy burger With cheese and all the fixings.",
             documents[0].CombinedTextForEmbedding);
@@ -130,7 +130,7 @@ public sealed class MenuDocumentBuilderTests
     [Fact]
     public void Build_SerializesSizes_ViaPythonJsonDumps_KeepingWholeNumbersWhole()
     {
-        var documents = BuildFromSyntheticMenu();
+        List<MenuDocumentBuilder.PreparedDocument> documents = BuildFromSyntheticMenu();
 
         // "price": 2 (a Python int) must stay "2", not become "2.0" -- see PythonJsonDumpsTests for
         // the dedicated, Python-oracle-backed coverage of this encoder in isolation; this test only

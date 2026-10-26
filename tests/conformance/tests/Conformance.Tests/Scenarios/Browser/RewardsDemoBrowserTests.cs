@@ -13,7 +13,7 @@ public sealed class RewardsDemoBrowserTests(BrowserConformanceFixture fixture)
     [Fact]
     public Task Taco_Bell_checkin_rewards_resume_and_mobile_dark_theme_work_in_Edge() => fixture.RunAsync(async () =>
     {
-        await using var context = await fixture.Browser!.NewContextAsync(new BrowserNewContextOptions
+        await using IBrowserContext context = await fixture.Browser!.NewContextAsync(new BrowserNewContextOptions
         {
             ViewportSize = new ViewportSize { Width = 1440, Height = 1080 },
             Permissions = ["microphone"],
@@ -35,22 +35,26 @@ public sealed class RewardsDemoBrowserTests(BrowserConformanceFixture fixture)
               });
             })();
             """);
-        var ct = TestContext.Current.CancellationToken;
-        var page = await context.NewPageAsync();
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(TimeSpan.FromSeconds(30), ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        IPage page = await context.NewPageAsync();
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(TimeSpan.FromSeconds(30), ct);
         await page.GotoAsync(new Uri(fixture.Backend!.BaseUri, "?persona=tacobell").ToString());
-        var connection = await connectionTask;
+        FakeRealtimeConnection? connection = await connectionTask;
         Assert.NotNull(connection);
-        var logo = page.GetByRole(AriaRole.Img, new() { Name = "Taco Bell Voice Ordering Demo logo", Exact = true });
+        ILocator logo = page.GetByRole(AriaRole.Img, new() { Name = "Taco Bell Voice Ordering Demo logo", Exact = true });
         await Expect(logo).ToHaveAttributeAsync("src", new System.Text.RegularExpressions.Regex(@"/personas/tacobell/assets/logo\.svg"));
         Assert.True(await logo.EvaluateAsync<bool>("e => e.complete && e.naturalWidth > 0"));
-        var tacos = page.GetByRole(AriaRole.Button, new() { NameRegex = new("^Tacos") });
+        ILocator tacos = page.GetByRole(AriaRole.Button, new() { NameRegex = new("^Tacos") });
         await Expect(tacos).ToBeVisibleAsync();
-        if (await tacos.GetAttributeAsync("aria-expanded") != "true") await tacos.ClickAsync();
+        if (await tacos.GetAttributeAsync("aria-expanded") != "true")
+        {
+            await tacos.ClickAsync();
+        }
+
         await Expect(tacos.Locator("..").GetByText("Crunchy Taco", new() { Exact = true })).ToBeVisibleAsync();
         await Expect(tacos.Locator("..").GetByText("Crunchy shell taco. Illustrative demo price, not a store quote.", new() { Exact = true }))
             .ToBeVisibleAsync();
-        var code = page.GetByLabel("Demo rewards / check-in code", new() { Exact = true });
+        ILocator code = page.GetByLabel("Demo rewards / check-in code", new() { Exact = true });
         await Expect(code).ToBeEnabledAsync();
         await code.FillAsync("5551234567");
         await page.GetByRole(AriaRole.Button, new() { Name = "Check in", Exact = true }).ClickAsync();
@@ -71,11 +75,14 @@ public sealed class RewardsDemoBrowserTests(BrowserConformanceFixture fixture)
         await Expect(page.GetByText("-$1.99", new() { Exact = true })).ToBeVisibleAsync();
         await page.GetByRole(AriaRole.Button, new() { Name = "Complete order", Exact = true }).ClickAsync();
         await Expect(page.GetByText("Earned 19 fictional points. No purchase was placed.", new() { Exact = true })).ToBeVisibleAsync();
-        var complete = page.GetByRole(AriaRole.Button, new() { Name = "Complete order", Exact = true });
+        ILocator complete = page.GetByRole(AriaRole.Button, new() { Name = "Complete order", Exact = true });
         await Expect(complete).ToHaveCountAsync(0);
-        var screenshot = Environment.GetEnvironmentVariable("TACO_BELL_SCREENSHOT");
+        string? screenshot = Environment.GetEnvironmentVariable("TACO_BELL_SCREENSHOT");
         if (!string.IsNullOrEmpty(screenshot))
+        {
             await page.ScreenshotAsync(new() { Path = Path.ChangeExtension(screenshot, "desktop.png"), FullPage = true });
+        }
+
         await page.ReloadAsync();
         await Expect(page.GetByText("Earned 19 fictional points. No purchase was placed.", new() { Exact = true })).ToBeVisibleAsync();
         await Expect(page.GetByText("269", new() { Exact = false }).Filter(new() { HasText = "demo points" })).ToBeVisibleAsync();
@@ -86,7 +93,7 @@ public sealed class RewardsDemoBrowserTests(BrowserConformanceFixture fixture)
         await page.SetViewportSizeAsync(390, 844);
         await page.EvaluateAsync("document.documentElement.classList.add('dark')");
         Assert.False(await page.EvaluateAsync<bool>("document.documentElement.scrollWidth > window.innerWidth"));
-        var panel = page.GetByRole(AriaRole.Region, new() { Name = "Simulated rewards" });
+        ILocator panel = page.GetByRole(AriaRole.Region, new() { Name = "Simulated rewards" });
         await Expect(panel).ToBeVisibleAsync();
         Assert.Equal("rgb(59, 11, 113)", await panel.EvaluateAsync<string>("e => getComputedStyle(e).backgroundColor"));
         Assert.Equal("rgb(255, 255, 255)", await panel.EvaluateAsync<string>("e => getComputedStyle(e).color"));
@@ -94,6 +101,8 @@ public sealed class RewardsDemoBrowserTests(BrowserConformanceFixture fixture)
             .EvaluateAsync<string>("e => getComputedStyle(e).color"));
         await Expect(logo).ToBeVisibleAsync();
         if (!string.IsNullOrEmpty(screenshot))
+        {
             await page.ScreenshotAsync(new() { Path = screenshot, FullPage = true });
+        }
     });
 }

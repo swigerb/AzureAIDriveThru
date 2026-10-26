@@ -26,7 +26,7 @@ internal sealed class AppConfig
 
     public static AppConfig Load(string? path = null)
     {
-        var configPath = path
+        string configPath = path
             ?? BackendEnvironment.Get(BackendEnvironment.ConfigPath)
             ?? Path.Combine(RepoRootLocator.Find(), "app", "backend", "config.yaml");
 
@@ -35,7 +35,7 @@ internal sealed class AppConfig
             throw new ConfigValidationException($"Config file not found: {configPath}");
         }
 
-        var yamlText = File.ReadAllText(configPath);
+        string yamlText = File.ReadAllText(configPath);
         object? raw;
         try
         {
@@ -66,7 +66,7 @@ internal sealed class AppConfig
 
     /// <summary>Gets a nested top-level section as a mapping, or null if absent/not a mapping.</summary>
     public IDictionary<object, object>? TryGetSection(string name) =>
-        Root.TryGetValue(name, out var value) ? value as IDictionary<object, object> : null;
+        Root.TryGetValue(name, out object? value) ? value as IDictionary<object, object> : null;
 
     private static string DescribeType(object? value) => value switch
     {

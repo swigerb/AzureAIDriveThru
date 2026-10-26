@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Backend.Realtime;
 
 namespace Backend.Tests.Realtime;
@@ -15,7 +16,7 @@ public sealed class RelayJsonTests
     [Fact]
     public void ParseRelayFrame_NestedDuplicateKey_ThrowsJsonException()
     {
-        var payload = Utf8("""{"type":"session.update","session":{"voice":"a","voice":"b"}}""");
+        byte[] payload = Utf8("""{"type":"session.update","session":{"voice":"a","voice":"b"}}""");
 
         Assert.ThrowsAny<JsonException>(() => RelayJson.ParseRelayFrame(payload));
     }
@@ -23,7 +24,7 @@ public sealed class RelayJsonTests
     [Fact]
     public void ParseRelayFrame_TopLevelDuplicateKey_ThrowsJsonException()
     {
-        var payload = Utf8("""{"type":"a","type":"b"}""");
+        byte[] payload = Utf8("""{"type":"a","type":"b"}""");
 
         Assert.Throws<JsonException>(() => RelayJson.ParseRelayFrame(payload));
     }
@@ -31,7 +32,7 @@ public sealed class RelayJsonTests
     [Fact]
     public void ParseRelayFrame_NonObjectJson_ThrowsJsonException()
     {
-        var payload = Utf8("[1]");
+        byte[] payload = Utf8("[1]");
 
         Assert.Throws<JsonException>(() => RelayJson.ParseRelayFrame(payload));
     }
@@ -39,9 +40,9 @@ public sealed class RelayJsonTests
     [Fact]
     public void ParseRelayFrame_ValidObject_ReturnsJsonObject()
     {
-        var payload = Utf8("""{"type":"input_audio_buffer.append","audio":"AAAA"}""");
+        byte[] payload = Utf8("""{"type":"input_audio_buffer.append","audio":"AAAA"}""");
 
-        var result = RelayJson.ParseRelayFrame(payload);
+        JsonObject result = RelayJson.ParseRelayFrame(payload);
 
         Assert.Equal("input_audio_buffer.append", result["type"]!.GetValue<string>());
         Assert.Equal("AAAA", result["audio"]!.GetValue<string>());

@@ -1,14 +1,11 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+// `Backend.Tests` does not implicitly see the root `Backend` namespace that
+// <see cref="ConformanceHooks"/> lives in.
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Console;
 
 namespace Backend.Tests;
-
-// `Backend.Tests` does not implicitly see the root `Backend` namespace that
-// <see cref="ConformanceHooks"/> lives in.
-using Backend;
-
 /// <summary>
 /// #233 (N32, split from #63): <see cref="ConformanceHooks.ApplyConsoleTimestampFormat"/> is the
 /// extracted, directly-testable body of Program.cs's <c>ConformanceHooks.HooksEnabled</c>-gated
@@ -61,7 +58,7 @@ public sealed class ConformanceHooksConsoleTimestampTests
         ConformanceHooks.ApplyConsoleTimestampFormat(options);
 
         // 123456 microseconds == 1,234,560 ticks (1 tick = 100ns = 0.1us).
-        var formatted = new DateTimeOffset(2026, 7, 4, 15, 30, 0, TimeSpan.Zero)
+        string formatted = new DateTimeOffset(2026, 7, 4, 15, 30, 0, TimeSpan.Zero)
             .AddTicks(1_234_560)
             .ToString(options.TimestampFormat, CultureInfo.InvariantCulture);
 
@@ -88,28 +85,27 @@ public sealed class ConformanceHooksConsoleTimestampTests
     [Fact]
     public void AddSimpleConsole_is_what_actually_makes_real_console_output_self_timestamped()
     {
-        var originalOut = Console.Out;
+        TextWriter originalOut = Console.Out;
         var capture = new StringWriter();
         try
         {
             Console.SetOut(capture);
 
-            using (var loggerFactory = LoggerFactory.Create(logging =>
+            using ILoggerFactory loggerFactory = LoggerFactory.Create(logging =>
             {
                 logging.SetMinimumLevel(LogLevel.Information);
                 logging.AddSimpleConsole(ConformanceHooks.ApplyConsoleTimestampFormat);
-            }))
-            {
-                var logger = loggerFactory.CreateLogger("Backend.ConformanceHooksConsoleTimestampTests");
-                logger.LogInformation("conformance timestamp end-to-end probe");
-            } // Disposing the factory disposes/flushes ConsoleLoggerProvider's background writer.
+            });
+            ILogger logger = loggerFactory.CreateLogger("Backend.ConformanceHooksConsoleTimestampTests");
+            logger.LogInformation("conformance timestamp end-to-end probe");
+            // Disposing the factory disposes/flushes ConsoleLoggerProvider's background writer.
         }
         finally
         {
             Console.SetOut(originalOut);
         }
 
-        var output = capture.ToString();
+        string output = capture.ToString();
 
         // Same literal regex as CapturedProcessOutput.BackendTimestampPrefix (duplicated
         // deliberately: Backend.Tests has no project reference to tests/conformance).
@@ -135,28 +131,26 @@ public sealed class ConformanceHooksConsoleTimestampTests
     [Fact]
     public void Default_console_registration_without_AddSimpleConsole_has_no_backend_timestamp_prefix()
     {
-        var originalOut = Console.Out;
+        TextWriter originalOut = Console.Out;
         var capture = new StringWriter();
         try
         {
             Console.SetOut(capture);
 
-            using (var loggerFactory = LoggerFactory.Create(logging =>
+            using ILoggerFactory loggerFactory = LoggerFactory.Create(logging =>
             {
                 logging.SetMinimumLevel(LogLevel.Information);
                 logging.AddConsole(); // No ApplyConsoleTimestampFormat call -- hooks-disabled baseline.
-            }))
-            {
-                var logger = loggerFactory.CreateLogger("Backend.ConformanceHooksConsoleTimestampTests");
-                logger.LogInformation("conformance timestamp end-to-end probe");
-            }
+            });
+            ILogger logger = loggerFactory.CreateLogger("Backend.ConformanceHooksConsoleTimestampTests");
+            logger.LogInformation("conformance timestamp end-to-end probe");
         }
         finally
         {
             Console.SetOut(originalOut);
         }
 
-        var output = capture.ToString();
+        string output = capture.ToString();
 
         Assert.DoesNotMatch(
             new Regex(@"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z ", RegexOptions.Multiline),

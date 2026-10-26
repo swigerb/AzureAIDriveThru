@@ -24,7 +24,7 @@ public sealed class SearchIndexHttpClientTests
 
         await client.CreateOrUpdateIndexAsync(IndexName, new JsonObject { ["name"] = IndexName }, CancellationToken.None);
 
-        var request = Assert.Single(handler.Requests);
+        CapturedRequest request = Assert.Single(handler.Requests);
         Assert.Equal(HttpMethod.Put, request.Method);
         Assert.Equal($"{Endpoint}/indexes('{IndexName}')?api-version=2026-04-01", request.Uri);
         // .NET's HttpHeaders normalizes the parsed MediaTypeWithQualityHeaderValue back to
@@ -52,10 +52,10 @@ public sealed class SearchIndexHttpClientTests
                 new JsonObject { ["@search.action"] = "mergeOrUpload", ["id"] = "b" },
             },
         };
-        var succeeded = await client.UploadBatchAsync(IndexName, batchBody, CancellationToken.None);
+        int succeeded = await client.UploadBatchAsync(IndexName, batchBody, CancellationToken.None);
 
         Assert.Equal(1, succeeded);
-        var request = Assert.Single(handler.Requests);
+        CapturedRequest request = Assert.Single(handler.Requests);
         Assert.Equal(HttpMethod.Post, request.Method);
         Assert.Equal($"{Endpoint}/indexes('{IndexName}')/docs/search.index?api-version=2026-04-01", request.Uri);
         Assert.Equal("application/json; odata.metadata=none", request.Headers["Accept"]);
@@ -70,10 +70,10 @@ public sealed class SearchIndexHttpClientTests
         var handler = new FakeHttpMessageHandler(_ => FakeHttpMessageHandler.PlainText(HttpStatusCode.OK, "60"));
         using var client = new SearchIndexHttpClient(new HttpClient(handler), Endpoint);
 
-        var count = await client.GetDocumentCountAsync(IndexName, CancellationToken.None);
+        int count = await client.GetDocumentCountAsync(IndexName, CancellationToken.None);
 
         Assert.Equal(60, count);
-        var request = Assert.Single(handler.Requests);
+        CapturedRequest request = Assert.Single(handler.Requests);
         Assert.Equal(HttpMethod.Get, request.Method);
         Assert.Equal($"{Endpoint}/indexes('{IndexName}')/docs/$count?api-version=2026-04-01", request.Uri);
     }
@@ -88,7 +88,7 @@ public sealed class SearchIndexHttpClientTests
             _ => FakeHttpMessageHandler.Json(HttpStatusCode.OK, """{"value":[{"id":"c"}]}"""));
         using var client = new SearchIndexHttpClient(new HttpClient(handler), Endpoint);
 
-        var ids = await client.ListAllDocumentIdsAsync(IndexName, CancellationToken.None);
+        IReadOnlyList<string> ids = await client.ListAllDocumentIdsAsync(IndexName, CancellationToken.None);
 
         Assert.Equal(["a", "b", "c"], ids);
         Assert.Equal(2, handler.Requests.Count);
@@ -107,10 +107,10 @@ public sealed class SearchIndexHttpClientTests
 
         await client.DeleteBatchAsync(IndexName, ["a", "b"], CancellationToken.None);
 
-        var request = Assert.Single(handler.Requests);
+        CapturedRequest request = Assert.Single(handler.Requests);
         Assert.Equal(HttpMethod.Post, request.Method);
-        var body = JsonNode.Parse(request.Body!)!.AsObject();
-        var value = body["value"]!.AsArray();
+        JsonObject body = JsonNode.Parse(request.Body!)!.AsObject();
+        JsonArray value = body["value"]!.AsArray();
         Assert.Equal(2, value.Count);
         Assert.Equal("delete", value[0]!["@search.action"]!.GetValue<string>());
         Assert.Equal("a", value[0]!["id"]!.GetValue<string>());
@@ -122,8 +122,8 @@ public sealed class SearchIndexHttpClientTests
         var handler = new FakeHttpMessageHandler(_ => FakeHttpMessageHandler.PlainText(HttpStatusCode.Forbidden, "nope"));
         using var client = new SearchIndexHttpClient(new HttpClient(handler), Endpoint);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => client.CreateOrUpdateIndexAsync(IndexName, new JsonObject(), CancellationToken.None));
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => client.CreateOrUpdateIndexAsync(IndexName, [], CancellationToken.None));
         Assert.Contains("403", ex.Message);
     }
 
@@ -134,7 +134,7 @@ public sealed class SearchIndexHttpClientTests
         // 300 s. This port has no separate connect-vs-read split the way azure-core's transport
         // does, so both SocketsHttpHandler.ConnectTimeout and HttpClient.Timeout are set to the
         // same 300 s value (see SearchIndexHttpClient.CreateForProduction's own remarks).
-        using var http = SearchIndexHttpClient.CreateProductionHttpClient(new FakeTokenCredential());
+        using HttpClient http = SearchIndexHttpClient.CreateProductionHttpClient(new FakeTokenCredential());
 
         Assert.Equal(TimeSpan.FromSeconds(300), http.Timeout);
         Assert.Equal(TimeSpan.FromSeconds(300), SearchIndexHttpClient.ProductionTimeout);
@@ -146,7 +146,7 @@ public sealed class SearchIndexHttpClientTests
         // End-to-end proof that CreateForProduction's handler chain (SearchRetryHandler wrapping
         // the bearer-token handler) actually retries -- not just that SearchRetryHandler's own unit
         // tests pass in isolation.
-        var attempts = 0;
+        int attempts = 0;
         var innerHandler = new FakeHttpMessageHandler(_ =>
         {
             attempts++;
@@ -158,7 +158,7 @@ public sealed class SearchIndexHttpClientTests
         using var http = new HttpClient(retryHandler);
         using var client = new SearchIndexHttpClient(http, Endpoint);
 
-        await client.CreateOrUpdateIndexAsync(IndexName, new JsonObject(), CancellationToken.None);
+        await client.CreateOrUpdateIndexAsync(IndexName, [], CancellationToken.None);
 
         Assert.Equal(2, attempts);
     }

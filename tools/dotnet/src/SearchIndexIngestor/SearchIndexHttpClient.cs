@@ -1,4 +1,3 @@
-using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Azure.Core;
@@ -78,7 +77,7 @@ public sealed class SearchIndexHttpClient : IDisposable
     /// </summary>
     public static SearchIndexHttpClient CreateForProduction(string searchEndpoint, TokenCredential credential)
     {
-        var http = CreateProductionHttpClient(credential);
+        HttpClient http = CreateProductionHttpClient(credential);
         return new SearchIndexHttpClient(http, searchEndpoint, ownsHttpClient: true);
     }
 
@@ -109,7 +108,7 @@ public sealed class SearchIndexHttpClient : IDisposable
         request.Headers.TryAddWithoutValidation("Accept", "application/json;odata.metadata=minimal");
         request.Headers.TryAddWithoutValidation("Prefer", "return=representation");
 
-        using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        using HttpResponseMessage response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
         await EnsureSuccessAsync(response, "create/update index", cancellationToken).ConfigureAwait(false);
     }
 
@@ -129,11 +128,11 @@ public sealed class SearchIndexHttpClient : IDisposable
         };
         request.Headers.TryAddWithoutValidation("Accept", "application/json;odata.metadata=none");
 
-        using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        using HttpResponseMessage response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
         await EnsureSuccessAsync(response, "upload document batch", cancellationToken).ConfigureAwait(false);
 
-        var body = await response.Content.ReadFromJsonAsync<JsonNode>(cancellationToken).ConfigureAwait(false);
-        var results = body?["value"]?.AsArray() ??
+        JsonNode? body = await response.Content.ReadFromJsonAsync<JsonNode>(cancellationToken).ConfigureAwait(false);
+        JsonArray results = body?["value"]?.AsArray() ??
             throw new InvalidOperationException("Azure AI Search's upload response had no \"value\" array.");
         return results.Count(r => r?["status"]?.GetValue<bool>() == true);
     }
@@ -162,13 +161,13 @@ public sealed class SearchIndexHttpClient : IDisposable
             };
             request.Headers.TryAddWithoutValidation("Accept", "application/json;odata.metadata=none");
 
-            using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            using HttpResponseMessage response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
             await EnsureSuccessAsync(response, "list existing document ids", cancellationToken).ConfigureAwait(false);
 
-            var body = await response.Content.ReadFromJsonAsync<JsonNode>(cancellationToken).ConfigureAwait(false);
-            foreach (var doc in body?["value"]?.AsArray() ?? [])
+            JsonNode? body = await response.Content.ReadFromJsonAsync<JsonNode>(cancellationToken).ConfigureAwait(false);
+            foreach (JsonNode? doc in body?["value"]?.AsArray() ?? [])
             {
-                var id = doc?["id"]?.GetValue<string>();
+                string? id = doc?["id"]?.GetValue<string>();
                 if (id is not null)
                 {
                     ids.Add(id);
@@ -189,7 +188,7 @@ public sealed class SearchIndexHttpClient : IDisposable
     public async Task DeleteBatchAsync(string indexName, IReadOnlyList<string> ids, CancellationToken cancellationToken)
     {
         var value = new JsonArray();
-        foreach (var id in ids)
+        foreach (string id in ids)
         {
             value.Add(new JsonObject { ["@search.action"] = "delete", ["id"] = id });
         }
@@ -200,7 +199,7 @@ public sealed class SearchIndexHttpClient : IDisposable
         };
         request.Headers.TryAddWithoutValidation("Accept", "application/json;odata.metadata=none");
 
-        using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        using HttpResponseMessage response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
         await EnsureSuccessAsync(response, "delete stale document batch", cancellationToken).ConfigureAwait(false);
     }
 
@@ -217,10 +216,10 @@ public sealed class SearchIndexHttpClient : IDisposable
         using var request = new HttpRequestMessage(HttpMethod.Get, DocsCountUrl(indexName));
         request.Headers.TryAddWithoutValidation("Accept", "application/json;odata.metadata=none");
 
-        using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        using HttpResponseMessage response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
         await EnsureSuccessAsync(response, "get document count", cancellationToken).ConfigureAwait(false);
 
-        var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        string text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         return int.Parse(text.Trim(), System.Globalization.CultureInfo.InvariantCulture);
     }
 
@@ -247,7 +246,7 @@ public sealed class SearchIndexHttpClient : IDisposable
     {
         if (!response.IsSuccessStatusCode)
         {
-            var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            string body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
             throw new InvalidOperationException(
                 $"Azure AI Search request to {action} failed with status {(int)response.StatusCode} " +
                 $"{response.ReasonPhrase}: {body}");

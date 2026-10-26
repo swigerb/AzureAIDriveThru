@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
@@ -24,25 +25,25 @@ namespace Conformance.Tests;
 [Collection(ConformanceCollection.Name)]
 public sealed class SessionUpdatedClientVisibilityTests(ConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Browser_never_receives_instructions_or_tools_in_session_updated() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
 
-        var sessionUpdated = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "session.updated", FrameTimeout, ct);
+        RecordedFrame? sessionUpdated = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "session.updated", s_frameTimeout, ct);
         Assert.True(sessionUpdated is not null, "Expected the browser to receive a session.updated frame (forwarded from the bootstrap upstream connection) within the timeout.");
 
-        var session = sessionUpdated!.Json.GetProperty("session");
+        JsonElement session = sessionUpdated!.Json.GetProperty("session");
 
-        var hasNonEmptyInstructions = session.TryGetProperty("instructions", out var instructions) &&
+        bool hasNonEmptyInstructions = session.TryGetProperty("instructions", out JsonElement instructions) &&
             instructions.ValueKind == System.Text.Json.JsonValueKind.String &&
             instructions.GetString() is { Length: > 0 };
-        var hasNonEmptyTools = session.TryGetProperty("tools", out var tools) &&
+        bool hasNonEmptyTools = session.TryGetProperty("tools", out JsonElement tools) &&
             tools.ValueKind == System.Text.Json.JsonValueKind.Array &&
             tools.GetArrayLength() > 0;
 

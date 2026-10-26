@@ -1,5 +1,3 @@
-using Microsoft.Extensions.DependencyInjection;
-
 namespace Backend.Shared;
 
 /// <summary>
@@ -16,7 +14,7 @@ internal static class BackendHttpClients
     public static void AddBackendHttpClients(
         this IServiceCollection services, TimeSpan pooledConnectionLifetime, params ReadOnlySpan<string> clientNames)
     {
-        foreach (var clientName in clientNames)
+        foreach (string clientName in clientNames)
         {
             services.AddHttpClient(clientName)
                 .ConfigurePrimaryHttpMessageHandler(

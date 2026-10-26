@@ -31,7 +31,7 @@ public sealed class CloseSupersededStaleConnectionAsyncTests
 {
     // Generous relative to FramePump.SupersededCloseTimeout itself (2s) so this never
     // flakes under CI load while still being far short of "effectively unbounded."
-    private static readonly TimeSpan AssertionDeadline = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan s_assertionDeadline = TimeSpan.FromSeconds(10);
 
     [Fact]
     public async Task Completes_within_its_own_timeout_even_when_the_stale_sockets_close_output_hangs_forever()
@@ -39,14 +39,14 @@ public sealed class CloseSupersededStaleConnectionAsyncTests
         var staleWs = new FakeWebSocket([], hangCloseOutputUntilCancelled: true);
         using var staleCts = new CancellationTokenSource();
 
-        var task = FramePump.CloseSupersededStaleConnectionAsync(
+        Task task = FramePump.CloseSupersededStaleConnectionAsync(
             staleWs, staleCts, TimeSpan.FromMilliseconds(200), NullLogger<RealtimeProcessor>.Instance);
 
-        var completed = await Task.WhenAny(task, Task.Delay(AssertionDeadline, TestContext.Current.CancellationToken));
+        Task completed = await Task.WhenAny(task, Task.Delay(s_assertionDeadline, TestContext.Current.CancellationToken));
         Assert.True(
             ReferenceEquals(completed, task),
             "CloseSupersededStaleConnectionAsync did not complete within its own timeout plus " +
-            $"{AssertionDeadline} of slack -- it is blocking on the stale peer's non-draining " +
+            $"{s_assertionDeadline} of slack -- it is blocking on the stale peer's non-draining " +
             "close output again, exactly the hazard Rick's round-2 review of #244 found.");
         await task; // Propagate any unexpected exception (there should be none).
 
@@ -106,7 +106,7 @@ public sealed class CloseSupersededStaleConnectionAsyncTests
         var staleWs = new FakeWebSocket([]);
         using var staleCts = new CancellationTokenSource();
 
-        var closeTask = FramePump.CloseSupersededStaleConnectionAsync(
+        Task closeTask = FramePump.CloseSupersededStaleConnectionAsync(
             staleWs, staleCts, TimeSpan.FromSeconds(5), NullLogger<RealtimeProcessor>.Instance);
 
         // FakeWebSocket's non-hanging CloseOutputAsync completes synchronously, so by the time we
@@ -163,11 +163,11 @@ public sealed class CloseSupersededStaleConnectionAsyncTests
     {
         var staleWs = new FakeWebSocket([], hangCloseOutputUntilCancelled: true);
 
-        var unboundedClose = staleWs.CloseOutputAsync(
+        Task unboundedClose = staleWs.CloseOutputAsync(
             (WebSocketCloseStatus)SessionManager.SupersededCloseCode, SessionManager.SupersededCloseReason,
             CancellationToken.None);
 
-        var completed = await Task.WhenAny(
+        Task completed = await Task.WhenAny(
             unboundedClose, Task.Delay(TimeSpan.FromMilliseconds(500), TestContext.Current.CancellationToken));
         Assert.False(
             ReferenceEquals(completed, unboundedClose),

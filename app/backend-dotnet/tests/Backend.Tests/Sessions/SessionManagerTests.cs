@@ -2,6 +2,7 @@ using System.Net.WebSockets;
 using System.Text.Json;
 using Backend.Configuration;
 using Backend.Ordering;
+using Backend.Personas;
 using Backend.Sessions;
 using Backend.Tests.Realtime;
 using Backend.Tests.TestSupport;
@@ -56,7 +57,7 @@ public sealed class SessionManagerTests
     public void CreateSession_ThenGetVoice_ReturnsTheBoundVoice()
     {
         var time = new FakeTimeProvider();
-        var mgr = NewManager(time);
+        SessionManager mgr = NewManager(time);
         mgr.CreateSession("s1", NewSocket(), "persona-a", "model-a", null, new FakeToolExecutor(), "alloy");
         Assert.Equal("alloy", mgr.GetVoice("s1"));
     }
@@ -64,7 +65,7 @@ public sealed class SessionManagerTests
     [Fact]
     public void GetVoice_UnknownSession_ReturnsEmptyString()
     {
-        var mgr = NewManager(new FakeTimeProvider());
+        SessionManager mgr = NewManager(new FakeTimeProvider());
         Assert.Equal("", mgr.GetVoice("nope"));
     }
 
@@ -72,7 +73,7 @@ public sealed class SessionManagerTests
     public void SetVoice_UpdatesTheBoundVoice()
     {
         var time = new FakeTimeProvider();
-        var mgr = NewManager(time);
+        SessionManager mgr = NewManager(time);
         mgr.CreateSession("s1", NewSocket(), "persona-a", "model-a", null, new FakeToolExecutor(), "alloy");
         mgr.SetVoice("s1", "verse");
         Assert.Equal("verse", mgr.GetVoice("s1"));
@@ -82,8 +83,8 @@ public sealed class SessionManagerTests
     public void SetMachineStatus_and_SetHappyHourMode_delegate_to_the_sessions_order_state()
     {
         var time = new FakeTimeProvider();
-        var mgr = NewManager(time);
-        var persona = DeltaFixture.Load("test-alpha");
+        SessionManager mgr = NewManager(time);
+        Persona persona = DeltaFixture.Load("test-alpha");
         var toolExecutor = new OrderToolExecutor(
             PersonaOrderFactory.CreateOrderState(persona),
             PersonaOrderFactory.GetMenuCatalog(persona),
@@ -104,7 +105,7 @@ public sealed class SessionManagerTests
     [Fact]
     public void CreateSession_AlsoCreatesAContextMonitor()
     {
-        var mgr = NewManager(new FakeTimeProvider());
+        SessionManager mgr = NewManager(new FakeTimeProvider());
         mgr.CreateSession("s1", NewSocket(), "p", "m", null, new FakeToolExecutor(), "alloy");
         Assert.NotNull(mgr.GetContextMonitor("s1"));
     }
@@ -112,7 +113,7 @@ public sealed class SessionManagerTests
     [Fact]
     public void GetContextMonitor_UnknownOrNullSessionId_ReturnsNull()
     {
-        var mgr = NewManager(new FakeTimeProvider());
+        SessionManager mgr = NewManager(new FakeTimeProvider());
         Assert.Null(mgr.GetContextMonitor("nope"));
         Assert.Null(mgr.GetContextMonitor(null));
     }
@@ -120,7 +121,7 @@ public sealed class SessionManagerTests
     [Fact]
     public void EndSession_RemovesTheContextMonitor()
     {
-        var mgr = NewManager(new FakeTimeProvider());
+        SessionManager mgr = NewManager(new FakeTimeProvider());
         mgr.CreateSession("s1", NewSocket(), "p", "m", null, new FakeToolExecutor(), "alloy");
         Assert.NotNull(mgr.GetContextMonitor("s1"));
         mgr.EndSession("s1", "test teardown");
@@ -132,7 +133,7 @@ public sealed class SessionManagerTests
     [Fact]
     public void IssueResumeId_WhenResumeDisabled_ReturnsNull()
     {
-        var mgr = NewManager(new FakeTimeProvider(), resumeEnabled: false);
+        SessionManager mgr = NewManager(new FakeTimeProvider(), resumeEnabled: false);
         mgr.CreateSession("s1", NewSocket(), "p", "m", null, new FakeToolExecutor(), "alloy");
         Assert.Null(mgr.IssueResumeId("s1"));
     }
@@ -140,13 +141,13 @@ public sealed class SessionManagerTests
     [Fact]
     public void IssueResumeId_IsAtLeast32CharsAndUniquePerCall()
     {
-        var mgr = NewManager(new FakeTimeProvider());
+        SessionManager mgr = NewManager(new FakeTimeProvider());
         mgr.CreateSession("s1", NewSocket(), "p", "m", null, new FakeToolExecutor(), "alloy");
-        var first = mgr.IssueResumeId("s1");
-        var second = mgr.IssueResumeId("s1");
+        string? first = mgr.IssueResumeId("s1");
+        string? second = mgr.IssueResumeId("s1");
         Assert.NotNull(first);
         Assert.NotNull(second);
-        Assert.InRange(first!.Length, 32, 128);
+        Assert.InRange(first.Length, 32, 128);
         Assert.NotEqual(first, second); // rotation invalidates the previous credential
     }
 
@@ -154,13 +155,13 @@ public sealed class SessionManagerTests
     public void IssueResumeId_Reissue_InvalidatesThePreviousOne()
     {
         var time = new FakeTimeProvider();
-        var mgr = NewManager(time);
-        var ws1 = NewSocket();
+        SessionManager mgr = NewManager(time);
+        FakeWebSocket ws1 = NewSocket();
         mgr.CreateSession("s1", ws1, "p", "m", null, new FakeToolExecutor(), "alloy");
-        var stale = mgr.IssueResumeId("s1")!;
+        string stale = mgr.IssueResumeId("s1")!;
         mgr.IssueResumeId("s1"); // rotate -- `stale` must no longer resolve
 
-        var outcome = mgr.TryResume(NewSocket(), stale, "p", "m", null, "provisional");
+        ResumeOutcome outcome = mgr.TryResume(NewSocket(), stale, "p", "m", null, "provisional");
         Assert.False(outcome.Accepted);
         Assert.Equal("unknown", outcome.Reason);
     }
@@ -170,8 +171,8 @@ public sealed class SessionManagerTests
     [Fact]
     public void TryResume_WhenResumeDisabled_RejectsAsDisabled()
     {
-        var mgr = NewManager(new FakeTimeProvider(), resumeEnabled: false);
-        var outcome = mgr.TryResume(NewSocket(), "x", "p", "m", null, "prov");
+        SessionManager mgr = NewManager(new FakeTimeProvider(), resumeEnabled: false);
+        ResumeOutcome outcome = mgr.TryResume(NewSocket(), "x", "p", "m", null, "prov");
         Assert.False(outcome.Accepted);
         Assert.Equal("disabled", outcome.Reason);
     }
@@ -182,8 +183,8 @@ public sealed class SessionManagerTests
     [InlineData("short")]
     public void TryResume_WithMalformedPresentedId_Rejects(string? presentedId)
     {
-        var mgr = NewManager(new FakeTimeProvider());
-        var outcome = mgr.TryResume(NewSocket(), presentedId, "p", "m", null, "prov");
+        SessionManager mgr = NewManager(new FakeTimeProvider());
+        ResumeOutcome outcome = mgr.TryResume(NewSocket(), presentedId, "p", "m", null, "prov");
         Assert.False(outcome.Accepted);
         Assert.Equal("malformed", outcome.Reason);
     }
@@ -191,9 +192,9 @@ public sealed class SessionManagerTests
     [Fact]
     public void TryResume_WithUnknownId_Rejects()
     {
-        var mgr = NewManager(new FakeTimeProvider());
-        var unknownButWellFormed = new string('a', 64);
-        var outcome = mgr.TryResume(NewSocket(), unknownButWellFormed, "p", "m", null, "prov");
+        SessionManager mgr = NewManager(new FakeTimeProvider());
+        string unknownButWellFormed = new('a', 64);
+        ResumeOutcome outcome = mgr.TryResume(NewSocket(), unknownButWellFormed, "p", "m", null, "prov");
         Assert.False(outcome.Accepted);
         Assert.Equal("unknown", outcome.Reason);
     }
@@ -202,21 +203,21 @@ public sealed class SessionManagerTests
     public void TryResume_AfterIdleExpiry_RejectsAsExpired_AndEndsTheSession()
     {
         var time = new FakeTimeProvider();
-        var mgr = NewManager(time, idleTimeoutSeconds: 60, graceSeconds: 600); // grace outlives idle on paper
-        var ws = NewSocket();
+        SessionManager mgr = NewManager(time, idleTimeoutSeconds: 60, graceSeconds: 600); // grace outlives idle on paper
+        FakeWebSocket ws = NewSocket();
         mgr.CreateSession("s1", ws, "p", "m", null, new FakeToolExecutor(), "alloy");
-        var resumeId = mgr.IssueResumeId("s1")!;
+        string resumeId = mgr.IssueResumeId("s1")!;
         mgr.Detach(ws, "s1", "socket closed");
 
         time.Advance(TimeSpan.FromSeconds(61)); // past the idle deadline even though grace would allow more
 
-        var outcome = mgr.TryResume(NewSocket(), resumeId, "p", "m", null, "prov");
+        ResumeOutcome outcome = mgr.TryResume(NewSocket(), resumeId, "p", "m", null, "prov");
         Assert.False(outcome.Accepted);
         Assert.Equal("expired", outcome.Reason);
 
         // The expired session was ended as a side effect -- a second attempt reports "unknown",
         // not "expired" again (there is nothing left to be expired).
-        var again = mgr.TryResume(NewSocket(), resumeId, "p", "m", null, "prov2");
+        ResumeOutcome again = mgr.TryResume(NewSocket(), resumeId, "p", "m", null, "prov2");
         Assert.Equal("unknown", again.Reason);
     }
 
@@ -227,16 +228,16 @@ public sealed class SessionManagerTests
     public void TryResume_WithMismatchedBinding_Rejects(
         string requestedPersona, string requestedModel, string? requestedMode, string expectedReason)
     {
-        var mgr = NewManager(new FakeTimeProvider());
+        SessionManager mgr = NewManager(new FakeTimeProvider());
         mgr.CreateSession("s1", NewSocket(), "p", "m", "mode", new FakeToolExecutor(), "alloy");
-        var resumeId = mgr.IssueResumeId("s1")!;
+        string resumeId = mgr.IssueResumeId("s1")!;
 
-        var outcome = mgr.TryResume(NewSocket(), resumeId, requestedPersona, requestedModel, requestedMode, "prov");
+        ResumeOutcome outcome = mgr.TryResume(NewSocket(), resumeId, requestedPersona, requestedModel, requestedMode, "prov");
         Assert.False(outcome.Accepted);
         Assert.Equal(expectedReason, outcome.Reason);
 
         // A rejected resume must NOT consume the credential -- a correctly-bound retry still works.
-        var retry = mgr.TryResume(NewSocket(), resumeId, "p", "m", "mode", "prov");
+        ResumeOutcome retry = mgr.TryResume(NewSocket(), resumeId, "p", "m", "mode", "prov");
         Assert.True(retry.Accepted);
     }
 
@@ -244,14 +245,14 @@ public sealed class SessionManagerTests
     public void TryResume_HappyPath_AcceptsAndReturnsBoundState_AndRotatesTheCredential()
     {
         var time = new FakeTimeProvider();
-        var mgr = NewManager(time);
+        SessionManager mgr = NewManager(time);
         var toolExecutor = new FakeToolExecutor();
         mgr.CreateSession("s1", NewSocket(), "p", "m", "mode", toolExecutor, "verse");
-        var resumeId = mgr.IssueResumeId("s1")!;
+        string resumeId = mgr.IssueResumeId("s1")!;
         mgr.SetVoice("s1", "verse2");
 
-        var newSocket = NewSocket();
-        var outcome = mgr.TryResume(newSocket, resumeId, "p", "m", "mode", "prov");
+        FakeWebSocket newSocket = NewSocket();
+        ResumeOutcome outcome = mgr.TryResume(newSocket, resumeId, "p", "m", "mode", "prov");
 
         Assert.True(outcome.Accepted);
         Assert.Equal("s1", outcome.SessionId);
@@ -262,7 +263,7 @@ public sealed class SessionManagerTests
         Assert.NotEqual(resumeId, outcome.ResumeId); // single-use: a fresh credential was minted
 
         // The consumed id can never be replayed.
-        var replay = mgr.TryResume(NewSocket(), resumeId, "p", "m", "mode", "prov3");
+        ResumeOutcome replay = mgr.TryResume(NewSocket(), resumeId, "p", "m", "mode", "prov3");
         Assert.False(replay.Accepted);
         Assert.Equal("unknown", replay.Reason);
     }
@@ -270,12 +271,12 @@ public sealed class SessionManagerTests
     [Fact]
     public void TryResume_EndsTheCallersProvisionalSession_WhenDifferentFromTheResumedOne()
     {
-        var mgr = NewManager(new FakeTimeProvider());
+        SessionManager mgr = NewManager(new FakeTimeProvider());
         mgr.CreateSession("s1", NewSocket(), "p", "m", null, new FakeToolExecutor(), "alloy");
-        var resumeId = mgr.IssueResumeId("s1")!;
+        string resumeId = mgr.IssueResumeId("s1")!;
         mgr.CreateSession("provisional", NewSocket(), "p", "m", null, new FakeToolExecutor(), "alloy");
 
-        var outcome = mgr.TryResume(NewSocket(), resumeId, "p", "m", null, "provisional");
+        ResumeOutcome outcome = mgr.TryResume(NewSocket(), resumeId, "p", "m", null, "provisional");
         Assert.True(outcome.Accepted);
 
         // The provisional session must be gone -- its own (now-orphaned) voice lookup resolves to
@@ -286,15 +287,15 @@ public sealed class SessionManagerTests
     [Fact]
     public void TryResume_WhenPriorSocketStillAttached_ReturnsItAsStaleWs_ForTheCallerToSupersede()
     {
-        var mgr = NewManager(new FakeTimeProvider());
-        var oldWs = NewSocket();
+        SessionManager mgr = NewManager(new FakeTimeProvider());
+        FakeWebSocket oldWs = NewSocket();
         mgr.CreateSession("s1", oldWs, "p", "m", null, new FakeToolExecutor(), "alloy");
-        var resumeId = mgr.IssueResumeId("s1")!;
+        string resumeId = mgr.IssueResumeId("s1")!;
         // Deliberately NOT detached -- the old socket is still "attached" when the resume arrives
         // (e.g. a duplicate tab), so the manager must hand it back for a non-blocking 4002 close.
 
-        var newWs = NewSocket();
-        var outcome = mgr.TryResume(newWs, resumeId, "p", "m", null, "prov");
+        FakeWebSocket newWs = NewSocket();
+        ResumeOutcome outcome = mgr.TryResume(newWs, resumeId, "p", "m", null, "prov");
 
         Assert.True(outcome.Accepted);
         Assert.Same(oldWs, outcome.StaleWs);
@@ -304,13 +305,13 @@ public sealed class SessionManagerTests
     public void TryResume_WhenNoPriorSocketWasAttached_StaleWsIsNull()
     {
         var time = new FakeTimeProvider();
-        var mgr = NewManager(time);
-        var ws = NewSocket();
+        SessionManager mgr = NewManager(time);
+        FakeWebSocket ws = NewSocket();
         mgr.CreateSession("s1", ws, "p", "m", null, new FakeToolExecutor(), "alloy");
-        var resumeId = mgr.IssueResumeId("s1")!;
+        string resumeId = mgr.IssueResumeId("s1")!;
         mgr.Detach(ws, "s1", "socket closed"); // properly detached first, as a real reconnect would be
 
-        var outcome = mgr.TryResume(NewSocket(), resumeId, "p", "m", null, "prov");
+        ResumeOutcome outcome = mgr.TryResume(NewSocket(), resumeId, "p", "m", null, "prov");
         Assert.True(outcome.Accepted);
         Assert.Null(outcome.StaleWs);
     }
@@ -320,8 +321,8 @@ public sealed class SessionManagerTests
     [Fact]
     public void Detach_WithResumeDisabled_EndsTheSessionImmediately()
     {
-        var mgr = NewManager(new FakeTimeProvider(), resumeEnabled: false);
-        var ws = NewSocket();
+        SessionManager mgr = NewManager(new FakeTimeProvider(), resumeEnabled: false);
+        FakeWebSocket ws = NewSocket();
         mgr.CreateSession("s1", ws, "p", "m", null, new FakeToolExecutor(), "alloy");
         mgr.Detach(ws, "s1", "socket closed");
         Assert.Equal("", mgr.GetVoice("s1")); // gone
@@ -330,8 +331,8 @@ public sealed class SessionManagerTests
     [Fact]
     public void Detach_FromAWrongOrStaleSocket_IsANoOp()
     {
-        var mgr = NewManager(new FakeTimeProvider());
-        var ws = NewSocket();
+        SessionManager mgr = NewManager(new FakeTimeProvider());
+        FakeWebSocket ws = NewSocket();
         mgr.CreateSession("s1", ws, "p", "m", null, new FakeToolExecutor(), "alloy");
         mgr.Detach(NewSocket(), "s1", "stale close handler"); // NOT the attached socket
         Assert.Equal("alloy", mgr.GetVoice("s1")); // untouched -- still live and attached
@@ -341,14 +342,14 @@ public sealed class SessionManagerTests
     public void Detach_ThenResumeWithinGrace_Succeeds()
     {
         var time = new FakeTimeProvider();
-        var mgr = NewManager(time, idleTimeoutSeconds: 300, graceSeconds: 60);
-        var ws = NewSocket();
+        SessionManager mgr = NewManager(time, idleTimeoutSeconds: 300, graceSeconds: 60);
+        FakeWebSocket ws = NewSocket();
         mgr.CreateSession("s1", ws, "p", "m", null, new FakeToolExecutor(), "alloy");
-        var resumeId = mgr.IssueResumeId("s1")!;
+        string resumeId = mgr.IssueResumeId("s1")!;
         mgr.Detach(ws, "s1", "socket closed");
 
         time.Advance(TimeSpan.FromSeconds(59));
-        var outcome = mgr.TryResume(NewSocket(), resumeId, "p", "m", null, "prov");
+        ResumeOutcome outcome = mgr.TryResume(NewSocket(), resumeId, "p", "m", null, "prov");
         Assert.True(outcome.Accepted);
     }
 
@@ -356,14 +357,14 @@ public sealed class SessionManagerTests
     public void Detach_ThenGraceExpires_ResumeIsRejectedAsExpired()
     {
         var time = new FakeTimeProvider();
-        var mgr = NewManager(time, idleTimeoutSeconds: 300, graceSeconds: 60);
-        var ws = NewSocket();
+        SessionManager mgr = NewManager(time, idleTimeoutSeconds: 300, graceSeconds: 60);
+        FakeWebSocket ws = NewSocket();
         mgr.CreateSession("s1", ws, "p", "m", null, new FakeToolExecutor(), "alloy");
-        var resumeId = mgr.IssueResumeId("s1")!;
+        string resumeId = mgr.IssueResumeId("s1")!;
         mgr.Detach(ws, "s1", "socket closed");
 
         time.Advance(TimeSpan.FromSeconds(61));
-        var outcome = mgr.TryResume(NewSocket(), resumeId, "p", "m", null, "prov");
+        ResumeOutcome outcome = mgr.TryResume(NewSocket(), resumeId, "p", "m", null, "prov");
         Assert.False(outcome.Accepted);
         Assert.Equal("expired", outcome.Reason);
     }
@@ -374,16 +375,16 @@ public sealed class SessionManagerTests
         // idle_timeout=10s, grace=600s, and the session has already been idle 9s before detach --
         // the grace hold must be capped at the 1s of idle budget actually left, not the full 600s.
         var time = new FakeTimeProvider();
-        var mgr = NewManager(time, idleTimeoutSeconds: 10, graceSeconds: 600);
-        var ws = NewSocket();
+        SessionManager mgr = NewManager(time, idleTimeoutSeconds: 10, graceSeconds: 600);
+        FakeWebSocket ws = NewSocket();
         mgr.CreateSession("s1", ws, "p", "m", null, new FakeToolExecutor(), "alloy");
-        var resumeId = mgr.IssueResumeId("s1")!;
+        string resumeId = mgr.IssueResumeId("s1")!;
 
         time.Advance(TimeSpan.FromSeconds(9));
         mgr.Detach(ws, "s1", "socket closed");
 
         time.Advance(TimeSpan.FromSeconds(2)); // past the 1s of remaining idle budget
-        var outcome = mgr.TryResume(NewSocket(), resumeId, "p", "m", null, "prov");
+        ResumeOutcome outcome = mgr.TryResume(NewSocket(), resumeId, "p", "m", null, "prov");
         Assert.False(outcome.Accepted);
         Assert.Equal("expired", outcome.Reason);
     }
@@ -392,23 +393,23 @@ public sealed class SessionManagerTests
     public void Detach_EvictsOldestWhenMaxDetachedExceeded()
     {
         var time = new FakeTimeProvider();
-        var mgr = NewManager(time, maxDetached: 1, graceSeconds: 600, idleTimeoutSeconds: 6000);
+        SessionManager mgr = NewManager(time, maxDetached: 1, graceSeconds: 600, idleTimeoutSeconds: 6000);
 
-        var ws1 = NewSocket();
+        FakeWebSocket ws1 = NewSocket();
         mgr.CreateSession("s1", ws1, "p", "m", null, new FakeToolExecutor(), "alloy");
-        var resume1 = mgr.IssueResumeId("s1")!;
+        string resume1 = mgr.IssueResumeId("s1")!;
         mgr.Detach(ws1, "s1", "socket closed");
 
-        var ws2 = NewSocket();
+        FakeWebSocket ws2 = NewSocket();
         mgr.CreateSession("s2", ws2, "p", "m", null, new FakeToolExecutor(), "alloy");
-        var resume2 = mgr.IssueResumeId("s2")!;
+        string resume2 = mgr.IssueResumeId("s2")!;
         mgr.Detach(ws2, "s2", "socket closed"); // pushes the LRU over maxDetached=1, evicting s1
 
-        var outcome1 = mgr.TryResume(NewSocket(), resume1, "p", "m", null, "prov1");
+        ResumeOutcome outcome1 = mgr.TryResume(NewSocket(), resume1, "p", "m", null, "prov1");
         Assert.False(outcome1.Accepted);
         Assert.Equal("unknown", outcome1.Reason); // evicted, not merely expired
 
-        var outcome2 = mgr.TryResume(NewSocket(), resume2, "p", "m", null, "prov2");
+        ResumeOutcome outcome2 = mgr.TryResume(NewSocket(), resume2, "p", "m", null, "prov2");
         Assert.True(outcome2.Accepted); // the newer detached session survives
     }
 
@@ -416,10 +417,10 @@ public sealed class SessionManagerTests
     public void SweepDetached_EndsSessionsPastGraceOrIdleBudget_AndReturnsTheCount()
     {
         var time = new FakeTimeProvider();
-        var mgr = NewManager(time, graceSeconds: 10, idleTimeoutSeconds: 600);
-        var ws = NewSocket();
+        SessionManager mgr = NewManager(time, graceSeconds: 10, idleTimeoutSeconds: 600);
+        FakeWebSocket ws = NewSocket();
         mgr.CreateSession("s1", ws, "p", "m", null, new FakeToolExecutor(), "alloy");
-        var resumeId = mgr.IssueResumeId("s1")!;
+        string resumeId = mgr.IssueResumeId("s1")!;
         mgr.Detach(ws, "s1", "socket closed");
 
         Assert.Equal(0, mgr.SweepDetached()); // not expired yet
@@ -427,7 +428,7 @@ public sealed class SessionManagerTests
         Assert.Equal(1, mgr.SweepDetached());
         Assert.Equal(0, mgr.SweepDetached()); // idempotent -- already gone
 
-        var outcome = mgr.TryResume(NewSocket(), resumeId, "p", "m", null, "prov");
+        ResumeOutcome outcome = mgr.TryResume(NewSocket(), resumeId, "p", "m", null, "prov");
         Assert.False(outcome.Accepted);
         Assert.Equal("unknown", outcome.Reason);
     }
@@ -436,8 +437,8 @@ public sealed class SessionManagerTests
     public async Task CloseIdleSessionsAsync_ClosesAttachedIdleSocketsWith4000_AndEndsTheSession()
     {
         var time = new FakeTimeProvider();
-        var mgr = NewManager(time, idleTimeoutSeconds: 30);
-        var ws = NewSocket();
+        SessionManager mgr = NewManager(time, idleTimeoutSeconds: 30);
+        FakeWebSocket ws = NewSocket();
         mgr.CreateSession("s1", ws, "p", "m", null, new FakeToolExecutor(), "alloy");
 
         time.Advance(TimeSpan.FromSeconds(31));
@@ -453,8 +454,8 @@ public sealed class SessionManagerTests
     public async Task CloseIdleSessionsAsync_LeavesActiveSessionsUntouched()
     {
         var time = new FakeTimeProvider();
-        var mgr = NewManager(time, idleTimeoutSeconds: 30);
-        var ws = NewSocket();
+        SessionManager mgr = NewManager(time, idleTimeoutSeconds: 30);
+        FakeWebSocket ws = NewSocket();
         mgr.CreateSession("s1", ws, "p", "m", null, new FakeToolExecutor(), "alloy");
 
         time.Advance(TimeSpan.FromSeconds(10));
@@ -471,7 +472,7 @@ public sealed class SessionManagerTests
     [Fact]
     public void BuildRehydrationText_IncludesOrderJsonAndHistory_OldestFirst()
     {
-        var text = SessionManager.BuildRehydrationText(
+        string text = SessionManager.BuildRehydrationText(
             "{\"items\":[\"Tots\"]}",
             [("guest", "I'll have tots"), ("assistant", "Anything else?")],
             "the assistant");
@@ -486,14 +487,14 @@ public sealed class SessionManagerTests
     [Fact]
     public void BuildRehydrationText_WithNoHistory_SaysNoneRecorded()
     {
-        var text = SessionManager.BuildRehydrationText("{}", [], "the assistant");
+        string text = SessionManager.BuildRehydrationText("{}", [], "the assistant");
         Assert.Contains("(none recorded)", text);
     }
 
     [Fact]
     public void BuildNudgeText_FormatsTheRoleName()
     {
-        var text = SessionManager.BuildNudgeText("the assistant");
+        string text = SessionManager.BuildNudgeText("the assistant");
         Assert.Contains("the assistant", text);
     }
 }

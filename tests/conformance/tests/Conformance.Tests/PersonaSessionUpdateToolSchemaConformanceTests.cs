@@ -1,4 +1,3 @@
-using System.Linq;
 using Conformance.Fakes;
 using Conformance.Harness;
 using Conformance.Tests.Scenarios.Ordering;
@@ -39,27 +38,27 @@ file static class PersonaSessionUpdateToolSchemaScenario
 {
     public static async Task RunAsync(ConformanceFixture fixture, string personaId, CancellationToken ct)
     {
-        var (browser, connection, _) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+        (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int _) = await OrderScenarioHelpers.ConnectAndGreetAsync(
             fixture, ct, persona: personaId);
-        await using var _browser = browser;
+        await using RealtimeBrowserClient _browser = browser;
 
-        var frames = connection.ReceivedFrames.Snapshot();
+        IReadOnlyList<RecordedFrame> frames = connection.ReceivedFrames.Snapshot();
 
-        var bootstrap = frames.FirstOrDefault(f => f.Sequence == 0 && f.Type == "session.update");
+        RecordedFrame? bootstrap = frames.FirstOrDefault(f => f.Sequence == 0 && f.Type == "session.update");
         Assert.True(bootstrap is not null,
             $"No bootstrap session.update was captured for persona '{personaId}'.");
 
-        var clientUpdate = frames.FirstOrDefault(f => f.Sequence > 0 && f.Type == "session.update");
+        RecordedFrame? clientUpdate = frames.FirstOrDefault(f => f.Sequence > 0 && f.Type == "session.update");
         Assert.True(clientUpdate is not null,
             $"No browser-triggered session.update was forwarded upstream for persona '{personaId}'.");
 
-        foreach (var (frame, frameName) in new (RecordedFrame Frame, string Name)[]
+        foreach ((RecordedFrame? frame, string? frameName) in new (RecordedFrame Frame, string Name)[]
                  {
-                     (bootstrap!, "bootstrap"),
-                     (clientUpdate!, "client"),
+                     (bootstrap, "bootstrap"),
+                     (clientUpdate, "client"),
                  })
         {
-            var result = GaSessionValidator.Validate(
+            SessionUpdateValidationResult result = GaSessionValidator.Validate(
                 frame.Json, new RealtimeSessionState(), BackendContract.DefaultDeployment);
             Assert.True(result.IsAccepted,
                 $"The {frameName} session.update for persona '{personaId}' was REJECTED by the " +
@@ -79,7 +78,7 @@ public sealed class PersonaSessionUpdateToolSchemaConformanceTests(ConformanceFi
     public static TheoryData<string> DiscoveredPersonaIds()
     {
         var data = new TheoryData<string>();
-        foreach (var id in ConformancePersonas.DiscoverFromDisk())
+        foreach (string id in ConformancePersonas.DiscoverFromDisk())
         {
             data.Add(id);
         }

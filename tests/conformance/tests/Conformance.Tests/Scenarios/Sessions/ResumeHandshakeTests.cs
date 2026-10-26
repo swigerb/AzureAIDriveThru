@@ -23,14 +23,14 @@ namespace Conformance.Tests.Scenarios.Sessions;
 [Collection(ResumeTimersConformanceCollection.Name)]
 public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     // Comfortably below ResumeTimers' first_frame_timeout_seconds=2s -- proves the metadata came
     // from the immediate "first frame decided non-resume" path in rtmt.py's from_client_to_server
     // (resume_decided.set() + announce_fresh() run inline, no sleep), not from first_frame_deadline's
     // 2s fallback timer. (PR #54 review: the timeout used to be 0.5s with only a 400ms bound --
     // ~100ms of margin under load. Raised to 2s/1000ms for real headroom.)
-    private static readonly TimeSpan WellUnderFirstFrameTimeout = TimeSpan.FromMilliseconds(1000);
+    private static readonly TimeSpan s_wellUnderFirstFrameTimeout = TimeSpan.FromMilliseconds(1000);
 
     private static string RandomResumeLookingId() => Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N"); // 64 chars, in [32,128]
 
@@ -38,23 +38,23 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task A_non_resume_first_frame_decides_fresh_immediately_not_after_the_timeout() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
         var stopwatch = Stopwatch.StartNew();
         await browser.SendStartSessionAsync(cancellationToken: ct);
-        var metadata = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        RecordedFrame? metadata = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata", s_frameTimeout, ct);
         stopwatch.Stop();
 
         Assert.True(metadata is not null, "Expected extension.session_metadata after a non-resume first frame.");
-        Assert.True(stopwatch.Elapsed < WellUnderFirstFrameTimeout,
+        Assert.True(stopwatch.Elapsed < s_wellUnderFirstFrameTimeout,
             $"Metadata took {stopwatch.Elapsed} -- expected the immediate first-frame decision path, " +
-            $"not the {WellUnderFirstFrameTimeout} first-frame-timeout fallback.");
-        var resumeId = metadata!.Json.GetProperty("resumeId").GetString();
+            $"not the {s_wellUnderFirstFrameTimeout} first-frame-timeout fallback.");
+        string? resumeId = metadata!.Json.GetProperty("resumeId").GetString();
         Assert.True(!string.IsNullOrEmpty(resumeId));
     });
 
@@ -62,33 +62,33 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task A_late_resume_attempt_is_rejected_and_the_session_continues() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
         // First frame: not a resume, decides "fresh" for this socket.
         await browser.SendStartSessionAsync(cancellationToken: ct);
-        var firstMetadata = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        RecordedFrame? firstMetadata = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata", s_frameTimeout, ct);
         Assert.True(firstMetadata is not null, "Expected extension.session_metadata after the first frame.");
 
         // Second frame: extension.resume is no longer eligible -- only the first frame is.
         await browser.SendExtensionResumeAsync(RandomResumeLookingId(), ct);
-        var rejected = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.resume_rejected" && f.Sequence > firstMetadata.Sequence, FrameTimeout, ct);
+        RecordedFrame? rejected = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.resume_rejected" && f.Sequence > firstMetadata.Sequence, s_frameTimeout, ct);
         Assert.True(rejected is not null, "Expected extension.resume_rejected for a late (non-first-frame) resume attempt.");
         Assert.Equal("not_first_frame", rejected!.Json.GetProperty("reason").GetString());
 
         // The browser drops its stored id on any rejection, so the socket re-announces its own
         // (already-running) session with a freshly rotated id -- proof the session itself was
         // never torn down by the rejected resume attempt.
-        var freshMetadata = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_metadata" && f.Sequence > rejected.Sequence, FrameTimeout, ct);
+        RecordedFrame? freshMetadata = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata" && f.Sequence > rejected.Sequence, s_frameTimeout, ct);
         Assert.True(freshMetadata is not null, "Expected a fresh re-announce after the late-resume rejection.");
-        var firstResumeId = firstMetadata.Json.GetProperty("resumeId").GetString();
-        var freshResumeId = freshMetadata!.Json.GetProperty("resumeId").GetString();
+        string? firstResumeId = firstMetadata.Json.GetProperty("resumeId").GetString();
+        string? freshResumeId = freshMetadata!.Json.GetProperty("resumeId").GetString();
         Assert.NotEqual(firstResumeId, freshResumeId);
 
         // The socket itself was never closed by the rejected attempt: no close observed shortly after.
@@ -97,7 +97,7 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
         // times out" and "plain delay elapses" is itself a coin-flip race between two ~500ms
         // clocks, not a real check. WaitForCloseAsync's own TimeoutException already *is* the
         // "no close" signal, so catch it directly instead.)
-        var closedQuickly = true;
+        bool closedQuickly = true;
         try
         {
             await browser.WaitForCloseAsync(TimeSpan.FromMilliseconds(500), ct);
@@ -135,18 +135,18 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task A_resume_sent_after_the_first_frame_timeout_fallback_is_rejected_as_late() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
         // Deliberately send nothing: the only way "fresh" gets decided here is the
         // first_frame_timeout_seconds=2s fallback timer itself (rtmt.py's first_frame_deadline),
         // not an inline client-frame decision.
         var stopwatch = Stopwatch.StartNew();
-        var firstMetadata = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        RecordedFrame? firstMetadata = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata", s_frameTimeout, ct);
         stopwatch.Stop();
         Assert.True(firstMetadata is not null, "Expected extension.session_metadata from the first-frame-timeout fallback.");
         Assert.True(stopwatch.Elapsed >= TimeSpan.FromMilliseconds(1800),
@@ -158,20 +158,20 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
         // but the timeout fallback already decided "fresh" for this socket. Must be rejected the
         // same way as a structurally late resume, not accepted as a legitimate first-frame resume.
         await browser.SendExtensionResumeAsync(RandomResumeLookingId(), ct);
-        var rejected = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.resume_rejected" && f.Sequence > firstMetadata.Sequence, FrameTimeout, ct);
+        RecordedFrame? rejected = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.resume_rejected" && f.Sequence > firstMetadata.Sequence, s_frameTimeout, ct);
         Assert.True(rejected is not null,
             "Expected extension.resume_rejected for a resume sent after the first-frame-timeout fallback already decided fresh.");
         Assert.Equal("not_first_frame", rejected!.Json.GetProperty("reason").GetString());
 
-        var freshMetadata = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_metadata" && f.Sequence > rejected.Sequence, FrameTimeout, ct);
+        RecordedFrame? freshMetadata = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata" && f.Sequence > rejected.Sequence, s_frameTimeout, ct);
         Assert.True(freshMetadata is not null, "Expected a fresh re-announce after the late-resume rejection.");
-        var firstResumeId = firstMetadata.Json.GetProperty("resumeId").GetString();
-        var freshResumeId = freshMetadata!.Json.GetProperty("resumeId").GetString();
+        string? firstResumeId = firstMetadata.Json.GetProperty("resumeId").GetString();
+        string? freshResumeId = freshMetadata!.Json.GetProperty("resumeId").GetString();
         Assert.NotEqual(firstResumeId, freshResumeId);
 
-        var closedQuickly = true;
+        bool closedQuickly = true;
         try
         {
             await browser.WaitForCloseAsync(TimeSpan.FromMilliseconds(500), ct);
@@ -187,22 +187,22 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task A_malformed_resume_id_as_the_first_frame_is_rejected() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
         // Well under session_manager.py's _RESUME_ID_MIN_LEN=32 -- rejected before any lookup.
         await browser.SendExtensionResumeAsync("too-short", ct);
 
-        var rejected = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.resume_rejected", FrameTimeout, ct);
+        RecordedFrame? rejected = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.resume_rejected", s_frameTimeout, ct);
         Assert.True(rejected is not null, "Expected extension.resume_rejected for a malformed resume id.");
         Assert.Equal("malformed", rejected!.Json.GetProperty("reason").GetString());
 
-        var freshMetadata = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_metadata" && f.Sequence > rejected.Sequence, FrameTimeout, ct);
+        RecordedFrame? freshMetadata = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata" && f.Sequence > rejected.Sequence, s_frameTimeout, ct);
         Assert.True(freshMetadata is not null, "Expected fresh extension.session_metadata after the malformed resume rejection.");
     });
 
@@ -210,22 +210,22 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task An_unknown_resume_id_as_the_first_frame_is_rejected() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
         // Right length (64 chars, inside [32,128]) but never issued by this (or any) backend run.
         await browser.SendExtensionResumeAsync(RandomResumeLookingId(), ct);
 
-        var rejected = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.resume_rejected", FrameTimeout, ct);
+        RecordedFrame? rejected = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.resume_rejected", s_frameTimeout, ct);
         Assert.True(rejected is not null, "Expected extension.resume_rejected for an unknown resume id.");
         Assert.Equal("unknown", rejected!.Json.GetProperty("reason").GetString());
 
-        var freshMetadata = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_metadata" && f.Sequence > rejected.Sequence, FrameTimeout, ct);
+        RecordedFrame? freshMetadata = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata" && f.Sequence > rejected.Sequence, s_frameTimeout, ct);
         Assert.True(freshMetadata is not null, "Expected fresh extension.session_metadata after the unknown resume rejection.");
     });
 
@@ -233,41 +233,41 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task A_resume_id_is_single_use_a_second_attempt_with_the_same_id_is_unknown() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
-        var firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        Assert.True(await firstConnectionTask is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        Assert.True(await firstConnectionTask is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await browser.SendStartSessionAsync(cancellationToken: ct);
-        var firstMetadata = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        RecordedFrame? firstMetadata = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata", s_frameTimeout, ct);
         Assert.True(firstMetadata is not null);
-        var originalResumeId = firstMetadata!.Json.GetProperty("resumeId").GetString();
+        string? originalResumeId = firstMetadata!.Json.GetProperty("resumeId").GetString();
 
         // Drop without extension.end_session -- a genuine, resumable detach.
         await browser.CloseAsync(cancellationToken: ct);
-        await browser.WaitForCloseAsync(FrameTimeout, ct);
+        await browser.WaitForCloseAsync(s_frameTimeout, ct);
         await browser.DisposeAsync();
 
-        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var second = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        Assert.True(await secondConnectionTask is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient second = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        Assert.True(await secondConnectionTask is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await second.SendExtensionResumeAsync(originalResumeId!, ct);
 
-        var resumed = await second.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_resumed", FrameTimeout, ct);
+        RecordedFrame? resumed = await second.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_resumed", s_frameTimeout, ct);
         Assert.True(resumed is not null, "Expected the first resume attempt (id never used before) to succeed.");
 
         // The presented id was popped before a rotated one was issued -- using the SAME
         // (now-consumed) original id again must be "unknown", never "expired" (which would
         // imply the id was still recognised as belonging to a session).
-        var thirdConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var third = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        Assert.True(await thirdConnectionTask is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> thirdConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient third = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        Assert.True(await thirdConnectionTask is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await third.SendExtensionResumeAsync(originalResumeId!, ct);
 
-        var rejected = await third.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.resume_rejected", FrameTimeout, ct);
+        RecordedFrame? rejected = await third.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.resume_rejected", s_frameTimeout, ct);
         Assert.True(rejected is not null, "Expected the second attempt with the already-consumed resume id to be rejected.");
         Assert.Equal("unknown", rejected!.Json.GetProperty("reason").GetString());
     });
@@ -276,30 +276,30 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task A_stray_late_resume_on_an_already_resumed_connection_still_gets_a_rotated_re_announce() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
         // Establish a genuinely resumable session, then detach without extension.end_session.
-        var firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        var original = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        Assert.True(await firstConnectionTask is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        RealtimeBrowserClient original = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        Assert.True(await firstConnectionTask is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await original.SendStartSessionAsync(cancellationToken: ct);
-        var originalMetadata = await original.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        RecordedFrame? originalMetadata = await original.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata", s_frameTimeout, ct);
         Assert.True(originalMetadata is not null);
-        var resumeId = originalMetadata!.Json.GetProperty("resumeId").GetString();
+        string? resumeId = originalMetadata!.Json.GetProperty("resumeId").GetString();
         await original.CloseAsync(cancellationToken: ct);
-        await original.WaitForCloseAsync(FrameTimeout, ct);
+        await original.WaitForCloseAsync(s_frameTimeout, ct);
         await original.DisposeAsync();
 
         // This connection's own first frame IS the resume -- it succeeds.
-        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var resumedConnection = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        Assert.True(await secondConnectionTask is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient resumedConnection = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        Assert.True(await secondConnectionTask is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await resumedConnection.SendExtensionResumeAsync(resumeId!, ct);
-        var resumed = await resumedConnection.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_resumed", FrameTimeout, ct);
+        RecordedFrame? resumed = await resumedConnection.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_resumed", s_frameTimeout, ct);
         Assert.True(resumed is not null, "Expected the resume to succeed.");
-        var resumedResumeId = resumed!.Json.GetProperty("resume_id").GetString();
+        string? resumedResumeId = resumed!.Json.GetProperty("resume_id").GetString();
 
         // A stray second extension.resume on this already-resumed connection is rejected as
         // "not_first_frame" -- rtmt.py's handle_resume() sets its `announced` nonlocal true on a
@@ -310,26 +310,26 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
         // of this test incorrectly assumed a resumed connection is exempt from the re-announce;
         // it is not.)
         await resumedConnection.SendExtensionResumeAsync(RandomResumeLookingId(), ct);
-        var rejectedOnResumedSocket = await resumedConnection.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.resume_rejected" && f.Sequence > resumed.Sequence, FrameTimeout, ct);
+        RecordedFrame? rejectedOnResumedSocket = await resumedConnection.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.resume_rejected" && f.Sequence > resumed.Sequence, s_frameTimeout, ct);
         Assert.True(rejectedOnResumedSocket is not null,
             "Expected extension.resume_rejected for a stray resume attempt on an already-resumed connection.");
         Assert.Equal("not_first_frame", rejectedOnResumedSocket!.Json.GetProperty("reason").GetString());
 
-        var reannounced = await resumedConnection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? reannounced = await resumedConnection.ReceivedFrames.WaitForAsync(
             f => f.Type == "extension.session_metadata" && f.Sequence > rejectedOnResumedSocket.Sequence,
-            FrameTimeout, ct);
+            s_frameTimeout, ct);
         Assert.True(reannounced is not null,
             "Expected a rotated extension.session_metadata re-announce after the stray late resume " +
             "on an already-resumed connection -- Python's handle_resume() sets `announced = true` on " +
             "a successful resume exactly like the fresh path does, so this connection already holds " +
             "a resume-id baton that must be rotated once the browser drops its old one.");
-        var rotatedResumeId = reannounced!.Json.GetProperty("resumeId").GetString();
+        string? rotatedResumeId = reannounced!.Json.GetProperty("resumeId").GetString();
         Assert.False(string.IsNullOrEmpty(rotatedResumeId));
         Assert.NotEqual(resumedResumeId, rotatedResumeId);
 
         // The session itself must still be untouched by the stray attempt.
-        var closedQuickly = true;
+        bool closedQuickly = true;
         try
         {
             await resumedConnection.WaitForCloseAsync(TimeSpan.FromMilliseconds(500), ct);
@@ -345,27 +345,27 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Resuming_from_a_still_attached_socket_supersedes_it_with_4002() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
-        var firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var first = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        Assert.True(await firstConnectionTask is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient first = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        Assert.True(await firstConnectionTask is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await first.SendStartSessionAsync(cancellationToken: ct);
-        var metadata = await first.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        RecordedFrame? metadata = await first.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata", s_frameTimeout, ct);
         Assert.True(metadata is not null);
-        var resumeId = metadata!.Json.GetProperty("resumeId").GetString();
+        string? resumeId = metadata!.Json.GetProperty("resumeId").GetString();
 
         // `first` is deliberately left open (never closed) -- session_manager.py's resume() does
         // not require a detach: it only checks the digest and the idle-timeout window, so a
         // still-attached session's resume id is equally valid. This is the "steal" path.
-        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var second = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        Assert.True(await secondConnectionTask is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient second = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        Assert.True(await secondConnectionTask is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await second.SendExtensionResumeAsync(resumeId!, ct);
 
-        var resumed = await second.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_resumed", FrameTimeout, ct);
+        RecordedFrame? resumed = await second.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_resumed", s_frameTimeout, ct);
         Assert.True(resumed is not null, "Expected the still-attached session's resume id to be honoured.");
 
         // rtmt.py's handle_resume spawns _close_superseded(stale_ws) as a background task once
@@ -375,7 +375,7 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
         // Resuming_from_a_still_attached_socket_whose_transport_cannot_drain_still_forwards_the_new_sockets_own_session_update_promptly
         // below for the non-draining-peer backpressure hazard from Rick's round-2 review of #244,
         // which can't also observe CloseStatus for reasons explained on that test.
-        await first.WaitForCloseAsync(FrameTimeout, ct);
+        await first.WaitForCloseAsync(s_frameTimeout, ct);
         Assert.Equal((WebSocketCloseStatus)4002, first.CloseStatus);
         Assert.Equal("superseded", first.CloseStatusDescription);
     });
@@ -384,17 +384,17 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Resuming_from_a_still_attached_socket_whose_transport_cannot_drain_still_forwards_the_new_sockets_own_session_update_promptly() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
-        var firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var first = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var firstUpstream = await firstConnectionTask;
-        Assert.True(firstUpstream is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient first = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? firstUpstream = await firstConnectionTask;
+        Assert.True(firstUpstream is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await first.SendStartSessionAsync(cancellationToken: ct);
-        var metadata = await first.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        RecordedFrame? metadata = await first.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata", s_frameTimeout, ct);
         Assert.True(metadata is not null);
-        var resumeId = metadata!.Json.GetProperty("resumeId").GetString();
+        string? resumeId = metadata!.Json.GetProperty("resumeId").GetString();
 
         // Rick's round-2 review of #244 (issue 1, BLOCKING): `first`'s own socket is deliberately
         // made a NON-DRAINING half-open peer, not merely a stuck-but-idle one (CloseCodeTests'
@@ -421,7 +421,7 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
         // in Backend.Tests, which deterministically mutation-checks the exact production code path
         // (confirmed failing against the un-fixed code, passing against the fix).
         first.StopReaderLoopForTesting();
-        var floodDelta = Convert.ToBase64String(new byte[1024 * 1024]);
+        string floodDelta = Convert.ToBase64String(new byte[1024 * 1024]);
         using var floodCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var floodTask = Task.Run(async () =>
         {
@@ -468,14 +468,14 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
         // `first` is deliberately left open (never closed) -- session_manager.py's resume() does
         // not require a detach: it only checks the digest and the idle-timeout window, so a
         // still-attached session's resume id is equally valid. This is the "steal" path.
-        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var second = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var secondUpstream = await secondConnectionTask;
-        Assert.True(secondUpstream is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient second = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? secondUpstream = await secondConnectionTask;
+        Assert.True(secondUpstream is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await second.SendExtensionResumeAsync(resumeId!, ct);
 
-        var resumed = await second.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_resumed", FrameTimeout, ct);
+        RecordedFrame? resumed = await second.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_resumed", s_frameTimeout, ct);
         Assert.True(resumed is not null, "Expected the still-attached session's resume id to be honoured.");
 
         // The proof this test targets (round-2 review, issue 1): extension.session_resumed itself
@@ -486,16 +486,16 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
         // unblocked. B's very next frame (its own startSession's session.update, sent right after
         // the resume) rides that SAME call stack: if the supersede path still awaited `first`'s
         // stuck close inline AND that close actually blocked, this send would be stuck behind it.
-        var watermark = secondUpstream!.ReceivedFrames.Snapshot().Count;
+        int watermark = secondUpstream!.ReceivedFrames.Snapshot().Count;
         var stopwatch = Stopwatch.StartNew();
         await second.SendStartSessionAsync(cancellationToken: ct);
-        var secondSessionUpdate = await secondUpstream.ReceivedFrames.WaitForAsync(
-            f => f.Sequence >= watermark && f.Type == "session.update", FrameTimeout, ct);
+        RecordedFrame? secondSessionUpdate = await secondUpstream.ReceivedFrames.WaitForAsync(
+            f => f.Sequence >= watermark && f.Type == "session.update", s_frameTimeout, ct);
         stopwatch.Stop();
         Assert.True(secondSessionUpdate is not null, "Expected B's own session.update to reach its upstream connection.");
-        Assert.True(stopwatch.Elapsed < WellUnderFirstFrameTimeout,
+        Assert.True(stopwatch.Elapsed < s_wellUnderFirstFrameTimeout,
             $"B's own session.update took {stopwatch.Elapsed} to reach upstream -- expected well under " +
-            $"{WellUnderFirstFrameTimeout}; a slower time means B's own relay loop is still gated behind " +
+            $"{s_wellUnderFirstFrameTimeout}; a slower time means B's own relay loop is still gated behind " +
             "A's stuck supersede-close, exactly the hazard Rick's round-2 review of #244 found.");
 
         // Deliberately NOT asserting first.CloseStatus == 4002 here: StopReaderLoopForTesting()
@@ -516,28 +516,28 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Resume_id_never_appears_in_backend_diagnostics() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        Assert.True(await connectionTask is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        Assert.True(await connectionTask is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await browser.SendStartSessionAsync(cancellationToken: ct);
-        var metadata = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        RecordedFrame? metadata = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata", s_frameTimeout, ct);
         Assert.True(metadata is not null);
-        var resumeId = metadata!.Json.GetProperty("resumeId").GetString();
+        string? resumeId = metadata!.Json.GetProperty("resumeId").GetString();
         Assert.True(!string.IsNullOrEmpty(resumeId));
 
         await browser.CloseAsync(cancellationToken: ct);
-        await browser.WaitForCloseAsync(FrameTimeout, ct);
+        await browser.WaitForCloseAsync(s_frameTimeout, ct);
         await browser.DisposeAsync();
 
-        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var second = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        Assert.True(await secondConnectionTask is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient second = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        Assert.True(await secondConnectionTask is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await second.SendExtensionResumeAsync(resumeId!, ct);
-        var resumed = await second.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_resumed", FrameTimeout, ct);
+        RecordedFrame? resumed = await second.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_resumed", s_frameTimeout, ct);
         Assert.True(resumed is not null);
 
         // The harness's own client never puts the resume id anywhere but a JSON WebSocket frame
@@ -546,7 +546,7 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
         // complementary half of session_manager.py's own contract ("the raw value goes to the
         // browser over the socket and nowhere else (never in URLs or logs)") against the backend's
         // own captured diagnostics/log output.
-        var diagnostics = fixture.Backend!.DumpDiagnostics();
+        string diagnostics = fixture.Backend!.DumpDiagnostics();
         Assert.DoesNotContain(resumeId!, diagnostics, StringComparison.Ordinal);
     });
 
@@ -566,40 +566,40 @@ public sealed class ResumeHandshakeTests(ResumeTimersConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Resuming_carries_over_the_original_sessions_token_and_round_trip_state() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        var oldBrowser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        Assert.True(await connectionTask is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        RealtimeBrowserClient oldBrowser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        Assert.True(await connectionTask is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
         await oldBrowser.SendStartSessionAsync(cancellationToken: ct);
-        var metadata = await oldBrowser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        RecordedFrame? metadata = await oldBrowser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata", s_frameTimeout, ct);
         Assert.True(metadata is not null, "Expected extension.session_metadata after the first frame.");
-        var resumeId = metadata!.Json.GetProperty("resumeId").GetString();
-        var originalSessionToken = metadata.Json.GetProperty("sessionToken").GetString();
+        string? resumeId = metadata!.Json.GetProperty("resumeId").GetString();
+        string? originalSessionToken = metadata.Json.GetProperty("sessionToken").GetString();
         Assert.False(string.IsNullOrEmpty(originalSessionToken));
         Assert.Equal(0, metadata.Json.GetProperty("roundTripIndex").GetInt32());
 
         // The greeting is one full round trip (a non-tool response.done), which AdvanceRoundTrip()s
         // the SAME SessionIdentifiers instance to index 1 -- this is the state that must survive
         // the resume below, not be reset back to 0 as if this were a brand new session.
-        var greetingRoundTrip = await oldBrowser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        RecordedFrame? greetingRoundTrip = await oldBrowser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token", s_frameTimeout, ct);
         Assert.True(greetingRoundTrip is not null, "Greeting round trip never completed.");
         Assert.Equal(1, greetingRoundTrip!.Json.GetProperty("roundTripIndex").GetInt32());
-        var originalRoundTripToken = greetingRoundTrip.Json.GetProperty("roundTripToken").GetString();
+        string? originalRoundTripToken = greetingRoundTrip.Json.GetProperty("roundTripToken").GetString();
         Assert.Equal($"{originalSessionToken}-0001", originalRoundTripToken);
 
         await oldBrowser.CloseAsync(cancellationToken: ct);
-        await oldBrowser.WaitForCloseAsync(FrameTimeout, ct);
+        await oldBrowser.WaitForCloseAsync(s_frameTimeout, ct);
         await oldBrowser.DisposeAsync();
 
-        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var newBrowser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        Assert.True(await secondConnectionTask is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient newBrowser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        Assert.True(await secondConnectionTask is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await newBrowser.SendExtensionResumeAsync(resumeId!, ct);
-        var resumed = await newBrowser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_resumed", FrameTimeout, ct);
+        RecordedFrame? resumed = await newBrowser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_resumed", s_frameTimeout, ct);
         Assert.True(resumed is not null, "Expected extension.session_resumed on a valid resume.");
 
         Assert.Equal(originalSessionToken, resumed!.Json.GetProperty("session_token").GetString());

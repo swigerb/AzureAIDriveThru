@@ -40,18 +40,18 @@ public static class PersonaTargeting
         var unknown = ids.Where(id => !byId.ContainsKey(id)).ToList();
         if (unknown.Count > 0)
         {
-            var knownIds = string.Join(", ", catalog.Select(p => p.PersonaId));
+            string knownIds = string.Join(", ", catalog.Select(p => p.PersonaId));
             // Mirrors Python's f"--persona named {unknown} -- not in the enabled persona catalog
             // ({', '.join(catalog.ids) or '(none)'})" message content (a Python list's repr --
             // ['a', 'b'] -- rather than a byte-identical string, which isn't the point here: see
             // docs/dotnet_tooling.md's "known, accepted divergences" for this port's error-message
             // convention).
-            var unknownRepr = string.Join(", ", unknown.Select(id => $"'{id}'"));
+            string unknownRepr = string.Join(", ", unknown.Select(id => $"'{id}'"));
             throw new InvalidOperationException(
                 $"--persona named [{unknownRepr}] -- not in the enabled persona catalog " +
                 $"({(knownIds.Length > 0 ? knownIds : "(none)")})");
         }
 
-        return ids.Select(id => byId[id]).ToList();
+        return [.. ids.Select(id => byId[id])];
     }
 }

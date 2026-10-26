@@ -62,11 +62,11 @@ public sealed class PythonParityTests : IDisposable
     [Fact]
     public async Task DotnetPort_ProducesStdoutIdenticalOutput_ToRealPythonScript()
     {
-        var repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
-        var realScript = Path.Combine(repoRoot, "scripts", "extract_production_items.py");
+        string repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
+        string realScript = Path.Combine(repoRoot, "scripts", "extract_production_items.py");
         Assert.True(File.Exists(realScript), $"Python twin not found: {realScript}");
 
-        var interpreter = await RequirePythonInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
+        string? interpreter = await RequirePythonInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
         if (interpreter is null)
         {
             return;
@@ -76,7 +76,7 @@ public sealed class PythonParityTests : IDisposable
         // copy. extract_production_items.py is read-only (a report, no file mutation) and
         // resolves its own fixture paths purely from __file__, so this is exactly what
         // `python scripts/extract_production_items.py` does for a developer today.
-        var (exitCode, pythonStdout, stderr) = await RunProcessAsync(
+        (int exitCode, string? pythonStdout, string? stderr) = await RunProcessAsync(
             interpreter, [realScript], TestContext.Current.CancellationToken);
         Assert.True(exitCode == 0, $"Python twin exited {exitCode}.\nstdout:\n{pythonStdout}\nstderr:\n{stderr}");
 
@@ -85,14 +85,14 @@ public sealed class PythonParityTests : IDisposable
         // ResolvePythonScriptFixturePathsAsync) -- never via ProductionExportLocator -- so this
         // comparison is guaranteed to read the exact same files the Python run just did, no
         // matter how many persona packs happen to exist on disk.
-        var (posDataPath, uiMenuPath) = await ResolvePythonScriptFixturePathsAsync(
+        (string? posDataPath, string? uiMenuPath) = await ResolvePythonScriptFixturePathsAsync(
             interpreter, realScript, TestContext.Current.CancellationToken);
         Assert.True(File.Exists(posDataPath), $"Fixture not found: {posDataPath}");
         Assert.True(File.Exists(uiMenuPath), $"Fixture not found: {uiMenuPath}");
 
-        var production = ProductionItemsExtractor.ExtractProductionItems(posDataPath);
-        var uiItems = ProductionItemsExtractor.LoadUiItems(uiMenuPath);
-        var report = ProductionItemsExtractor.BuildReport(production, uiItems);
+        IReadOnlyList<ProductionItem> production = ProductionItemsExtractor.ExtractProductionItems(posDataPath);
+        IReadOnlyList<UiItem> uiItems = ProductionItemsExtractor.LoadUiItems(uiMenuPath);
+        IReadOnlyList<string> report = ProductionItemsExtractor.BuildReport(production, uiItems);
 
         // Reconstruct what Program.cs would have printed (one Console.WriteLine per report line,
         // each terminated by Environment.NewLine, matching how Python's print() terminates every
@@ -100,14 +100,14 @@ public sealed class PythonParityTests : IDisposable
         // this proves the category-count stable tie-break, the ordinal name sort, the ": .2f"-style
         // price formatting, and the gap-analysis set arithmetic all match exactly against real
         // production data, not just a synthetic unit-test sample.
-        var dotnetStdout = string.Join(Environment.NewLine, report) + Environment.NewLine;
+        string dotnetStdout = string.Join(Environment.NewLine, report) + Environment.NewLine;
         Assert.Equal(pythonStdout, dotnetStdout);
 
         // Independent, human-readable cross-check on top of the raw stdout comparison above: both
         // programs' own "Total production items: N" line must agree, and must agree with what the
         // C# port's own data actually contains.
-        var pythonTotal = ParseTotalProductionItems(pythonStdout);
-        var dotnetTotal = ParseTotalProductionItems(dotnetStdout);
+        int pythonTotal = ParseTotalProductionItems(pythonStdout);
+        int dotnetTotal = ParseTotalProductionItems(dotnetStdout);
         Assert.Equal(pythonTotal, dotnetTotal);
         Assert.Equal(pythonTotal, production.Count);
     }
@@ -127,49 +127,49 @@ public sealed class PythonParityTests : IDisposable
     [Fact]
     public async Task DotnetPort_ParityApproach_IsUnaffectedByASecondPersonaExport()
     {
-        var repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
-        var realScript = Path.Combine(repoRoot, "scripts", "extract_production_items.py");
-        var interpreter = await RequirePythonInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
+        string repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
+        string realScript = Path.Combine(repoRoot, "scripts", "extract_production_items.py");
+        string? interpreter = await RequirePythonInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
         if (interpreter is null)
         {
             return;
         }
 
-        var (posDataPath, uiMenuPath) = await ResolvePythonScriptFixturePathsAsync(
+        (string? posDataPath, string? uiMenuPath) = await ResolvePythonScriptFixturePathsAsync(
             interpreter, realScript, TestContext.Current.CancellationToken);
 
         // Derive the synthetic layout's paths from the REAL files' own repo-relative locations
         // (never a hardcoded persona-id literal -- the rebrand scanner forbids brand words in
         // code/tests, and this keeps the synthetic layout correct however the real persona pack
         // is ever renamed).
-        var syntheticRepoRoot = Path.Combine(_tempRoot, "two-persona-repo");
-        var syntheticPosDataPath = Path.Combine(syntheticRepoRoot, Path.GetRelativePath(repoRoot, posDataPath));
-        var syntheticUiMenuPath = Path.Combine(syntheticRepoRoot, Path.GetRelativePath(repoRoot, uiMenuPath));
+        string syntheticRepoRoot = Path.Combine(_tempRoot, "two-persona-repo");
+        string syntheticPosDataPath = Path.Combine(syntheticRepoRoot, Path.GetRelativePath(repoRoot, posDataPath));
+        string syntheticUiMenuPath = Path.Combine(syntheticRepoRoot, Path.GetRelativePath(repoRoot, uiMenuPath));
         Directory.CreateDirectory(Path.GetDirectoryName(syntheticPosDataPath)!);
         Directory.CreateDirectory(Path.GetDirectoryName(syntheticUiMenuPath)!);
         File.Copy(posDataPath, syntheticPosDataPath);
         File.Copy(uiMenuPath, syntheticUiMenuPath);
 
-        var syntheticScriptsDir = Path.Combine(syntheticRepoRoot, "scripts");
+        string syntheticScriptsDir = Path.Combine(syntheticRepoRoot, "scripts");
         Directory.CreateDirectory(syntheticScriptsDir);
-        var syntheticScript = Path.Combine(syntheticScriptsDir, "extract_production_items.py");
+        string syntheticScript = Path.Combine(syntheticScriptsDir, "extract_production_items.py");
         File.Copy(realScript, syntheticScript);
 
         // A second, synthetic persona pack -- its own production export is all it takes to make
         // ProductionExportLocator.Locate ambiguous, exactly as a real second persona pack would.
-        var secondPersonaSourceDir = Path.Combine(syntheticRepoRoot, "personas", "second-persona", "menu", "source");
+        string secondPersonaSourceDir = Path.Combine(syntheticRepoRoot, "personas", "second-persona", "menu", "source");
         Directory.CreateDirectory(secondPersonaSourceDir);
         File.WriteAllText(Path.Combine(secondPersonaSourceDir, "second-persona-menu-items.json"), "{}");
 
         // (a) Confirm the regression this test targets is real: data-driven discovery (used by
         // this tool's own --production/--menu CLI default) is genuinely ambiguous in this layout.
-        var locateException = Assert.Throws<InvalidOperationException>(() => ProductionExportLocator.Locate(syntheticRepoRoot));
+        InvalidOperationException locateException = Assert.Throws<InvalidOperationException>(() => ProductionExportLocator.Locate(syntheticRepoRoot));
         Assert.Contains("More than one persona has a production export", locateException.Message);
 
         // (b) But the real script, run unmodified from this same synthetic layout, still
         // succeeds -- it hardcodes "personas/<id>/..." directly and never globs, so an unrelated
         // second persona pack existing alongside it is irrelevant.
-        var (exitCode, pythonStdout, stderr) = await RunProcessAsync(
+        (int exitCode, string? pythonStdout, string? stderr) = await RunProcessAsync(
             interpreter, [syntheticScript], TestContext.Current.CancellationToken);
         Assert.True(exitCode == 0, $"Python twin exited {exitCode}.\nstdout:\n{pythonStdout}\nstderr:\n{stderr}");
         Assert.Contains("Total production items:", pythonStdout);
@@ -179,7 +179,7 @@ public sealed class PythonParityTests : IDisposable
         // still points at the same two fixture files just copied in: proof that the main test's
         // own fixture-resolution approach is immune to the second-persona-export regression this
         // test targets.
-        var (resolvedPosDataPath, resolvedUiMenuPath) = await ResolvePythonScriptFixturePathsAsync(
+        (string? resolvedPosDataPath, string? resolvedUiMenuPath) = await ResolvePythonScriptFixturePathsAsync(
             interpreter, syntheticScript, TestContext.Current.CancellationToken);
         Assert.Equal(syntheticPosDataPath, resolvedPosDataPath);
         Assert.Equal(syntheticUiMenuPath, resolvedUiMenuPath);
@@ -199,24 +199,24 @@ public sealed class PythonParityTests : IDisposable
     private static async Task<(string PosDataPath, string UiMenuPath)> ResolvePythonScriptFixturePathsAsync(
         string interpreter, string scriptPath, CancellationToken cancellationToken)
     {
-        const string inspectScript =
+        const string InspectScript =
             "import json, runpy, sys\n" +
             "ns = runpy.run_path(sys.argv[1])\n" +
             "print(json.dumps({'pos': ns['POS_DATA_PATH'], 'ui': ns['UI_MENU_PATH']}))\n";
 
-        var (exitCode, stdout, stderr) = await RunProcessAsync(
-            interpreter, ["-c", inspectScript, scriptPath], cancellationToken);
+        (int exitCode, string? stdout, string? stderr) = await RunProcessAsync(
+            interpreter, ["-c", InspectScript, scriptPath], cancellationToken);
         Assert.True(exitCode == 0, $"Python path-inspection exited {exitCode}.\nstdout:\n{stdout}\nstderr:\n{stderr}");
 
         using var document = JsonDocument.Parse(stdout.Trim());
-        var posDataPath = document.RootElement.GetProperty("pos").GetString()!;
-        var uiMenuPath = document.RootElement.GetProperty("ui").GetString()!;
+        string posDataPath = document.RootElement.GetProperty("pos").GetString()!;
+        string uiMenuPath = document.RootElement.GetProperty("ui").GetString()!;
         return (posDataPath, uiMenuPath);
     }
 
     private static int ParseTotalProductionItems(string stdout)
     {
-        var match = Regex.Match(stdout, @"Total production items: (\d+)");
+        Match match = Regex.Match(stdout, @"Total production items: (\d+)");
         Assert.True(match.Success, $"Could not find a 'Total production items: N' line in:\n{stdout}");
         return int.Parse(match.Groups[1].Value);
     }
@@ -229,14 +229,14 @@ public sealed class PythonParityTests : IDisposable
     /// </summary>
     private static async Task<string?> RequirePythonInterpreterAsync(string repoRoot, CancellationToken cancellationToken)
     {
-        var interpreter = await FindWorkingPythonInterpreterAsync(repoRoot, cancellationToken);
+        string? interpreter = await FindWorkingPythonInterpreterAsync(repoRoot, cancellationToken);
         if (interpreter is not null)
         {
             return interpreter;
         }
 
-        var isCi = string.Equals(Environment.GetEnvironmentVariable("GITHUB_ACTIONS"), "true", StringComparison.OrdinalIgnoreCase);
-        var message =
+        bool isCi = string.Equals(Environment.GetEnvironmentVariable("GITHUB_ACTIONS"), "true", StringComparison.OrdinalIgnoreCase);
+        string message =
             "No Python interpreter was found (checked the repo-root .venv, then bare " +
             "\"python3\"/\"python\" on PATH). This test needs only the standard library " +
             "(json, os, re, collections), so any Python 3 interpreter works.";
@@ -266,11 +266,11 @@ public sealed class PythonParityTests : IDisposable
             "python",
         ];
 
-        foreach (var candidate in candidates)
+        foreach (string candidate in candidates)
         {
             try
             {
-                var (exitCode, _, _) = await RunProcessAsync(candidate, ["--version"], cancellationToken);
+                (int exitCode, string _, string _) = await RunProcessAsync(candidate, ["--version"], cancellationToken);
                 if (exitCode == 0)
                 {
                     return candidate;
@@ -302,15 +302,15 @@ public sealed class PythonParityTests : IDisposable
             StandardErrorEncoding = Encoding.UTF8,
         };
         startInfo.Environment["PYTHONIOENCODING"] = "utf-8";
-        foreach (var argument in arguments)
+        foreach (string argument in arguments)
         {
             startInfo.ArgumentList.Add(argument);
         }
 
         using var process = new Process { StartInfo = startInfo };
         process.Start();
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        Task<string> stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
         await process.WaitForExitAsync(cancellationToken);
         return (process.ExitCode, await stdoutTask, await stderrTask);
     }

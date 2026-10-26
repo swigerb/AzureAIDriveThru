@@ -1,4 +1,3 @@
-using System.Net.Http.Json;
 using System.Text.Json.Nodes;
 using Azure.Core;
 
@@ -42,7 +41,7 @@ public sealed class AzureOpenAiEmbeddingClient : IEmbeddingClient, IDisposable
 
     public static AzureOpenAiEmbeddingClient CreateForProduction(string endpoint, TokenCredential credential)
     {
-        var http = CreateProductionHttpClient(credential);
+        HttpClient http = CreateProductionHttpClient(credential);
         return new AzureOpenAiEmbeddingClient(http, endpoint, ownsHttpClient: true);
     }
 
@@ -70,9 +69,9 @@ public sealed class AzureOpenAiEmbeddingClient : IEmbeddingClient, IDisposable
     public async Task<IReadOnlyList<IReadOnlyList<double>>> GenerateEmbeddingsAsync(
         IReadOnlyList<string> texts, string deployment, CancellationToken cancellationToken)
     {
-        var url = $"{_endpoint}/openai/deployments/{Uri.EscapeDataString(deployment)}/embeddings?api-version={ApiVersion}";
+        string url = $"{_endpoint}/openai/deployments/{Uri.EscapeDataString(deployment)}/embeddings?api-version={ApiVersion}";
         var inputArray = new JsonArray();
-        foreach (var text in texts)
+        foreach (string text in texts)
         {
             inputArray.Add(JsonValue.Create(text));
         }
@@ -87,29 +86,28 @@ public sealed class AzureOpenAiEmbeddingClient : IEmbeddingClient, IDisposable
         // "model" field, for an Azure OpenAI resource).
         var requestBody = new JsonObject { ["input"] = inputArray, ["model"] = deployment };
 
-        using var response = await _http.PostAsJsonAsync(url, requestBody, cancellationToken).ConfigureAwait(false);
+        using HttpResponseMessage response = await _http.PostAsJsonAsync(url, requestBody, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            string errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
             throw new InvalidOperationException(
                 $"Azure OpenAI embeddings request failed with status {(int)response.StatusCode} " +
                 $"{response.ReasonPhrase}: {errorBody}");
         }
 
-        var responseBody = await response.Content.ReadFromJsonAsync<JsonNode>(cancellationToken).ConfigureAwait(false);
-        var data = responseBody?["data"]?.AsArray() ??
+        JsonNode? responseBody = await response.Content.ReadFromJsonAsync<JsonNode>(cancellationToken).ConfigureAwait(false);
+        JsonArray data = responseBody?["data"]?.AsArray() ??
             throw new InvalidOperationException("Azure OpenAI's embeddings response had no \"data\" array.");
 
         // Sorted defensively by "index" rather than trusting response array order -- slightly more
         // robust than Python's own code (which trusts the OpenAI SDK's already-sorted return order
         // outright), not a behavioural difference that's ever observable given a well-behaved
         // service.
-        return data
+        return [.. data
             .OrderBy(item => item?["index"]?.GetValue<int>() ?? 0)
             .Select(item => (IReadOnlyList<double>)(item?["embedding"]?.AsArray()
                 .Select(v => v!.GetValue<double>()).ToList() ??
-                throw new InvalidOperationException("Azure OpenAI's embeddings response had an entry with no \"embedding\" array.")))
-            .ToList();
+                throw new InvalidOperationException("Azure OpenAI's embeddings response had an entry with no \"embedding\" array.")))];
     }
 
     public void Dispose()

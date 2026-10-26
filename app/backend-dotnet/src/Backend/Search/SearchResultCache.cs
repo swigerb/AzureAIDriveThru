@@ -30,7 +30,7 @@ internal sealed class SearchResultCache
 
     public bool TryGet(string key, out List<JsonElement>? records)
     {
-        if (_store.TryGetValue(key, out var entry))
+        if (_store.TryGetValue(key, out Entry? entry))
         {
             if (DateTime.UtcNow <= entry.ExpiresAtUtc)
             {
@@ -57,7 +57,7 @@ internal sealed class SearchResultCache
     private void EvictOldest()
     {
         KeyValuePair<string, Entry>? oldest = null;
-        foreach (var kv in _store)
+        foreach (KeyValuePair<string, Entry> kv in _store)
         {
             if (oldest is null || kv.Value.InsertedOrder < oldest.Value.Value.InsertedOrder)
             {

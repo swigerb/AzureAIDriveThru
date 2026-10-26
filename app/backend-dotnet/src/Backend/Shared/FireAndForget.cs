@@ -1,5 +1,3 @@
-using Microsoft.Extensions.Logging;
-
 namespace Backend.Shared;
 
 /// <summary>
@@ -50,7 +48,7 @@ internal static class FireAndForgetExtensions
 
     private static void LogFault(Task task, ILogger? logger, string description)
     {
-        var ex = task.Exception?.GetBaseException();
+        Exception? ex = task.Exception?.GetBaseException();
         logger?.LogError(ex, "Unobserved exception in fire-and-forget task: {Description}", description);
     }
 }

@@ -13,15 +13,15 @@ public sealed class FixtureEmbeddingTests
     [Fact]
     public void For_IsDeterministic_ForTheSameText()
     {
-        var first = FixtureEmbedding.For("Burgers Classic Cheeseburger A juicy burger with cheese");
-        var second = FixtureEmbedding.For("Burgers Classic Cheeseburger A juicy burger with cheese");
+        IReadOnlyList<double> first = FixtureEmbedding.For("Burgers Classic Cheeseburger A juicy burger with cheese");
+        IReadOnlyList<double> second = FixtureEmbedding.For("Burgers Classic Cheeseburger A juicy burger with cheese");
         Assert.Equal(first, second);
     }
 
     [Fact]
     public void For_ReturnsEightComponents_EachWithinMinusOneToOne()
     {
-        var values = FixtureEmbedding.For("anything");
+        IReadOnlyList<double> values = FixtureEmbedding.For("anything");
         Assert.Equal(8, values.Count);
         Assert.All(values, v => Assert.InRange(v, -1.0, 1.0));
     }
@@ -29,8 +29,8 @@ public sealed class FixtureEmbeddingTests
     [Fact]
     public void For_DiffersForDifferentText()
     {
-        var a = FixtureEmbedding.For("Burgers Classic Cheeseburger");
-        var b = FixtureEmbedding.For("Drinks Classic Vanilla Shake");
+        IReadOnlyList<double> a = FixtureEmbedding.For("Burgers Classic Cheeseburger");
+        IReadOnlyList<double> b = FixtureEmbedding.For("Drinks Classic Vanilla Shake");
         Assert.NotEqual(a, b);
     }
 
@@ -52,30 +52,30 @@ public sealed class FixtureEmbeddingTests
     [InlineData("café 🎉")]
     public async Task For_MatchesRealPythonCaptureHarnessFixtureEmbedding(string text)
     {
-        var repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
-        var interpreter = await PythonInterop.RequireInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
+        string repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
+        string? interpreter = await PythonInterop.RequireInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
         if (interpreter is null)
         {
             return;
         }
 
-        var harnessScript = Path.Combine(
+        string harnessScript = Path.Combine(
             repoRoot, "tools", "dotnet", "tests", "SearchIndexRequestBuilder.Tests", "Fixtures",
             "capture_search_index_requests.py");
 
-        const string probe =
+        const string Probe =
             "import importlib.util, json, sys\n" +
             "spec = importlib.util.spec_from_file_location('capture_harness', sys.argv[1])\n" +
             "module = importlib.util.module_from_spec(spec)\n" +
             "spec.loader.exec_module(module)\n" +
             "print(json.dumps(module.fixture_embedding(sys.argv[2])))\n";
 
-        var (exitCode, stdout, stderr) = await PythonInterop.RunAsync(
-            interpreter, ["-c", probe, harnessScript, text], TestContext.Current.CancellationToken);
+        (int exitCode, string? stdout, string? stderr) = await PythonInterop.RunAsync(
+            interpreter, ["-c", Probe, harnessScript, text], TestContext.Current.CancellationToken);
         Assert.True(exitCode == 0, $"Python oracle exited {exitCode}.\nstdout:\n{stdout}\nstderr:\n{stderr}");
 
-        var expected = System.Text.Json.JsonSerializer.Deserialize<double[]>(stdout.Trim())!;
-        var actual = FixtureEmbedding.For(text);
+        double[]? expected = System.Text.Json.JsonSerializer.Deserialize<double[]>(stdout.Trim());
+        IReadOnlyList<double> actual = FixtureEmbedding.For(text);
         Assert.Equal(expected, actual);
     }
 }

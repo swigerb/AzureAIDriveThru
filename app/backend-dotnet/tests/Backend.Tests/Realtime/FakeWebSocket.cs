@@ -72,7 +72,7 @@ internal sealed class FakeWebSocket : WebSocket
         {
             throw new InvalidOperationException("FakeWebSocket has no more chunks queued -- the reader kept reading past what the test expected.");
         }
-        var (data, endOfMessage, messageType) = _chunks.Dequeue();
+        (byte[]? data, bool endOfMessage, WebSocketMessageType messageType) = _chunks.Dequeue();
         data.CopyTo(buffer.Array!, buffer.Offset);
         return Task.FromResult(new WebSocketReceiveResult(data.Length, messageType, endOfMessage));
     }
@@ -97,7 +97,7 @@ internal sealed class FakeWebSocket : WebSocket
 
     public override async Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken)
     {
-        var bytes = buffer.ToArray();
+        byte[] bytes = [.. buffer];
         SentMessages.Add((bytes, messageType, endOfMessage));
         if (OnSendAsync is not null)
         {

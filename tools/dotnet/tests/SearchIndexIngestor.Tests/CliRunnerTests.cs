@@ -19,7 +19,7 @@ public sealed class CliRunnerTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var dir in _tempDirs)
+        foreach (string dir in _tempDirs)
         {
             if (Directory.Exists(dir))
             {
@@ -30,7 +30,7 @@ public sealed class CliRunnerTests : IDisposable
 
     private string CreateEmptyRepoRoot()
     {
-        var dir = Path.Combine(Path.GetTempPath(), $"squanchy-ingestor-cli-runner-{Guid.NewGuid():n}");
+        string dir = Path.Combine(Path.GetTempPath(), $"squanchy-ingestor-cli-runner-{Guid.NewGuid():n}");
         Directory.CreateDirectory(dir);
         _tempDirs.Add(dir);
         return dir;
@@ -38,10 +38,10 @@ public sealed class CliRunnerTests : IDisposable
 
     private string CreatePersonasFixture(params (string PersonaId, string IndexName)[] personas)
     {
-        var dir = Path.Combine(Path.GetTempPath(), $"squanchy-ingestor-cli-runner-personas-{Guid.NewGuid():n}");
-        foreach (var (personaId, indexName) in personas)
+        string dir = Path.Combine(Path.GetTempPath(), $"squanchy-ingestor-cli-runner-personas-{Guid.NewGuid():n}");
+        foreach ((string? personaId, string? indexName) in personas)
         {
-            var personaDir = Path.Combine(dir, personaId);
+            string personaDir = Path.Combine(dir, personaId);
             Directory.CreateDirectory(Path.Combine(personaDir, "menu"));
             File.WriteAllText(
                 Path.Combine(personaDir, "persona.json"),
@@ -60,7 +60,7 @@ public sealed class CliRunnerTests : IDisposable
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = await CliRunner.RunAsync(["--help"], stdout, stderr);
+        int exitCode = await CliRunner.RunAsync(["--help"], stdout, stderr);
 
         Assert.Equal(0, exitCode);
         Assert.Contains("Usage:", stdout.ToString());
@@ -73,7 +73,7 @@ public sealed class CliRunnerTests : IDisposable
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = await CliRunner.RunAsync(["-h"], stdout, stderr);
+        int exitCode = await CliRunner.RunAsync(["-h"], stdout, stderr);
 
         Assert.Equal(0, exitCode);
         Assert.Contains("Usage:", stdout.ToString());
@@ -82,12 +82,12 @@ public sealed class CliRunnerTests : IDisposable
     [Fact]
     public async Task RunAsync_DryRun_PrintsOneLinePerTargetedPersona_AndExitsZero_WithNoAzdLoad()
     {
-        var personasDir = CreatePersonasFixture(("alpha", "alpha-index"), ("bravo", "bravo-index"));
+        string personasDir = CreatePersonasFixture(("alpha", "alpha-index"), ("bravo", "bravo-index"));
         var stdout = new StringWriter();
         var stderr = new StringWriter();
-        var azdLoadCalls = 0;
+        int azdLoadCalls = 0;
 
-        var exitCode = await CliRunner.RunAsync(
+        int exitCode = await CliRunner.RunAsync(
             ["--dry-run", "--personas-dir", personasDir],
             stdout,
             stderr,
@@ -97,7 +97,7 @@ public sealed class CliRunnerTests : IDisposable
 
         Assert.Equal(0, exitCode);
         Assert.Equal("", stderr.ToString());
-        var stdoutText = stdout.ToString();
+        string stdoutText = stdout.ToString();
         Assert.Contains("[dry-run] persona 'alpha': index 'alpha-index', 1 document(s) planned", stdoutText);
         Assert.Contains("[dry-run] persona 'bravo': index 'bravo-index', 1 document(s) planned", stdoutText);
         // --dry-run's own help text promises "no azd env loaded" -- confirms that's true.
@@ -107,18 +107,18 @@ public sealed class CliRunnerTests : IDisposable
     [Fact]
     public async Task RunAsync_DryRun_TargetsOnlyTheRequestedPersona_WhenPersonaFlagGiven()
     {
-        var personasDir = CreatePersonasFixture(("alpha", "alpha-index"), ("bravo", "bravo-index"));
+        string personasDir = CreatePersonasFixture(("alpha", "alpha-index"), ("bravo", "bravo-index"));
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = await CliRunner.RunAsync(
+        int exitCode = await CliRunner.RunAsync(
             ["--dry-run", "--personas-dir", personasDir, "--persona", "bravo"],
             stdout,
             stderr,
             repoRootOverride: CreateEmptyRepoRoot());
 
         Assert.Equal(0, exitCode);
-        var stdoutText = stdout.ToString();
+        string stdoutText = stdout.ToString();
         Assert.DoesNotContain("'alpha'", stdoutText);
         Assert.Contains("'bravo'", stdoutText);
     }
@@ -126,11 +126,11 @@ public sealed class CliRunnerTests : IDisposable
     [Fact]
     public async Task RunAsync_DryRun_PrintsCleanErrorAndExitsNonZero_ForUnknownPersonaId()
     {
-        var personasDir = CreatePersonasFixture(("alpha", "alpha-index"));
+        string personasDir = CreatePersonasFixture(("alpha", "alpha-index"));
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = await CliRunner.RunAsync(
+        int exitCode = await CliRunner.RunAsync(
             ["--dry-run", "--personas-dir", personasDir, "--persona", "nonexistent"],
             stdout,
             stderr,
@@ -138,7 +138,7 @@ public sealed class CliRunnerTests : IDisposable
 
         Assert.Equal(1, exitCode);
         Assert.Equal("", stdout.ToString());
-        var stderrText = stderr.ToString();
+        string stderrText = stderr.ToString();
         Assert.Contains("nonexistent", stderrText);
         Assert.Contains("not in the enabled persona catalog", stderrText);
         Assert.DoesNotContain("   at ", stderrText); // clean message, not a stack trace
@@ -147,19 +147,19 @@ public sealed class CliRunnerTests : IDisposable
     [Fact]
     public async Task RunAsync_DryRun_PrintsCleanErrorAndExitsNonZero_WhenAPersonaHasNoMenuFile()
     {
-        var personasDir = CreatePersonasFixture(("alpha", "alpha-index"));
+        string personasDir = CreatePersonasFixture(("alpha", "alpha-index"));
         File.Delete(Path.Combine(personasDir, "alpha", "menu", "menuItems.json"));
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = await CliRunner.RunAsync(
+        int exitCode = await CliRunner.RunAsync(
             ["--dry-run", "--personas-dir", personasDir],
             stdout,
             stderr,
             repoRootOverride: CreateEmptyRepoRoot());
 
         Assert.Equal(1, exitCode);
-        var stderrText = stderr.ToString();
+        string stderrText = stderr.ToString();
         Assert.Contains("menu data file not found", stderrText);
         Assert.DoesNotContain("   at ", stderrText);
     }
@@ -172,7 +172,7 @@ public sealed class CliRunnerTests : IDisposable
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = await CliRunner.RunAsync(
+        int exitCode = await CliRunner.RunAsync(
             [],
             stdout,
             stderr,
@@ -195,11 +195,11 @@ public sealed class CliRunnerTests : IDisposable
         // legitimate variable this path reads even in --dry-run (Rick's review, item 2a/round 2) --
         // a blanket "true" for every name would otherwise make PERSONAS="true" look like a (bogus)
         // single-persona allow-list and fail this test for an unrelated reason.
-        var personasDir = CreatePersonasFixture(("alpha", "alpha-index"));
+        string personasDir = CreatePersonasFixture(("alpha", "alpha-index"));
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = await CliRunner.RunAsync(
+        int exitCode = await CliRunner.RunAsync(
             ["--dry-run", "--personas-dir", personasDir],
             stdout,
             stderr,
@@ -217,11 +217,11 @@ public sealed class CliRunnerTests : IDisposable
         // PERSONAS is consulted even in --dry-run (Rick's review, item 2a/round 2), matching
         // Python's PersonaCatalog.load() (which always applies the PERSONAS allow-list, regardless
         // of --dry-run -- only azd-env *loading* itself is skipped in dry-run).
-        var personasDir = CreatePersonasFixture(("alpha", "alpha-index"), ("bravo", "bravo-index"));
+        string personasDir = CreatePersonasFixture(("alpha", "alpha-index"), ("bravo", "bravo-index"));
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = await CliRunner.RunAsync(
+        int exitCode = await CliRunner.RunAsync(
             ["--dry-run", "--personas-dir", personasDir],
             stdout,
             stderr,
@@ -229,7 +229,7 @@ public sealed class CliRunnerTests : IDisposable
             getEnvironmentVariable: name => name == "PERSONAS" ? "bravo" : null);
 
         Assert.Equal(0, exitCode);
-        var stdoutText = stdout.ToString();
+        string stdoutText = stdout.ToString();
         Assert.DoesNotContain("'alpha'", stdoutText);
         Assert.Contains("'bravo'", stdoutText);
     }
@@ -237,11 +237,11 @@ public sealed class CliRunnerTests : IDisposable
     [Fact]
     public async Task RunAsync_DryRun_PrintsCleanErrorAndExitsNonZero_WhenPersonasListsAnIdWithNoMatchingFolder()
     {
-        var personasDir = CreatePersonasFixture(("alpha", "alpha-index"));
+        string personasDir = CreatePersonasFixture(("alpha", "alpha-index"));
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = await CliRunner.RunAsync(
+        int exitCode = await CliRunner.RunAsync(
             ["--dry-run", "--personas-dir", personasDir],
             stdout,
             stderr,
@@ -249,7 +249,7 @@ public sealed class CliRunnerTests : IDisposable
             getEnvironmentVariable: name => name == "PERSONAS" ? "alpha,nonexistent" : null);
 
         Assert.Equal(1, exitCode);
-        var stderrText = stderr.ToString();
+        string stderrText = stderr.ToString();
         Assert.Contains("nonexistent", stderrText);
         Assert.DoesNotContain("   at ", stderrText);
     }
@@ -263,8 +263,8 @@ public sealed class CliRunnerTests : IDisposable
         // always {} during --dry-run (RunAsync never calls load_azd_env() in --dry-run, matching
         // Python's own load_azd_env()-only-outside-dry-run behaviour -- see this file's other
         // dry-run tests), so an azd-vs-process-env precedence race can only be observed here.
-        var winningDir = CreatePersonasFixture(("alpha", "alpha-index"));
-        var losingDir = CreatePersonasFixture(("bravo", "bravo-index"));
+        string winningDir = CreatePersonasFixture(("alpha", "alpha-index"));
+        string losingDir = CreatePersonasFixture(("bravo", "bravo-index"));
         var stdout = new StringWriter();
         var stderr = new StringWriter();
         var handler = new FakeHttpMessageHandler(request =>
@@ -276,7 +276,7 @@ public sealed class CliRunnerTests : IDisposable
                         ? FakeHttpMessageHandler.Json(System.Net.HttpStatusCode.OK, """{"value":[]}""")
                         : FakeHttpMessageHandler.PlainText(System.Net.HttpStatusCode.OK, "1"));
 
-        var exitCode = await CliRunner.RunAsync(
+        int exitCode = await CliRunner.RunAsync(
             [
                 "--search-endpoint", "https://fake.search.windows.net",
                 "--openai-endpoint", "https://fake.openai.azure.com",
@@ -293,7 +293,7 @@ public sealed class CliRunnerTests : IDisposable
 
         Assert.Equal(0, exitCode);
         Assert.Equal("", stderr.ToString());
-        var stdoutText = stdout.ToString();
+        string stdoutText = stdout.ToString();
         Assert.Contains("Persona 'alpha'", stdoutText);
         Assert.DoesNotContain("Persona 'bravo'", stdoutText);
     }
@@ -301,12 +301,12 @@ public sealed class CliRunnerTests : IDisposable
     [Fact]
     public async Task RunAsync_DryRun_ExplicitPersonasDirFlagBeatsPersonasDirEnvironmentVariable()
     {
-        var flagDir = CreatePersonasFixture(("alpha", "alpha-index"));
-        var envDir = CreatePersonasFixture(("bravo", "bravo-index"));
+        string flagDir = CreatePersonasFixture(("alpha", "alpha-index"));
+        string envDir = CreatePersonasFixture(("bravo", "bravo-index"));
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = await CliRunner.RunAsync(
+        int exitCode = await CliRunner.RunAsync(
             ["--dry-run", "--personas-dir", flagDir],
             stdout,
             stderr,
@@ -320,7 +320,7 @@ public sealed class CliRunnerTests : IDisposable
     [Fact]
     public async Task RunAsync_FullNonDryRunFlow_WiresFakeClientsEndToEnd_AndExitsZero()
     {
-        var personasDir = CreatePersonasFixture(("alpha", "alpha-index"));
+        string personasDir = CreatePersonasFixture(("alpha", "alpha-index"));
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
@@ -336,15 +336,15 @@ public sealed class CliRunnerTests : IDisposable
             }
             if (request.Uri.Contains("search.index"))
             {
-                var value = JsonNode.Parse(request.Body!)!["value"]!.AsArray();
-                var results = value.Select(d => new JsonObject { ["key"] = d!["id"]!.DeepClone(), ["status"] = true });
+                JsonArray value = JsonNode.Parse(request.Body!)!["value"]!.AsArray();
+                IEnumerable<JsonObject> results = value.Select(d => new JsonObject { ["key"] = d!["id"]!.DeepClone(), ["status"] = true });
                 return FakeHttpMessageHandler.Json(
                     System.Net.HttpStatusCode.OK, new JsonObject { ["value"] = new JsonArray(results.ToArray()) }.ToJsonString());
             }
             return FakeHttpMessageHandler.PlainText(System.Net.HttpStatusCode.OK, "1");
         });
 
-        var exitCode = await CliRunner.RunAsync(
+        int exitCode = await CliRunner.RunAsync(
             [
                 "--personas-dir", personasDir,
                 "--search-endpoint", "https://fake.search.windows.net",
@@ -362,7 +362,7 @@ public sealed class CliRunnerTests : IDisposable
 
         Assert.Equal(0, exitCode);
         Assert.Equal("", stderr.ToString());
-        var stdoutText = stdout.ToString();
+        string stdoutText = stdout.ToString();
         Assert.Contains("Persona 'alpha'", stdoutText);
         Assert.Contains("search index setup complete", stdoutText);
     }
@@ -374,11 +374,11 @@ public sealed class CliRunnerTests : IDisposable
         // dry-run's own help text promise ("no credential required") means this path must never
         // even construct one. Proven here by never supplying createCredential and still succeeding
         // fast with no network/credential-probing side effects possible in a unit test sandbox.
-        var personasDir = CreatePersonasFixture(("alpha", "alpha-index"));
+        string personasDir = CreatePersonasFixture(("alpha", "alpha-index"));
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = await CliRunner.RunAsync(
+        int exitCode = await CliRunner.RunAsync(
             ["--dry-run", "--personas-dir", personasDir],
             stdout,
             stderr,

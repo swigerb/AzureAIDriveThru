@@ -1,7 +1,6 @@
 using System.Text.Json.Nodes;
 using Backend.Prompts;
 using Backend.Realtime;
-using Backend.Tests.TestSupport;
 
 namespace Backend.Tests.Prompts;
 
@@ -17,15 +16,15 @@ public sealed class PromptLoaderTests : IDisposable
         var tools = loader.ToolSchemas.Select(schema =>
             (JsonObject)YamlJson.ToJsonNode((IDictionary<object, object>)schema)!).ToList();
         var config = new RealtimeSessionConfig { SystemMessage = loader.SystemPrompt };
-        var sessions = new[]
-        {
+        JsonObject[] sessions =
+        [
             RealtimeSessionBuilder.BuildBootstrapSessionUpdate(config, tools)["session"]!.AsObject(),
             RealtimeSessionBuilder.BuildSession(config, new JsonObject { ["instructions"] = "Client override" }, tools),
             RealtimeSessionBuilder.BuildFallbackSessionUpdate(config, tools)["session"]!.AsObject(),
-        };
-        foreach (var session in sessions)
+        ];
+        foreach (JsonObject? session in sessions)
         {
-            var instructions = session["instructions"]!.GetValue<string>();
+            string instructions = session["instructions"]!.GetValue<string>();
             Assert.Equal(loader.SystemPrompt, instructions);
             Assert.Contains("For routine menu searches, order changes and rewards checks, call the tools directly without a spoken preamble.", instructions);
             Assert.Contains("Give one brief acknowledgment after the relevant calls succeed, not a before-and-after pair.", instructions);
@@ -39,7 +38,7 @@ public sealed class PromptLoaderTests : IDisposable
     [Fact]
     public void TacoBellSpokenTextExcludesDirectionsAndKeepsMidorderChangesOpen()
     {
-        var prompt = new PromptLoader(Path.Combine(RepoRootLocator.Find(), "personas"), "tacobell").SystemPrompt;
+        string prompt = new PromptLoader(Path.Combine(RepoRootLocator.Find(), "personas"), "tacobell").SystemPrompt;
         Assert.Contains("Your response text goes directly to the guest's speaker", prompt);
         Assert.Contains("never stage directions, parenthetical acting notes, instruction labels", prompt);
         Assert.Contains("Swapped to 3 Soft Tacos. What drink and size would you like with your combo?", prompt);
@@ -75,8 +74,8 @@ public sealed class PromptLoaderTests : IDisposable
     {
         var loader = new PromptLoader(_personasDir, "acme");
 
-        var firstIndex = loader.SystemPrompt.IndexOf("First section.", StringComparison.Ordinal);
-        var secondIndex = loader.SystemPrompt.IndexOf("Second section.", StringComparison.Ordinal);
+        int firstIndex = loader.SystemPrompt.IndexOf("First section.", StringComparison.Ordinal);
+        int secondIndex = loader.SystemPrompt.IndexOf("Second section.", StringComparison.Ordinal);
 
         Assert.True(firstIndex >= 0 && secondIndex >= 0 && firstIndex < secondIndex);
     }
@@ -84,7 +83,7 @@ public sealed class PromptLoaderTests : IDisposable
     [Fact]
     public void MissingPromptsDirectory_Throws()
     {
-        var exc = Assert.Throws<PromptLoadException>(() => new PromptLoader(_personasDir, "no-such-persona"));
+        PromptLoadException exc = Assert.Throws<PromptLoadException>(() => new PromptLoader(_personasDir, "no-such-persona"));
         Assert.Contains("Prompt directory not found", exc.Message);
     }
 
@@ -93,7 +92,7 @@ public sealed class PromptLoaderTests : IDisposable
     {
         File.Delete(Path.Combine(_personasDir, "acme", "prompts", "system_prompt.yaml"));
 
-        var exc = Assert.Throws<PromptLoadException>(() => new PromptLoader(_personasDir, "acme"));
+        PromptLoadException exc = Assert.Throws<PromptLoadException>(() => new PromptLoader(_personasDir, "acme"));
         Assert.Contains("system_prompt.yaml", exc.Message);
     }
 
@@ -112,7 +111,7 @@ public sealed class PromptLoaderTests : IDisposable
             Path.Combine(_personasDir, "acme", "prompts", "system_prompt.yaml"),
             "sections:\n  - priority: 1\n    content: \"\"\n");
 
-        var exc = Assert.Throws<PromptLoadException>(() => new PromptLoader(_personasDir, "acme"));
+        PromptLoadException exc = Assert.Throws<PromptLoadException>(() => new PromptLoader(_personasDir, "acme"));
         Assert.Contains("empty prompt", exc.Message);
     }
 
@@ -121,7 +120,7 @@ public sealed class PromptLoaderTests : IDisposable
     {
         File.WriteAllText(Path.Combine(_personasDir, "acme", "prompts", "greeting.yaml"), "greeting:\n  text: hi\n");
 
-        var exc = Assert.Throws<PromptLoadException>(() => new PromptLoader(_personasDir, "acme"));
+        PromptLoadException exc = Assert.Throws<PromptLoadException>(() => new PromptLoader(_personasDir, "acme"));
         Assert.Contains("type", exc.Message);
     }
 
@@ -135,13 +134,13 @@ public sealed class PromptLoaderTests : IDisposable
     [InlineData("extra", "true")]
     public void ResponseScopedGreetingRejectsUnsafeOverrides(string field, string json)
     {
-        var greeting = JsonNode.Parse("""
+        JsonNode greeting = JsonNode.Parse("""
             {"greeting":{"type":"response.create","response":{
                 "instructions":"Say hello.","input":[],"tools":[],"tool_choice":"none"}}}
             """)!;
         greeting["greeting"]!["response"]![field] = JsonNode.Parse(json);
         File.WriteAllText(Path.Combine(_personasDir, "acme", "prompts", "greeting.yaml"), greeting.ToJsonString());
-        var exc = Assert.Throws<PromptLoadException>(() => new PromptLoader(_personasDir, "acme"));
+        PromptLoadException exc = Assert.Throws<PromptLoadException>(() => new PromptLoader(_personasDir, "acme"));
         Assert.Contains("response.create greeting requires", exc.Message);
     }
 
@@ -166,7 +165,7 @@ public sealed class PromptLoaderTests : IDisposable
     {
         File.WriteAllText(Path.Combine(_personasDir, "acme", "prompts", "tool_schemas.yaml"), "tools: []\n");
 
-        var exc = Assert.Throws<PromptLoadException>(() => new PromptLoader(_personasDir, "acme"));
+        PromptLoadException exc = Assert.Throws<PromptLoadException>(() => new PromptLoader(_personasDir, "acme"));
         Assert.Contains("non-empty 'tools' list", exc.Message);
     }
 
@@ -177,7 +176,7 @@ public sealed class PromptLoaderTests : IDisposable
             Path.Combine(_personasDir, "acme", "prompts", "tool_schemas.yaml"),
             "tools:\n  - type: function\n");
 
-        var exc = Assert.Throws<PromptLoadException>(() => new PromptLoader(_personasDir, "acme"));
+        PromptLoadException exc = Assert.Throws<PromptLoadException>(() => new PromptLoader(_personasDir, "acme"));
         Assert.Contains("missing 'name'", exc.Message);
     }
 
@@ -199,7 +198,7 @@ public sealed class PromptLoaderTests : IDisposable
               extras_blocked_category: "Extras can't be added to that category right now."
             """);
 
-        var exc = Assert.Throws<PromptLoadException>(() => new PromptLoader(_personasDir, "acme"));
+        PromptLoadException exc = Assert.Throws<PromptLoadException>(() => new PromptLoader(_personasDir, "acme"));
         Assert.Contains("acme", exc.Message);
         Assert.Contains("extras_no_base_item", exc.Message);
         Assert.Contains("missing required rejection-message key", exc.Message);
@@ -213,8 +212,8 @@ public sealed class PromptLoaderTests : IDisposable
               generic: "Something went wrong."
             """);
 
-        var exc = Assert.Throws<PromptLoadException>(() => new PromptLoader(_personasDir, "acme"));
-        foreach (var key in PromptLoader.RequiredErrorMessageKeys)
+        PromptLoadException exc = Assert.Throws<PromptLoadException>(() => new PromptLoader(_personasDir, "acme"));
+        foreach (string key in PromptLoader.RequiredErrorMessageKeys)
         {
             Assert.Contains(key, exc.Message);
         }
@@ -225,7 +224,7 @@ public sealed class PromptLoaderTests : IDisposable
     {
         // Baseline proof the fixture pack (and the validation itself) isn't accidentally
         // over-strict: WriteValidPromptPack's error_messages.yaml already has every required key.
-        var exc = Record.Exception(() => new PromptLoader(_personasDir, "acme"));
+        Exception? exc = Record.Exception(() => new PromptLoader(_personasDir, "acme"));
         Assert.Null(exc);
     }
 
@@ -236,32 +235,32 @@ public sealed class PromptLoaderTests : IDisposable
     [Fact]
     public void RequiredErrorMessageKeys_MatchPython()
     {
-        var pythonKeys = ParsePythonRequiredErrorMessageKeys();
+        List<string> pythonKeys = ParsePythonRequiredErrorMessageKeys();
 
         Assert.Equal(pythonKeys, PromptLoader.RequiredErrorMessageKeys);
     }
 
     private static List<string> ParsePythonRequiredErrorMessageKeys()
     {
-        var repoRoot = RepoRootLocator.Find();
-        var pythonFile = Path.Combine(repoRoot, "app", "backend", "prompt_loader.py");
-        var source = File.ReadAllText(pythonFile);
+        string repoRoot = RepoRootLocator.Find();
+        string pythonFile = Path.Combine(repoRoot, "app", "backend", "prompt_loader.py");
+        string source = File.ReadAllText(pythonFile);
 
-        var marker = "REQUIRED_ERROR_MESSAGE_KEYS: tuple[str, ...] = (";
-        var start = source.IndexOf(marker, StringComparison.Ordinal);
+        string marker = "REQUIRED_ERROR_MESSAGE_KEYS: tuple[str, ...] = (";
+        int start = source.IndexOf(marker, StringComparison.Ordinal);
         Assert.True(start >= 0, $"Could not find REQUIRED_ERROR_MESSAGE_KEYS in {pythonFile}");
-        var end = source.IndexOf(")", start, StringComparison.Ordinal);
-        var body = source[(start + marker.Length)..end];
+        int end = source.IndexOf(")", start, StringComparison.Ordinal);
+        string body = source[(start + marker.Length)..end];
 
         var keys = new List<string>();
-        foreach (var rawLine in body.Split('\n'))
+        foreach (string rawLine in body.Split('\n'))
         {
-            var line = rawLine.Trim();
+            string line = rawLine.Trim();
             if (line.Length == 0 || !line.StartsWith('"'))
             {
                 continue;
             }
-            var closingQuote = line.IndexOf('"', 1);
+            int closingQuote = line.IndexOf('"', 1);
             keys.Add(line[1..closingQuote]);
         }
         return keys;
@@ -269,7 +268,7 @@ public sealed class PromptLoaderTests : IDisposable
 
     private void WriteValidPromptPack(string personaId)
     {
-        var promptsDir = Path.Combine(_personasDir, personaId, "prompts");
+        string promptsDir = Path.Combine(_personasDir, personaId, "prompts");
         Directory.CreateDirectory(promptsDir);
 
         File.WriteAllText(Path.Combine(promptsDir, "system_prompt.yaml"), """

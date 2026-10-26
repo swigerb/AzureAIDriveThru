@@ -22,13 +22,13 @@ public sealed class Issue195DietCokeTests
     [Fact]
     public void DietCoke_FillsMealDrinkSlot_AndCascadesOnMealResize()
     {
-        var order = NewOrder();
+        OrderState order = NewOrder();
 
         order.HandleOrderUpdate("add", Meal, "large", 1, LargeMealPrice);
-        var result = order.HandleOrderUpdate("add", DietCoke, "large", 1, LargeDietCokePrice);
+        OrderUpdateResult result = order.HandleOrderUpdate("add", DietCoke, "large", 1, LargeDietCokePrice);
 
         Assert.True(result.AbsorbedIntoCombo);
-        var meal = order.Items[0];
+        OrderItem meal = order.Items[0];
         Assert.Equal("large", meal.Size);
         Assert.Contains("Large World Famous Fries®", meal.Display);
         Assert.Contains("Large Diet Coke®", meal.Display);

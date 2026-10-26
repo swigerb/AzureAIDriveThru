@@ -115,7 +115,7 @@ internal sealed class ConnectionRegistry
     /// </summary>
     public async Task<bool> WaitForNoneOpenAsync(TimeSpan timeout, CancellationToken cancellationToken = default)
     {
-        var result = await WaitUntilAsync(
+        bool? result = await WaitUntilAsync(
             () => CountOpenUnlocked() == 0 ? (bool?)true : null,
             timeout,
             cancellationToken).ConfigureAwait(false);
@@ -143,13 +143,13 @@ internal sealed class ConnectionRegistry
     /// </summary>
     private async Task<T?> WaitUntilAsync<T>(Func<T?> tryGetResultUnderLock, TimeSpan timeout, CancellationToken cancellationToken)
     {
-        var deadline = _timeProvider.GetUtcNow() + timeout;
+        DateTimeOffset deadline = _timeProvider.GetUtcNow() + timeout;
         while (true)
         {
             Task signalTask;
             lock (_gate)
             {
-                var result = tryGetResultUnderLock();
+                T? result = tryGetResultUnderLock();
                 if (result is not null)
                 {
                     return result;
@@ -157,7 +157,7 @@ internal sealed class ConnectionRegistry
                 signalTask = _signal.Task;
             }
 
-            var remaining = deadline - _timeProvider.GetUtcNow();
+            TimeSpan remaining = deadline - _timeProvider.GetUtcNow();
             if (remaining <= TimeSpan.Zero)
             {
                 return default;
@@ -165,7 +165,7 @@ internal sealed class ConnectionRegistry
 
             cancellationToken.ThrowIfCancellationRequested();
             var delayTask = Task.Delay(remaining, _timeProvider, cancellationToken);
-            var completed = await Task.WhenAny(signalTask, delayTask).ConfigureAwait(false);
+            Task completed = await Task.WhenAny(signalTask, delayTask).ConfigureAwait(false);
             if (completed != signalTask)
             {
                 return default;

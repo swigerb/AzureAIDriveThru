@@ -26,7 +26,7 @@ internal sealed class EntraBearerHandler(HttpMessageHandler inner) : DelegatingH
     {
         if (request.Headers.Authorization is null && request.RequestUri is not null)
         {
-            var token = EntraDefaultCredentials.TryGetAccessToken(request.RequestUri);
+            string? token = EntraDefaultCredentials.TryGetAccessToken(request.RequestUri);
             if (token is not null)
             {
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);

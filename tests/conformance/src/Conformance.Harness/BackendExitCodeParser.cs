@@ -14,7 +14,7 @@ namespace Conformance.Harness;
 /// </summary>
 public static class BackendExitCodeParser
 {
-    private static readonly Regex Pattern =
+    private static readonly Regex s_pattern =
         new(@"exited (?:early|immediately) \(code (-?\d+)\)", RegexOptions.Compiled);
 
     /// <summary>
@@ -27,7 +27,7 @@ public static class BackendExitCodeParser
     /// </summary>
     public static int? TryParse(string message)
     {
-        var match = Pattern.Match(message);
-        return match.Success && int.TryParse(match.Groups[1].Value, out var code) ? code : null;
+        Match match = s_pattern.Match(message);
+        return match.Success && int.TryParse(match.Groups[1].Value, out int code) ? code : null;
     }
 }

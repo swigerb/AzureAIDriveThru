@@ -1,14 +1,10 @@
 using System.Net.WebSockets;
-using System.Text;
-using System.Text.Json;
 using System.Text.Json.Nodes;
-using Backend.Configuration;
 using Backend.Cascade;
 using Backend.Models;
 using Backend.Personas;
 using Backend.Prompts;
 using Backend.Realtime;
-using Backend.Shared;
 using Backend.Tools;
 
 namespace Backend.Sessions;
@@ -61,15 +57,11 @@ namespace Backend.Sessions;
 /// </summary>
 internal sealed class RealtimeProcessor : IPipelineProcessor
 {
-    /// <summary>Port of app/backend/session_manager.py's <c>SESSION_ENDED_CLOSE_REASON</c> --
-    /// paired with the standard <see cref="WebSocketCloseStatus.NormalClosure"/> (1000) code for a
-    /// guest-initiated <c>extension.end_session</c>.</summary>
-    private const string SessionEndedCloseReason = "session_ended";
 
-    /// <summary>Issue #338: kept here (not just moved to <see cref="FramePump.SupersededCloseTimeout"/>)
+    /// <summary>Issue #338: kept here (not just moved to <see cref="FramePump.s_supersededCloseTimeout"/>)
     /// so every existing external reference (CascadeProcessor, Backend.Tests) keeps compiling
     /// unchanged -- same value, same instance, just forwarded.</summary>
-    internal static readonly TimeSpan SupersededCloseTimeout = FramePump.SupersededCloseTimeout;
+    internal static readonly TimeSpan s_supersededCloseTimeout = FramePump.s_supersededCloseTimeout;
 
     private readonly ModelCatalog _catalog;
     private readonly string _defaultDeployment;
@@ -160,7 +152,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
         public bool AssistantAudioSeen { get; set; }
         public bool GreetingSent { get; set; }
         public bool SessionMetadataSent { get; set; }
-        public Dictionary<string, string> ToolsPending { get; } = new();
+        public Dictionary<string, string> ToolsPending { get; } = [];
         public TaskCompletionSource<bool> SessionConfigured { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -234,8 +226,8 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
         string? menuMode = null,
         CascadeDiagnosticCapture? diagnostic = null)
     {
-        var binding = ResolveSessionBinding(persona, menuMode);
-        var deployment = string.IsNullOrEmpty(resolvedModel.Deployment) ? _defaultDeployment : resolvedModel.Deployment;
+        (PromptLoader? PromptLoader, string? SystemMessage, string Voice, IReadOnlyList<JsonObject> ToolSchemas, IToolExecutor ToolExecutor) binding = ResolveSessionBinding(persona, menuMode);
+        string deployment = string.IsNullOrEmpty(resolvedModel.Deployment) ? _defaultDeployment : resolvedModel.Deployment;
         diagnostic?.Binding(resolvedModel.Id, deployment);
 
         using var upstream = new ClientWebSocket();
@@ -244,15 +236,15 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
         {
             return;
         }
-        using var diagnosticUpstream = diagnostic is null ? null : new DiagnosticWebSocket(upstream, diagnostic, true);
-        using var diagnosticBrowser = diagnostic is null ? null : new DiagnosticWebSocket(browserSocket, diagnostic, false);
+        using DiagnosticWebSocket? diagnosticUpstream = diagnostic is null ? null : new DiagnosticWebSocket(upstream, diagnostic, true);
+        using DiagnosticWebSocket? diagnosticBrowser = diagnostic is null ? null : new DiagnosticWebSocket(browserSocket, diagnostic, false);
         WebSocket observedUpstream = diagnosticUpstream ?? (WebSocket)upstream;
         browserSocket = diagnosticBrowser ?? browserSocket;
-        var state = CreateSessionState(
+        RealtimeSessionState state = CreateSessionState(
             observedUpstream, browserSocket, persona, resolvedModel, sessionId, binding.Voice, binding.ToolExecutor);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         RegisterSession(browserSocket, observedUpstream, persona, resolvedModel, menuMode, state, linkedCts);
-        var context = CreateSessionContext(
+        RealtimeSessionContext context = CreateSessionContext(
             browserSocket, observedUpstream, persona, resolvedModel, menuMode, state, linkedCts);
         await RelaySessionAsync(context, linkedCts).ConfigureAwait(false);
     }
@@ -272,7 +264,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
         // bearer token, matching rtmt.py's DefaultAzureCredential fallback.
         try
         {
-            var (headerName, headerValue) = await ResolveUpstreamAuthHeaderAsync(cancellationToken).ConfigureAwait(false);
+            (string? headerName, string? headerValue) = await ResolveUpstreamAuthHeaderAsync(cancellationToken).ConfigureAwait(false);
             upstream.Options.SetRequestHeader(headerName, headerValue);
 
             // Rick's #280 review, item 3: rtmt.py's upstream ws_connect uses
@@ -375,7 +367,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
             // rtmt.py's `if not resume_decided.is_set()` guard that runs BEFORE handle_resume is
             // ever invoked (never inside it) -- once this fallback has fired, ANY subsequent
             // extension.resume (first frame or not) is rejected via reject_late_resume.
-            var firstFrameTimeoutSeconds = _sessionManager.Config.FirstFrameTimeoutSeconds;
+            double firstFrameTimeoutSeconds = _sessionManager.Config.FirstFrameTimeoutSeconds;
             if (firstFrameTimeoutSeconds > 0)
             {
                 _ = Task.Delay(TimeSpan.FromSeconds(firstFrameTimeoutSeconds), _timeProvider, linkedCts.Token)
@@ -416,7 +408,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
                 }),
             },
         };
-        var json = nudgeItem.ToJsonString();
+        string json = nudgeItem.ToJsonString();
         await SendTextAsync(upstream, json, ct).ConfigureAwait(false);
         await SendTextAsync(upstream, """{"type":"response.create"}""", ct).ConfigureAwait(false);
         _sessionManager?.GetContextMonitor(state.EffectiveSessionId)?.AddContent(json);
@@ -426,15 +418,15 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
         WebSocket browserSocket, WebSocket upstream, Persona persona, ResolvedModel resolvedModel,
         string? menuMode, RealtimeSessionState state, CancellationTokenSource linkedCts)
     {
-        _promptLoaders.TryGetValue(persona.Id, out var promptLoader);
-        var sessionId = state.SessionId;
-        var ct = linkedCts.Token;
+        _promptLoaders.TryGetValue(persona.Id, out PromptLoader? promptLoader);
+        string sessionId = state.SessionId;
+        CancellationToken ct = linkedCts.Token;
         var greetingGate = new GreetingGate(
-            upstream, promptLoader, state, _sessionManager, _timeProvider, _greetingTimeoutSeconds, sessionId, _logger!, ct);
+            upstream, promptLoader, state, _sessionManager, _timeProvider, _greetingTimeoutSeconds, sessionId, _logger, ct);
 
-        var toolCallDispatcher = new ToolCallDispatcher(upstream, browserSocket, state, _sessionManager, sessionId, _logger!, ct);
+        var toolCallDispatcher = new ToolCallDispatcher(upstream, browserSocket, state, _sessionManager, sessionId, _logger, ct);
 
-        JsonObject BuildVoiceUpdateFrame(string newVoice) => new()
+        static JsonObject BuildVoiceUpdateFrame(string newVoice) => new()
         {
             ["type"] = "session.update",
             ["event_id"] = EventIds.NewEventId("sonic_voice"),
@@ -448,7 +440,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
         // the local function above rather than being duplicated inside the new class.
         var resumeCoordinator = new ResumeCoordinator(
             browserSocket, upstream, persona, resolvedModel, menuMode, sessionId, linkedCts, state,
-            _sessionManager, BuildVoiceUpdateFrame, _logger!, ct);
+            _sessionManager, BuildVoiceUpdateFrame, _logger, ct);
 
         return new RealtimeSessionContext
         {
@@ -470,7 +462,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
             ToolCallDispatcher = toolCallDispatcher,
             ResumeCoordinator = resumeCoordinator,
             AllowedVoices = _allowedVoices,
-            Logger = _logger!,
+            Logger = _logger,
             TimeProvider = _timeProvider,
             CancellationToken = ct,
         };
@@ -478,13 +470,13 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
 
     private async Task RelaySessionAsync(RealtimeSessionContext context, CancellationTokenSource linkedCts)
     {
-        var state = context.State;
-        var browserSocket = context.BrowserSocket;
-        var upstream = context.Upstream;
-        var ct = context.CancellationToken;
+        RealtimeSessionState state = context.State;
+        WebSocket browserSocket = context.BrowserSocket;
+        WebSocket upstream = context.Upstream;
+        CancellationToken ct = context.CancellationToken;
         try
         {
-            var bootstrap = state.Guard.Stamp(RealtimeSessionBuilder.BuildBootstrapSessionUpdate(
+            JsonObject bootstrap = state.Guard.Stamp(RealtimeSessionBuilder.BuildBootstrapSessionUpdate(
                 _sessionConfig, context.ToolSchemas,
                 voice: Overridable.Of<string?>(state.Voice),
                 systemMessage: Overridable.Of<string?>(context.SystemMessage),
@@ -492,8 +484,8 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
             await SendTextAsync(upstream, bootstrap.ToJsonString(), ct).ConfigureAwait(false);
             _logger?.UpstreamSessionBootstrapped(context.ToolSchemas.Count, context.SessionId);
 
-            var browserToUpstream = new RealtimeClientRelay(context).RunAsync();
-            var upstreamToBrowser = new RealtimeServerRelay(context).RunAsync();
+            Task browserToUpstream = new RealtimeClientRelay(context).RunAsync();
+            Task upstreamToBrowser = new RealtimeServerRelay(context).RunAsync();
             try
             {
                 await Task.WhenAny(browserToUpstream, upstreamToBrowser).ConfigureAwait(false);
@@ -542,7 +534,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
     // untouched -- pure move-and-delegate. FramePump holds the actual logic (and now the EXACT
     // same supersede-close sequence CascadeProcessor also calls), these just plug in the
     // instance state (_logger/_timeProvider) FramePump's static methods take as parameters.
-    private Task SwallowAsync(Task task) => FramePump.SwallowAsync(task, _logger!);
+    private Task SwallowAsync(Task task) => FramePump.SwallowAsync(task, _logger);
 
     private static Task CloseIfOpenAsync(WebSocket socket, WebSocketCloseStatus status, string? description) =>
         FramePump.CloseIfOpenAsync(socket, status, description);
@@ -561,7 +553,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
         FramePump.TryAppendFastPath(payload, echo, _timeProvider);
 
     internal Task ForwardFastPathAudioAsync(FramePump.AppendFastPathResult fastPath, byte[] payload, WebSocket upstream, string sessionId, CancellationToken ct) =>
-        FramePump.ForwardFastPathAudioAsync(fastPath, payload, upstream, sessionId, ct, _logger!);
+        FramePump.ForwardFastPathAudioAsync(fastPath, payload, upstream, sessionId, ct, _logger);
 
     internal static Task ForwardClientFrameAsync(
         JsonObject forwarded, string? sentType, EchoSuppressor echo, RateLimitRecovery rateLimit, WebSocket upstream, CancellationToken ct) =>
@@ -572,7 +564,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
     // Issue #338: internal (not private) so extracted collaborators (e.g. ToolCallDispatcher) in
     // the same assembly can reuse it instead of duplicating this JSON helper.
     internal static string? GetString(JsonObject? obj, string key) =>
-        obj?[key] is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
+        obj?[key] is JsonValue v && v.TryGetValue<string>(out string? s) ? s : null;
 
     /// <summary>Consumes extension messages that mutate only this session's own order settings
     /// (machine/happy-hour overrides), never forwarding anything upstream to Azure OpenAI. Internal
@@ -589,9 +581,9 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
 
         if (msgType == "extension.set_machine_status")
         {
-            var machine = GetString(message, "machine");
-            var candidateStatus = GetString(message, "status");
-            var status = ClientServerFilter.SanitizeMachineStatus(candidateStatus);
+            string? machine = GetString(message, "machine");
+            string? candidateStatus = GetString(message, "status");
+            string? status = ClientServerFilter.SanitizeMachineStatus(candidateStatus);
             if (string.IsNullOrEmpty(machine) || status is null
                 || !_sessionManager.SetMachineStatus(effectiveSessionId, machine, status))
             {
@@ -605,8 +597,8 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
 
         if (msgType == "extension.set_happy_hour_mode")
         {
-            var candidateMode = GetString(message, "mode");
-            var mode = ClientServerFilter.SanitizeHappyHourMode(candidateMode);
+            string? candidateMode = GetString(message, "mode");
+            string? mode = ClientServerFilter.SanitizeHappyHourMode(candidateMode);
             if (mode is null || !_sessionManager.SetHappyHourMode(effectiveSessionId, mode))
             {
                 _logger?.DroppedSetHappyHourMode(candidateMode, effectiveSessionId);
@@ -656,8 +648,6 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
         return false;
     }
 
-    private double NowSeconds() => _timeProvider.GetTimestamp() / (double)_timeProvider.TimestampFrequency;
-
     private static IReadOnlyList<JsonObject> BuildToolSchemas(PromptLoader? promptLoader)
     {
         if (promptLoader is null)
@@ -665,7 +655,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
             return [];
         }
         var list = new List<JsonObject>(promptLoader.ToolSchemas.Count);
-        foreach (var schema in promptLoader.ToolSchemas)
+        foreach (IReadOnlyDictionary<object, object> schema in promptLoader.ToolSchemas)
         {
             if (YamlJson.ToJsonNode((IDictionary<object, object>)schema) is JsonObject obj)
             {
@@ -690,12 +680,12 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
     internal (PromptLoader? PromptLoader, string? SystemMessage, string Voice, IReadOnlyList<JsonObject> ToolSchemas, IToolExecutor ToolExecutor)
         ResolveSessionBinding(Persona persona, string? menuMode)
     {
-        _promptLoaders.TryGetValue(persona.Id, out var promptLoader);
-        var systemMessage = promptLoader?.SystemPrompt;
-        var voice = ClientServerFilter.SanitizeVoice(persona.Voice.Default, _allowedVoices)
+        _promptLoaders.TryGetValue(persona.Id, out PromptLoader? promptLoader);
+        string? systemMessage = promptLoader?.SystemPrompt;
+        string voice = ClientServerFilter.SanitizeVoice(persona.Voice.Default, _allowedVoices)
             ?? _sessionConfig.VoiceChoice ?? "marin";
-        var toolSchemas = BuildToolSchemas(promptLoader);
-        var toolExecutor = _toolExecutorFactory?.Invoke(persona, promptLoader, menuMode) ?? _toolExecutor;
+        IReadOnlyList<JsonObject> toolSchemas = BuildToolSchemas(promptLoader);
+        IToolExecutor toolExecutor = _toolExecutorFactory?.Invoke(persona, promptLoader, menuMode) ?? _toolExecutor;
         return (promptLoader, systemMessage, voice, toolSchemas, toolExecutor);
     }
 
@@ -714,8 +704,8 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
             return ("api-key", _upstreamApiKey);
         }
 
-        var provider = _bearerTokenProvider ?? DefaultAzureCredentialTokenProvider.Instance.Value;
-        var token = await provider.GetTokenAsync(cancellationToken).ConfigureAwait(false);
+        IUpstreamBearerTokenProvider provider = _bearerTokenProvider ?? DefaultAzureCredentialTokenProvider.Instance.Value;
+        string token = await provider.GetTokenAsync(cancellationToken).ConfigureAwait(false);
         return ("Authorization", $"Bearer {token}");
     }
 
@@ -725,7 +715,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
     private static Uri BuildUpstreamUri(string endpoint, string deployment)
     {
         var baseUri = new Uri(endpoint, UriKind.Absolute);
-        var scheme = baseUri.Scheme.ToLowerInvariant() switch
+        string scheme = baseUri.Scheme.ToLowerInvariant() switch
         {
             "https" or "wss" => "wss",
             _ => "ws",

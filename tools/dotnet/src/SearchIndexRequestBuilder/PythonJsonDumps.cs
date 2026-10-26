@@ -48,8 +48,8 @@ internal static class PythonJsonDumps
                 break;
             case JsonObject obj:
                 builder.Append('{');
-                var firstProperty = true;
-                foreach (var property in obj)
+                bool firstProperty = true;
+                foreach (KeyValuePair<string, JsonNode?> property in obj)
                 {
                     if (!firstProperty)
                     {
@@ -64,7 +64,7 @@ internal static class PythonJsonDumps
                 break;
             case JsonArray arr:
                 builder.Append('[');
-                for (var i = 0; i < arr.Count; i++)
+                for (int i = 0; i < arr.Count; i++)
                 {
                     if (i > 0)
                     {
@@ -111,7 +111,7 @@ internal static class PythonJsonDumps
 
     private static void WriteNumber(JsonElement element, StringBuilder builder)
     {
-        var raw = element.GetRawText();
+        string raw = element.GetRawText();
         if (raw.IndexOfAny(['.', 'e', 'E']) >= 0)
         {
             builder.Append(PythonFloatRepr(double.Parse(raw, CultureInfo.InvariantCulture)));
@@ -126,7 +126,7 @@ internal static class PythonJsonDumps
     private static void WriteString(string value, StringBuilder builder)
     {
         builder.Append('"');
-        foreach (var c in value)
+        foreach (char c in value)
         {
             switch (c)
             {
@@ -176,7 +176,7 @@ internal static class PythonJsonDumps
     /// number; .NET's default shortest-round-trip double formatting does not).</summary>
     internal static string PythonFloatRepr(double value)
     {
-        var text = value.ToString(CultureInfo.InvariantCulture);
+        string text = value.ToString(CultureInfo.InvariantCulture);
         return text.IndexOfAny(['.', 'e', 'E']) < 0 ? text + ".0" : text;
     }
 }

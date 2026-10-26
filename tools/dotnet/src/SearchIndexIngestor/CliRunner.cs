@@ -1,3 +1,4 @@
+using Azure.Core;
 using SearchIndexRequestBuilder;
 
 namespace SearchIndexIngestor;
@@ -49,13 +50,13 @@ public static class CliRunner
         Func<Azure.Core.TokenCredential>? createCredential = null)
     {
         List<string> personaFlags = [];
-        var dryRun = false;
+        bool dryRun = false;
         string? personasDir = null;
         string? searchEndpointFlag = null;
         string? openAiEndpointFlag = null;
         string? embeddingDeploymentFlag = null;
 
-        for (var i = 0; i < args.Length; i++)
+        for (int i = 0; i < args.Length; i++)
         {
             switch (args[i])
             {
@@ -83,12 +84,12 @@ public static class CliRunner
             }
         }
 
-        var getEnv = getEnvironmentVariable ?? Environment.GetEnvironmentVariable;
+        Func<string, string?> getEnv = getEnvironmentVariable ?? Environment.GetEnvironmentVariable;
 
         try
         {
-            var repoRoot = repoRootOverride ?? RepoRoot.Find(AppContext.BaseDirectory);
-            var loadAzd = loadAzdEnvValues ?? (root => AzdEnvLoader.LoadDefaultEnvValues(root));
+            string repoRoot = repoRootOverride ?? RepoRoot.Find(AppContext.BaseDirectory);
+            Func<string, IReadOnlyDictionary<string, string>> loadAzd = loadAzdEnvValues ?? (root => AzdEnvLoader.LoadDefaultEnvValues(root));
 
             // setup_search_index.py's main() loads azd env / checks the skip flag ONLY outside
             // --dry-run (lines 538-547) -- dry-run's own help text promises "no azd env loaded".
@@ -111,15 +112,15 @@ public static class CliRunner
             // load_azd_env()-only-outside-dry-run behaviour) with the same override=True precedence
             // every other azd-aware setting here already uses. Otherwise a real run can create and
             // populate indexes for personas an environment's own PERSONAS setting never enabled.
-            var resolvedPersonasDir = PersonaCatalogEnvResolver.ResolvePersonasDir(personasDir, getEnv, azdEnvValues);
-            var enabledIds = PersonaCatalogEnvResolver.ResolveEnabledIds(getEnv, azdEnvValues);
-            var catalog = EnabledPersonaDiscovery.DiscoverAll(repoRoot, resolvedPersonasDir, enabledIds);
-            var targeted = PersonaTargeting.ResolveTargetPersonas(catalog, personaFlags);
+            string? resolvedPersonasDir = PersonaCatalogEnvResolver.ResolvePersonasDir(personasDir, getEnv, azdEnvValues);
+            IReadOnlyList<string>? enabledIds = PersonaCatalogEnvResolver.ResolveEnabledIds(getEnv, azdEnvValues);
+            IReadOnlyList<EnabledPersonaDiscovery.DiscoveredPersona> catalog = EnabledPersonaDiscovery.DiscoverAll(repoRoot, resolvedPersonasDir, enabledIds);
+            IReadOnlyList<EnabledPersonaDiscovery.DiscoveredPersona> targeted = PersonaTargeting.ResolveTargetPersonas(catalog, personaFlags);
             var plans = targeted.Select(PersonaIngestPlanBuilder.Build).ToList();
 
             if (dryRun)
             {
-                foreach (var plan in plans)
+                foreach (PersonaIngestPlan? plan in plans)
                 {
                     stdout.WriteLine(
                         $"[dry-run] persona '{plan.PersonaId}': index '{plan.IndexName}', " +
@@ -128,18 +129,18 @@ public static class CliRunner
                 return 0;
             }
 
-            var searchEndpoint = SearchEndpointResolver.Resolve(searchEndpointFlag, getEnv, azdEnvValues);
-            var settings = OpenAiSettingsResolver.Resolve(openAiEndpointFlag, embeddingDeploymentFlag, getEnv, azdEnvValues);
+            string searchEndpoint = SearchEndpointResolver.Resolve(searchEndpointFlag, getEnv, azdEnvValues);
+            OpenAiSettingsResolver.Settings settings = OpenAiSettingsResolver.Resolve(openAiEndpointFlag, embeddingDeploymentFlag, getEnv, azdEnvValues);
 
             // DefaultAzureCredential only -- no Azure OpenAI or Search key is ever read, issued, or
             // stored, matching setup_search_index.py's own run() comment (lines 475-477) verbatim.
-            var credential = (createCredential ?? (() => new Azure.Identity.DefaultAzureCredential()))();
-            using var searchClient = (createSearchClient ?? ((endpoint, cred) => SearchIndexHttpClient.CreateForProduction(endpoint, cred)))(searchEndpoint, credential);
-            var embeddingClient = (createEmbeddingClient ?? ((endpoint, cred) => AzureOpenAiEmbeddingClient.CreateForProduction(endpoint, cred)))(settings.OpenAiEndpoint, credential);
+            TokenCredential credential = (createCredential ?? (() => new Azure.Identity.DefaultAzureCredential()))();
+            using SearchIndexHttpClient searchClient = (createSearchClient ?? ((endpoint, cred) => SearchIndexHttpClient.CreateForProduction(endpoint, cred)))(searchEndpoint, credential);
+            IEmbeddingClient embeddingClient = (createEmbeddingClient ?? ((endpoint, cred) => AzureOpenAiEmbeddingClient.CreateForProduction(endpoint, cred)))(settings.OpenAiEndpoint, credential);
             try
             {
                 var orchestrator = new SearchIndexOrchestrator(searchClient, embeddingClient, settings.OpenAiEndpoint, settings.EmbeddingDeployment, stdout);
-                foreach (var plan in plans)
+                foreach (PersonaIngestPlan? plan in plans)
                 {
                     await orchestrator.IngestAsync(plan, CancellationToken.None).ConfigureAwait(false);
                 }

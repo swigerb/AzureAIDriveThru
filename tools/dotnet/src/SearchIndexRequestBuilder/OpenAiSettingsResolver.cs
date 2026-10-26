@@ -28,7 +28,7 @@ internal static class OpenAiSettingsResolver
     private const string OpenAiEndpointVariableName = "AZURE_OPENAI_EASTUS2_ENDPOINT";
     private const string EmbeddingDeploymentVariableName = "AZURE_OPENAI_EMBEDDING_DEPLOYMENT";
 
-    private static readonly IReadOnlyDictionary<string, string> EmptyAzdValues =
+    private static readonly IReadOnlyDictionary<string, string> s_emptyAzdValues =
         new Dictionary<string, string>();
 
     public sealed record Settings(string OpenAiEndpoint, string EmbeddingDeployment);
@@ -78,10 +78,10 @@ internal static class OpenAiSettingsResolver
         Func<string, string?>? getEnvironmentVariable = null,
         IReadOnlyDictionary<string, string>? azdEnvValues = null)
     {
-        var getEnv = getEnvironmentVariable ?? Environment.GetEnvironmentVariable;
-        var azdValues = azdEnvValues ?? EmptyAzdValues;
+        Func<string, string?> getEnv = getEnvironmentVariable ?? Environment.GetEnvironmentVariable;
+        IReadOnlyDictionary<string, string> azdValues = azdEnvValues ?? s_emptyAzdValues;
 
-        var openAiEndpoint = openAiEndpointFlag;
+        string? openAiEndpoint = openAiEndpointFlag;
         if (string.IsNullOrEmpty(openAiEndpoint))
         {
             openAiEndpoint = GetNonEmptyOrNull(azdValues, OpenAiEndpointVariableName);
@@ -98,7 +98,7 @@ internal static class OpenAiSettingsResolver
                 "AZURE_OPENAI_EASTUS2_ENDPOINT environment variable.");
         }
 
-        var embeddingDeployment = embeddingDeploymentFlag;
+        string? embeddingDeployment = embeddingDeploymentFlag;
         if (string.IsNullOrEmpty(embeddingDeployment))
         {
             embeddingDeployment = GetNonEmptyOrNull(azdValues, EmbeddingDeploymentVariableName);
@@ -116,5 +116,5 @@ internal static class OpenAiSettingsResolver
     }
 
     private static string? GetNonEmptyOrNull(IReadOnlyDictionary<string, string> values, string key) =>
-        values.TryGetValue(key, out var value) && !string.IsNullOrEmpty(value) ? value : null;
+        values.TryGetValue(key, out string? value) && !string.IsNullOrEmpty(value) ? value : null;
 }

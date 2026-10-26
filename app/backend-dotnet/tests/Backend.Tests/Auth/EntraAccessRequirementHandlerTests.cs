@@ -79,7 +79,7 @@ public sealed class EntraAccessRequirementHandlerTests
     [Fact]
     public async Task ValidRoleAndScope_Succeeds()
     {
-        var result = await EvaluateAsync(AuthenticatedPrincipal(), RequestFor("some-protected-route"));
+        AuthorizationResult result = await EvaluateAsync(AuthenticatedPrincipal(), RequestFor("some-protected-route"));
 
         Assert.Equal(AuthorizationResult.Succeeded, result);
     }
@@ -87,7 +87,7 @@ public sealed class EntraAccessRequirementHandlerTests
     [Fact]
     public async Task MissingRole_Fails()
     {
-        var result = await EvaluateAsync(AuthenticatedPrincipal(role: null), RequestFor("some-protected-route"));
+        AuthorizationResult result = await EvaluateAsync(AuthenticatedPrincipal(role: null), RequestFor("some-protected-route"));
 
         Assert.Equal(AuthorizationResult.Failed, result);
     }
@@ -95,7 +95,7 @@ public sealed class EntraAccessRequirementHandlerTests
     [Fact]
     public async Task WrongRole_Fails()
     {
-        var result = await EvaluateAsync(AuthenticatedPrincipal(role: "SomeOther.Role"), RequestFor("some-protected-route"));
+        AuthorizationResult result = await EvaluateAsync(AuthenticatedPrincipal(role: "SomeOther.Role"), RequestFor("some-protected-route"));
 
         Assert.Equal(AuthorizationResult.Failed, result);
     }
@@ -105,7 +105,7 @@ public sealed class EntraAccessRequirementHandlerTests
     {
         // Issue #147's exact-match requirement -- "DriveThru.UserX" must NOT satisfy a
         // "DriveThru.User" role requirement (conformance AuthRowCases row 4c).
-        var result = await EvaluateAsync(AuthenticatedPrincipal(role: "DriveThru.UserX"), RequestFor("some-protected-route"));
+        AuthorizationResult result = await EvaluateAsync(AuthenticatedPrincipal(role: "DriveThru.UserX"), RequestFor("some-protected-route"));
 
         Assert.Equal(AuthorizationResult.Failed, result);
     }
@@ -113,7 +113,7 @@ public sealed class EntraAccessRequirementHandlerTests
     [Fact]
     public async Task MissingScope_Fails()
     {
-        var result = await EvaluateAsync(AuthenticatedPrincipal(scope: null), RequestFor("some-protected-route"));
+        AuthorizationResult result = await EvaluateAsync(AuthenticatedPrincipal(scope: null), RequestFor("some-protected-route"));
 
         Assert.Equal(AuthorizationResult.Failed, result);
     }
@@ -121,7 +121,7 @@ public sealed class EntraAccessRequirementHandlerTests
     [Fact]
     public async Task WrongScope_Fails()
     {
-        var result = await EvaluateAsync(AuthenticatedPrincipal(scope: "some.other.scope"), RequestFor("some-protected-route"));
+        AuthorizationResult result = await EvaluateAsync(AuthenticatedPrincipal(scope: "some.other.scope"), RequestFor("some-protected-route"));
 
         Assert.Equal(AuthorizationResult.Failed, result);
     }
@@ -131,7 +131,7 @@ public sealed class EntraAccessRequirementHandlerTests
     {
         // Conformance AuthRowCases row 5c: "access_as_user_admin" must NOT satisfy
         // "access_as_user" (exact, whitespace-delimited match only).
-        var result = await EvaluateAsync(AuthenticatedPrincipal(scope: "access_as_user_admin"), RequestFor("some-protected-route"));
+        AuthorizationResult result = await EvaluateAsync(AuthenticatedPrincipal(scope: "access_as_user_admin"), RequestFor("some-protected-route"));
 
         Assert.Equal(AuthorizationResult.Failed, result);
     }
@@ -139,7 +139,7 @@ public sealed class EntraAccessRequirementHandlerTests
     [Fact]
     public async Task MultiScopeClaim_MatchesByWhitespaceSplit()
     {
-        var result = await EvaluateAsync(
+        AuthorizationResult result = await EvaluateAsync(
             AuthenticatedPrincipal(scope: "some.other.scope access_as_user another.scope"),
             RequestFor("some-protected-route"));
 
@@ -168,7 +168,7 @@ public sealed class EntraAccessRequirementHandlerTests
         var identity = new ClaimsIdentity(claims, JwtBearerDefaults.AuthenticationScheme);
         var principal = new ClaimsPrincipal(identity);
 
-        var result = await EvaluateAsync(principal, RequestFor("some-protected-route"));
+        AuthorizationResult result = await EvaluateAsync(principal, RequestFor("some-protected-route"));
 
         Assert.Equal(AuthorizationResult.Failed, result);
     }
@@ -180,7 +180,7 @@ public sealed class EntraAccessRequirementHandlerTests
         // result as a Challenge (401), matching entra_auth.py's EntraUnauthorized path.
         var anonymousIdentity = new ClaimsPrincipal(new ClaimsIdentity());
 
-        var result = await EvaluateAsync(anonymousIdentity, RequestFor("some-protected-route"));
+        AuthorizationResult result = await EvaluateAsync(anonymousIdentity, RequestFor("some-protected-route"));
 
         Assert.Equal(AuthorizationResult.Pending, result);
     }
@@ -197,7 +197,7 @@ public sealed class EntraAccessRequirementHandlerTests
     {
         var anonymousIdentity = new ClaimsPrincipal(new ClaimsIdentity());
 
-        var result = await EvaluateAsync(
+        AuthorizationResult result = await EvaluateAsync(
             anonymousIdentity, RequestFor(PersonaRoutes.PersonaAssetRouteName, assetPath));
 
         Assert.Equal(AuthorizationResult.Succeeded, result);
@@ -210,7 +210,7 @@ public sealed class EntraAccessRequirementHandlerTests
         // ".json" isn't in the anonymous extension set (issue #147 bullet 3; tracks #163).
         var anonymousIdentity = new ClaimsPrincipal(new ClaimsIdentity());
 
-        var result = await EvaluateAsync(
+        AuthorizationResult result = await EvaluateAsync(
             anonymousIdentity, RequestFor(PersonaRoutes.PersonaAssetRouteName, "demo/dummyOrder.json"));
 
         Assert.Equal(AuthorizationResult.Pending, result);
@@ -219,7 +219,7 @@ public sealed class EntraAccessRequirementHandlerTests
     [Fact]
     public async Task PersonaAsset_ProtectedExtension_Authenticated_StillRequiresRoleAndScope()
     {
-        var result = await EvaluateAsync(
+        AuthorizationResult result = await EvaluateAsync(
             AuthenticatedPrincipal(), RequestFor(PersonaRoutes.PersonaAssetRouteName, "demo/dummyOrder.json"));
 
         Assert.Equal(AuthorizationResult.Succeeded, result);
@@ -230,7 +230,7 @@ public sealed class EntraAccessRequirementHandlerTests
     {
         var anonymousIdentity = new ClaimsPrincipal(new ClaimsIdentity());
 
-        var result = await EvaluateAsync(
+        AuthorizationResult result = await EvaluateAsync(
             anonymousIdentity, RequestFor(PersonaRoutes.PersonaAssetRouteName, "LOGO.SVG"));
 
         Assert.Equal(AuthorizationResult.Succeeded, result);
@@ -249,7 +249,7 @@ public sealed class EntraAccessRequirementHandlerTests
         // return ".png" without the GetPythonStyleSuffix special case.
         var anonymousIdentity = new ClaimsPrincipal(new ClaimsIdentity());
 
-        var result = await EvaluateAsync(
+        AuthorizationResult result = await EvaluateAsync(
             anonymousIdentity, RequestFor(PersonaRoutes.PersonaAssetRouteName, assetPath));
 
         Assert.Equal(AuthorizationResult.Pending, result);
@@ -262,7 +262,7 @@ public sealed class EntraAccessRequirementHandlerTests
         // delimiter -- mirrors the same "0 < i < len(name)-1" rule as the dotfile case above.
         var anonymousIdentity = new ClaimsPrincipal(new ClaimsIdentity());
 
-        var result = await EvaluateAsync(
+        AuthorizationResult result = await EvaluateAsync(
             anonymousIdentity, RequestFor(PersonaRoutes.PersonaAssetRouteName, "logo."));
 
         Assert.Equal(AuthorizationResult.Pending, result);
@@ -275,7 +275,7 @@ public sealed class EntraAccessRequirementHandlerTests
         // is anonymous (".svg" matches), even though an earlier segment isn't an extension match.
         var anonymousIdentity = new ClaimsPrincipal(new ClaimsIdentity());
 
-        var result = await EvaluateAsync(
+        AuthorizationResult result = await EvaluateAsync(
             anonymousIdentity, RequestFor(PersonaRoutes.PersonaAssetRouteName, "logo.backup.svg"));
 
         Assert.Equal(AuthorizationResult.Succeeded, result);
@@ -288,7 +288,7 @@ public sealed class EntraAccessRequirementHandlerTests
         // dot-suffix (".bak") is considered, even though ".svg" appears earlier in the name.
         var anonymousIdentity = new ClaimsPrincipal(new ClaimsIdentity());
 
-        var result = await EvaluateAsync(
+        AuthorizationResult result = await EvaluateAsync(
             anonymousIdentity, RequestFor(PersonaRoutes.PersonaAssetRouteName, "logo.svg.bak"));
 
         Assert.Equal(AuthorizationResult.Pending, result);
@@ -301,7 +301,7 @@ public sealed class EntraAccessRequirementHandlerTests
         // an unrelated route with a coincidentally-matching "assetPath" route value must not.
         var anonymousIdentity = new ClaimsPrincipal(new ClaimsIdentity());
 
-        var result = await EvaluateAsync(anonymousIdentity, RequestFor("persona-detail", "logo.svg"));
+        AuthorizationResult result = await EvaluateAsync(anonymousIdentity, RequestFor("persona-detail", "logo.svg"));
 
         Assert.Equal(AuthorizationResult.Pending, result);
     }
@@ -315,10 +315,10 @@ public sealed class EntraAccessRequirementHandlerTests
         // in a JwtBearer event always yields 401, but Python's parity behavior is 403
         // (EntraForbidden) -- so the 403 must come from this authorization handler instead, even
         // though the materialized role/scope Claim values are otherwise perfectly valid.
-        var resource = RequestFor("some-protected-route");
-        resource.Items[EntraAuthentication.ClaimShapeViolationKey] = true;
+        HttpContext resource = RequestFor("some-protected-route");
+        resource.Items[EntraAuthentication.s_claimShapeViolationKey] = true;
 
-        var result = await EvaluateAsync(AuthenticatedPrincipal(), resource);
+        AuthorizationResult result = await EvaluateAsync(AuthenticatedPrincipal(), resource);
 
         Assert.Equal(AuthorizationResult.Failed, result);
     }
@@ -328,10 +328,10 @@ public sealed class EntraAccessRequirementHandlerTests
     {
         // Only a literal `true` bool arms the shape-violation failure -- defends against a
         // hypothetical future Items[] collision writing some other truthy-but-not-bool value.
-        var resource = RequestFor("some-protected-route");
-        resource.Items[EntraAuthentication.ClaimShapeViolationKey] = "true";
+        HttpContext resource = RequestFor("some-protected-route");
+        resource.Items[EntraAuthentication.s_claimShapeViolationKey] = "true";
 
-        var result = await EvaluateAsync(AuthenticatedPrincipal(), resource);
+        AuthorizationResult result = await EvaluateAsync(AuthenticatedPrincipal(), resource);
 
         Assert.Equal(AuthorizationResult.Succeeded, result);
     }
@@ -357,7 +357,7 @@ public sealed class ConfigureJwtBearerTests
     public void SetsAuthorityToSettingsIssuer()
     {
         var options = new JwtBearerOptions();
-        var settings = EntraModeSettings();
+        EntraSettings settings = EntraModeSettings();
 
         EntraAuthentication.ConfigureJwtBearer(options, settings);
 
@@ -390,7 +390,7 @@ public sealed class ConfigureJwtBearerTests
     public void ValidAudiences_IncludesBareClientIdAndAppIdUri()
     {
         var options = new JwtBearerOptions();
-        var settings = EntraModeSettings();
+        EntraSettings settings = EntraModeSettings();
 
         EntraAuthentication.ConfigureJwtBearer(options, settings);
 
@@ -476,7 +476,7 @@ public sealed class ConfigureJwtBearerTests
             Exception = (Exception)Activator.CreateInstance(exceptionType, "simulated backchannel failure")!,
         };
 
-        await ((JwtBearerEvents)options.Events!).AuthenticationFailed(context);
+        await options.Events!.AuthenticationFailed(context);
 
         Assert.NotNull(context.Result);
         Assert.True(gate.IsInCooldown());
@@ -498,7 +498,7 @@ public sealed class ConfigureJwtBearerTests
                 new HttpRequestException("connection reset by peer")),
         };
 
-        await ((JwtBearerEvents)options.Events!).AuthenticationFailed(context);
+        await options.Events.AuthenticationFailed(context);
 
         Assert.NotNull(context.Result);
         Assert.True(gate.IsInCooldown());
@@ -518,7 +518,7 @@ public sealed class ConfigureJwtBearerTests
             Exception = new SecurityTokenExpiredException("token has expired"),
         };
 
-        await ((JwtBearerEvents)options.Events!).AuthenticationFailed(context);
+        await options.Events.AuthenticationFailed(context);
 
         Assert.Null(context.Result);
         Assert.False(gate.IsInCooldown());
@@ -535,7 +535,7 @@ public sealed class ConfigureJwtBearerTests
         httpContext.Request.Headers.Authorization = "Bearer some.jwt.token";
         var context = new MessageReceivedContext(httpContext, JwtBearerScheme(), options);
 
-        await ((JwtBearerEvents)options.Events!).MessageReceived(context);
+        await options.Events.MessageReceived(context);
 
         Assert.NotNull(context.Result);
     }
@@ -552,7 +552,7 @@ public sealed class ConfigureJwtBearerTests
         httpContext.Request.QueryString = new QueryString("?access_token=some.jwt.token");
         var context = new MessageReceivedContext(httpContext, JwtBearerScheme(), options);
 
-        await ((JwtBearerEvents)options.Events!).MessageReceived(context);
+        await options.Events.MessageReceived(context);
 
         Assert.NotNull(context.Result);
     }
@@ -567,7 +567,7 @@ public sealed class ConfigureJwtBearerTests
         httpContext.Request.Headers.Authorization = "Bearer some.jwt.token";
         var context = new MessageReceivedContext(httpContext, JwtBearerScheme(), options);
 
-        await ((JwtBearerEvents)options.Events!).MessageReceived(context);
+        await options.Events.MessageReceived(context);
 
         Assert.Null(context.Result);
     }
@@ -583,7 +583,7 @@ public sealed class ConfigureJwtBearerTests
         EntraAuthentication.ConfigureJwtBearer(options, EntraModeSettings(), gate);
         var context = new MessageReceivedContext(new DefaultHttpContext(), JwtBearerScheme(), options);
 
-        await ((JwtBearerEvents)options.Events!).MessageReceived(context);
+        await options.Events.MessageReceived(context);
 
         Assert.Null(context.Result);
     }
@@ -612,7 +612,8 @@ public sealed class ConfigureJwtBearerTests
         var gate = new DiscoveryFailureGate();
         gate.RecordFailure();
         EntraAuthentication.ConfigureJwtBearer(options, EntraModeSettings(), gate);
-        var decorator = Assert.IsType<CooldownAwareConfigurationManager>(options.ConfigurationManager);
+
+        _ = Assert.IsType<CooldownAwareConfigurationManager>(options.ConfigurationManager);
         // Warm it directly, with no network call, via a fake retriever -- fix #1's whole point is
         // that HasConfiguration (not IsLastKnownGoodValid) must become true as soon as ANY
         // configuration has actually been obtained.
@@ -625,7 +626,7 @@ public sealed class ConfigureJwtBearerTests
         httpContext.Request.Headers.Authorization = "******";
         var context = new MessageReceivedContext(httpContext, JwtBearerScheme(), options);
 
-        await ((JwtBearerEvents)options.Events!).MessageReceived(context);
+        await options.Events.MessageReceived(context);
 
         Assert.Null(context.Result);
     }
@@ -646,13 +647,13 @@ public sealed class ConfigureJwtBearerTests
         var gate = new DiscoveryFailureGate();
         gate.RecordFailure();
         EntraAuthentication.ConfigureJwtBearer(options, EntraModeSettings(), gate);
-        var decorator = Assert.IsType<CooldownAwareConfigurationManager>(options.ConfigurationManager);
+        CooldownAwareConfigurationManager decorator = Assert.IsType<CooldownAwareConfigurationManager>(options.ConfigurationManager);
         Assert.False(decorator.HasConfiguration);
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Headers.Authorization = "******";
         var context = new MessageReceivedContext(httpContext, JwtBearerScheme(), options);
 
-        await ((JwtBearerEvents)options.Events!).MessageReceived(context);
+        await options.Events.MessageReceived(context);
 
         Assert.NotNull(context.Result);
     }

@@ -10,8 +10,8 @@ internal static class PersonaDaypartsFeature
 {
     public static bool Read(string personasDir, string personaId)
     {
-        var personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
-        using var stream = File.OpenRead(personaJsonPath);
+        string personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
+        using FileStream stream = File.OpenRead(personaJsonPath);
         using var document = JsonDocument.Parse(stream);
         return document.RootElement.GetProperty("features").GetProperty("dayparts").GetBoolean();
     }
@@ -33,16 +33,16 @@ internal static class PersonaMenuModeVectors
         public IReadOnlyList<ItemVector> AllDayItemVectors => AllDayItems is { Count: > 0 } ? AllDayItems : [AllDayItem];
     }
 
-    private static readonly JsonSerializerOptions Options = new()
+    private static readonly JsonSerializerOptions s_options = new()
     {
         PropertyNameCaseInsensitive = true,
     };
 
     public static Vectors? For(string personaId, bool isDayparts)
     {
-        var repoRoot = RepoPaths.FindRepoRoot();
-        var path = Path.Combine(RepoPaths.PersonaSmokeDataDirectory(repoRoot), personaId, "menuMode.json");
-        var exists = File.Exists(path);
+        string repoRoot = RepoPaths.FindRepoRoot();
+        string path = Path.Combine(RepoPaths.PersonaSmokeDataDirectory(repoRoot), personaId, "menuMode.json");
+        bool exists = File.Exists(path);
 
         if (!isDayparts)
         {
@@ -54,7 +54,7 @@ internal static class PersonaMenuModeVectors
             $"'{path}' does not exist. Add menuMode.json with breakfastItem, lunchItem, and " +
             "allDayItem values sourced from this same pack's own menu/menuItems.json.");
 
-        var vectors = JsonSerializer.Deserialize<Vectors>(File.ReadAllText(path), Options);
+        Vectors? vectors = JsonSerializer.Deserialize<Vectors>(File.ReadAllText(path), s_options);
         Assert.True(vectors is not null, $"'{path}' deserialized to null.");
         return vectors;
     }
@@ -72,7 +72,7 @@ public sealed class RealPackMenuModeConformanceTests
     public static TheoryData<string> DiscoveredPersonaIds()
     {
         var data = new TheoryData<string>();
-        foreach (var id in ConformancePersonas.DiscoverFromDisk())
+        foreach (string id in ConformancePersonas.DiscoverFromDisk())
         {
             data.Add(id);
         }
@@ -85,10 +85,10 @@ public sealed class RealPackMenuModeConformanceTests
     [MemberData(nameof(DiscoveredPersonaIds))]
     public async Task Discovered_dayparts_pack_honors_its_own_menu_mode_vectors(string personaId)
     {
-        var ct = TestContext.Current.CancellationToken;
-        var personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
-        var isDayparts = PersonaDaypartsFeature.Read(personasDir, personaId);
-        var vectors = PersonaMenuModeVectors.For(personaId, isDayparts);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
+        bool isDayparts = PersonaDaypartsFeature.Read(personasDir, personaId);
+        PersonaMenuModeVectors.Vectors? vectors = PersonaMenuModeVectors.For(personaId, isDayparts);
         if (vectors is null)
         {
             return;
@@ -100,7 +100,7 @@ public sealed class RealPackMenuModeConformanceTests
         {
             await AssertItemAcceptedAsync(fixture, personaId, "breakfast", vectors.BreakfastItem, ct);
             await AssertItemAcceptedAsync(fixture, personaId, "lunch", vectors.LunchItem, ct);
-            foreach (var item in vectors.AllDayItemVectors)
+            foreach (PersonaMenuModeVectors.ItemVector item in vectors.AllDayItemVectors)
             {
                 await AssertItemAcceptedAsync(fixture, personaId, "breakfast", item, ct);
                 await AssertItemAcceptedAsync(fixture, personaId, "lunch", item, ct);
@@ -118,16 +118,16 @@ public sealed class RealPackMenuModeConformanceTests
         PersonaMenuModeVectors.ItemVector item,
         CancellationToken ct)
     {
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+        (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
             fixture, ct, persona: personaId, mode: mode);
-        await using var _ = browser;
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", item.Name, item.Size, 1, item.MenuPrice)],
             roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(item.MenuPrice, OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
             $"A session bound to {mode} mode must accept '{item.Name}' at its own menu price.");
@@ -140,11 +140,11 @@ public sealed class RealPackMenuModeConformanceTests
         PersonaMenuModeVectors.ItemVector item,
         CancellationToken ct)
     {
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+        (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
             fixture, ct, persona: personaId, mode: mode);
-        await using var _ = browser;
+        await using RealtimeBrowserClient _ = browser;
 
-        var rejected = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult rejected = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
             JsonSerializer.Serialize(new
             {
@@ -158,7 +158,7 @@ public sealed class RealPackMenuModeConformanceTests
         OrderScenarioHelpers.AssertRejectionShape(
             rejected.FunctionCallOutputText, expectedReason: "item_out_of_mode", expectedItemName: item.Name);
 
-        var result = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult result = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "get_order", "{}", "call_real_pack_get_after_out_of_mode", rejected.RoundTripIndex, ct);
         Assert.Equal(0, OrderScenarioHelpers.GetOrderItemCount(result.ToolResultJson!));
     }
@@ -169,19 +169,19 @@ public sealed class RealPackMenuModeConformanceTests
         string mode,
         CancellationToken ct)
     {
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+        (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
             fixture, ct, persona: personaId, mode: mode);
-        await using var _ = browser;
+        await using RealtimeBrowserClient _ = browser;
 
-        var query = $"real pack menu mode filter {personaId} {mode}";
+        string query = $"real pack menu mode filter {personaId} {mode}";
         await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "search",
             JsonSerializer.Serialize(new { query }),
             "call_real_pack_menu_mode_search", roundTripIndex, ct, toClient: false);
 
-        var request = fixture.Search.ReceivedRequests.Snapshot().Single(f =>
-            f.Json.TryGetProperty("search", out var s) && s.GetString() == query);
-        var filter = request.Json.GetProperty("filter").GetString();
+        RecordedFrame request = fixture.Search.ReceivedRequests.Snapshot().Single(f =>
+            f.Json.TryGetProperty("search", out JsonElement s) && s.GetString() == query);
+        string? filter = request.Json.GetProperty("filter").GetString();
         Assert.Equal($"menuPeriod eq '{mode}' or menuPeriod eq 'allDay' or menuPeriod eq ''", filter);
     }
 }

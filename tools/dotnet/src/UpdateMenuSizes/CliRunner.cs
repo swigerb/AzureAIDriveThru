@@ -26,7 +26,7 @@ public static class CliRunner
         string? menu = null;
         string? productSearchMap = null;
 
-        for (var i = 0; i < args.Length; i++)
+        for (int i = 0; i < args.Length; i++)
         {
             switch (args[i])
             {
@@ -65,7 +65,7 @@ public static class CliRunner
             }
             else
             {
-                var sourceDir = Path.GetDirectoryName(Path.GetFullPath(production))!; // .../menu/source
+                string sourceDir = Path.GetDirectoryName(Path.GetFullPath(production))!; // .../menu/source
                 menuDir = Directory.GetParent(sourceDir)!.FullName;                   // .../menu
                 menu = Path.Combine(menuDir, "menuItems.json");
             }
@@ -78,7 +78,7 @@ public static class CliRunner
             PersonaMenuLocator.Discovery discovery;
             try
             {
-                var repoRoot = repoRootOverride ?? RepoRoot.Find(AppContext.BaseDirectory);
+                string repoRoot = repoRootOverride ?? RepoRoot.Find(AppContext.BaseDirectory);
                 discovery = PersonaMenuLocator.Locate(repoRoot);
             }
             catch (InvalidOperationException ex)
@@ -95,8 +95,8 @@ public static class CliRunner
             productSearchMapPath = productSearchMap ?? discovery.ProductSearchMapFilePath;
         }
 
-        var result = MenuSizeUpdater.UpdateMenu(productionPath, menuPath, productSearchMapPath);
-        foreach (var line in result.Log)
+        MenuSizeUpdater.UpdateResult result = MenuSizeUpdater.UpdateMenu(productionPath, menuPath, productSearchMapPath);
+        foreach (string line in result.Log)
         {
             stdout.WriteLine(line);
         }

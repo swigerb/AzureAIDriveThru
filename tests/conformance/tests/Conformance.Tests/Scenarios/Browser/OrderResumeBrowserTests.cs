@@ -61,7 +61,7 @@ namespace Conformance.Tests.Scenarios.Browser;
 [Trait("Dotnet", "ready")]
 public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     // Wraps window.WebSocket so every /realtime socket's sent/received JSON frames are captured
     // for inspection from .NET, and exposes window.__dropLastSocket() to simulate a transport
@@ -116,9 +116,9 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
 
     private static string? SessionTokenOf(JsonElement frames, string type) =>
         frames.EnumerateArray()
-            .Where(f => f.TryGetProperty("type", out var t) && t.GetString() == type)
-            .Select(f => f.TryGetProperty("sessionToken", out var st) ? st.GetString()
-                       : f.TryGetProperty("session_token", out var st2) ? st2.GetString() : null)
+            .Where(f => f.TryGetProperty("type", out JsonElement t) && t.GetString() == type)
+            .Select(f => f.TryGetProperty("sessionToken", out JsonElement st) ? st.GetString()
+                       : f.TryGetProperty("session_token", out JsonElement st2) ? st2.GetString() : null)
             .FirstOrDefault(v => v is not null);
 
     /// <summary>
@@ -133,9 +133,9 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
     /// </summary>
     private static bool IsSystemMessageItem(RecordedFrame f) =>
         f.Type == "conversation.item.create" &&
-        f.Json.TryGetProperty("item", out var item) &&
-        item.TryGetProperty("type", out var itemType) && itemType.GetString() == "message" &&
-        item.TryGetProperty("role", out var role) && role.GetString() == "system";
+        f.Json.TryGetProperty("item", out JsonElement item) &&
+        item.TryGetProperty("type", out JsonElement itemType) && itemType.GetString() == "message" &&
+        item.TryGetProperty("role", out JsonElement role) && role.GetString() == "system";
 
     /// <summary>Polls <paramref name="probe"/> until <paramref name="ready"/> is satisfied or
     /// <paramref name="timeout"/> elapses -- the black-box equivalent of the Python script's own
@@ -144,10 +144,10 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
     private static async Task<T> UntilAsync<T>(
         Func<Task<T>> probe, Func<T, bool> ready, TimeSpan timeout, string what, CancellationToken ct)
     {
-        var deadline = DateTimeOffset.UtcNow + timeout;
+        DateTimeOffset deadline = DateTimeOffset.UtcNow + timeout;
         while (true)
         {
-            var value = await probe().ConfigureAwait(false);
+            T? value = await probe().ConfigureAwait(false);
             if (ready(value))
             {
                 return value;
@@ -163,10 +163,10 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
 
     private static async Task<(IBrowserContext Context, IPage Page)> NewPageAsync(IBrowser browser, CancellationToken ct)
     {
-        var context = await browser.NewContextAsync(new BrowserNewContextOptions { Permissions = ["microphone"] })
+        IBrowserContext context = await browser.NewContextAsync(new BrowserNewContextOptions { Permissions = ["microphone"] })
             .ConfigureAwait(false);
         await context.AddInitScriptAsync(InitScript).ConfigureAwait(false);
-        var page = await context.NewPageAsync().ConfigureAwait(false);
+        IPage page = await context.NewPageAsync().ConfigureAwait(false);
         return (context, page);
     }
 
@@ -174,31 +174,31 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
     public Task Drop_reconnects_with_the_same_session_no_greeting_the_mic_restarts_and_the_nudge_fires_once() =>
         fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (context, page) = await NewPageAsync(fixture.Browser!, ct);
-        await using var _ = context;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!, ct);
+        await using IBrowserContext _ = context;
 
-        var firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
         await page.GotoAsync(fixture.Backend!.BaseUri.ToString()).ConfigureAwait(false);
-        var firstConnection = await firstConnectionTask;
-        Assert.True(firstConnection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        FakeRealtimeConnection? firstConnection = await firstConnectionTask;
+        Assert.True(firstConnection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
         await page.GetByRole(AriaRole.Button, new() { Name = "Start recording", Exact = true }).ClickAsync().ConfigureAwait(false);
-        await UntilAsync(() => SocketCountAsync(page), n => n >= 1, FrameTimeout, "the frontend's realtime socket to open", ct);
-        var firstReceived = await UntilAsync(
+        await UntilAsync(() => SocketCountAsync(page), n => n >= 1, s_frameTimeout, "the frontend's realtime socket to open", ct);
+        JsonElement firstReceived = await UntilAsync(
             () => ReceivedAsync(page, 0),
             frames => SessionTokenOf(frames, "extension.session_metadata") is not null,
-            FrameTimeout, "extension.session_metadata on the first socket", ct);
-        var firstSessionToken = SessionTokenOf(firstReceived, "extension.session_metadata");
+            s_frameTimeout, "extension.session_metadata on the first socket", ct);
+        string? firstSessionToken = SessionTokenOf(firstReceived, "extension.session_metadata");
         Assert.True(!string.IsNullOrEmpty(firstSessionToken));
 
         await UntilAsync(
             () => Task.FromResult(firstConnection!.ReceivedFrames.Snapshot().Any(f => f.Type == "input_audio_buffer.append")),
-            ok => ok, FrameTimeout, "mic audio reaching the first upstream connection", ct);
+            ok => ok, s_frameTimeout, "mic audio reaching the first upstream connection", ct);
 
         // ── Drop, then the frontend's own reconnect logic should bring a second socket up ──
-        var socketsBeforeDrop = await SocketCountAsync(page);
-        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        int socketsBeforeDrop = await SocketCountAsync(page);
+        Task<FakeRealtimeConnection?> secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
 
         // Arm this *before* dropping (not by calling connection.Script.ClearRules() *after*
         // obtaining secondConnection below): the fake constructs a fresh FakeRealtimeConnection
@@ -224,21 +224,21 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
         // for the deterministic (non-Playwright) regression proof.
         fixture.Realtime.ClearVadDefaultsOnNextConnection();
         await DropLastSocketAsync(page).ConfigureAwait(false);
-        await UntilAsync(() => SocketCountAsync(page), n => n > socketsBeforeDrop, FrameTimeout, "browser auto-reconnect", ct);
-        var secondConnection = await secondConnectionTask;
-        Assert.True(secondConnection is not null, $"No upstream reconnection was accepted within {FrameTimeout}.");
+        await UntilAsync(() => SocketCountAsync(page), n => n > socketsBeforeDrop, s_frameTimeout, "browser auto-reconnect", ct);
+        FakeRealtimeConnection? secondConnection = await secondConnectionTask;
+        Assert.True(secondConnection is not null, $"No upstream reconnection was accepted within {s_frameTimeout}.");
 
-        var secondSentFirstFrame = await UntilAsync(
+        JsonElement secondSentFirstFrame = await UntilAsync(
             () => SentAsync(page, socketsBeforeDrop),
             sent => sent.GetArrayLength() > 0,
-            FrameTimeout, "the reconnect socket to send its first frame", ct);
+            s_frameTimeout, "the reconnect socket to send its first frame", ct);
         Assert.Equal("extension.resume", secondSentFirstFrame[0].GetProperty("type").GetString());
 
-        var secondReceived = await UntilAsync(
+        JsonElement secondReceived = await UntilAsync(
             () => ReceivedAsync(page, socketsBeforeDrop),
             frames => SessionTokenOf(frames, "extension.session_resumed") is not null,
-            FrameTimeout, "extension.session_resumed on the reconnect socket", ct);
-        var resumedSessionToken = SessionTokenOf(secondReceived, "extension.session_resumed");
+            s_frameTimeout, "extension.session_resumed on the reconnect socket", ct);
+        string? resumedSessionToken = SessionTokenOf(secondReceived, "extension.session_resumed");
         Assert.Equal(firstSessionToken, resumedSessionToken);
 
         await page.GetByText("Reconnected — your order is still here.", new() { Exact = true })
@@ -252,7 +252,7 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
         // purely an "did an append arrive" check, not a race with the fake's own reply.)
         await UntilAsync(
             () => Task.FromResult(secondConnection!.ReceivedFrames.Snapshot().Any(f => f.Type == "input_audio_buffer.append")),
-            ok => ok, FrameTimeout, "mic audio reaching the resumed upstream connection", ct);
+            ok => ok, s_frameTimeout, "mic audio reaching the resumed upstream connection", ct);
 
         // Stop the mic before checking the nudge -- the black-box equivalent of the guest
         // actually falling silent. No auto-reply can spuriously touch_activity/cancel_nudge on a
@@ -261,11 +261,11 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
         await page.GetByRole(AriaRole.Button, new() { Name = "Stop recording", Exact = true }).ClickAsync().ConfigureAwait(false);
 
         // Bootstrap session.update -> rehydration -> no response.create until the nudge.
-        var bootstrap = await secondConnection!.ReceivedFrames.WaitForAsync(f => f.Type == "session.update", FrameTimeout, ct);
+        RecordedFrame? bootstrap = await secondConnection!.ReceivedFrames.WaitForAsync(f => f.Type == "session.update", s_frameTimeout, ct);
         Assert.True(bootstrap is not null, "Expected a bootstrap session.update on the resumed upstream connection.");
-        var rehydration = await secondConnection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? rehydration = await secondConnection.ReceivedFrames.WaitForAsync(
             f => IsSystemMessageItem(f) && f.Sequence > bootstrap!.Sequence,
-            FrameTimeout, ct);
+            s_frameTimeout, ct);
         Assert.True(rehydration is not null, "Expected the rehydration conversation.item.create on the resumed upstream connection.");
         Assert.True(rehydration!.Sequence > bootstrap!.Sequence);
 
@@ -276,11 +276,11 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
         // SessionState.LastConversationItemId to the acknowledged item's id only after sending its
         // conversation.item.added/.done pair, so this is a real (if indirect) black-box signal that
         // the ack fired, not just that the rule list still contains it.
-        var rehydrationItemId = rehydration.Json.GetProperty("item").GetProperty("id").GetString();
+        string? rehydrationItemId = rehydration.Json.GetProperty("item").GetProperty("id").GetString();
         Assert.False(string.IsNullOrEmpty(rehydrationItemId));
         await UntilAsync(
             () => Task.FromResult(secondConnection!.SessionState.LastConversationItemId == rehydrationItemId),
-            ok => ok, FrameTimeout,
+            ok => ok, s_frameTimeout,
             "the rehydration item's conversation.item.create acknowledgement to be processed", ct);
 
         // PR #54 review: a fixed 700ms wall-clock window (leaving only ~1.1s of slack locally
@@ -289,20 +289,20 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
         // assert nothing between the two is a response.create. Deterministic regardless of how
         // long the browser-driven wait itself took, and still kills the greeting-on-resume
         // mutation (a reintroduced greeting sends a response.create in exactly this window).
-        var nudge = await secondConnection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? nudge = await secondConnection.ReceivedFrames.WaitForAsync(
             f => IsSystemMessageItem(f) && f.Sequence > rehydration!.Sequence,
             TimeSpan.FromSeconds(6), ct);
         Assert.True(nudge is not null, "Expected exactly one nudge after nudge_after_seconds of silence.");
 
-        var prematureResponse = secondConnection.ReceivedFrames.Snapshot()
+        RecordedFrame? prematureResponse = secondConnection.ReceivedFrames.Snapshot()
             .FirstOrDefault(f => f.Type == "response.create" &&
                                   f.Sequence > rehydration!.Sequence && f.Sequence < nudge!.Sequence);
         Assert.True(prematureResponse is null, "No greeting should fire between the rehydration item and the nudge.");
 
-        var nudgeResponseCreate = await secondConnection.ReceivedFrames.WaitForAsync(
-            f => f.Type == "response.create" && f.Sequence > nudge!.Sequence, FrameTimeout, ct);
+        RecordedFrame? nudgeResponseCreate = await secondConnection.ReceivedFrames.WaitForAsync(
+            f => f.Type == "response.create" && f.Sequence > nudge!.Sequence, s_frameTimeout, ct);
         Assert.True(nudgeResponseCreate is not null, "Expected a response.create immediately following the nudge item.");
-        var secondNudge = await secondConnection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? secondNudge = await secondConnection.ReceivedFrames.WaitForAsync(
             f => IsSystemMessageItem(f) && f.Sequence > nudge!.Sequence,
             TimeSpan.FromSeconds(2), ct);
         Assert.True(secondNudge is null, "The nudge must fire at most once per resume.");
@@ -311,14 +311,14 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
     [Fact]
     public Task Idle_close_does_not_reconnect_a_tap_starts_a_fresh_session() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (context, page) = await NewPageAsync(fixture.Browser!, ct);
-        await using var _ = context;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!, ct);
+        await using IBrowserContext _ = context;
 
-        var firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
         await page.GotoAsync(fixture.Backend!.BaseUri.ToString()).ConfigureAwait(false);
-        var firstConnection = await firstConnectionTask;
-        Assert.True(firstConnection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        FakeRealtimeConnection? firstConnection = await firstConnectionTask;
+        Assert.True(firstConnection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
         // Opt out of WithVadDefaults' speech simulation before the mic ever starts: every
         // input_audio_buffer.append the fake receives would otherwise get an immediate synthetic
@@ -331,44 +331,44 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
         firstConnection!.Script.ClearRules();
 
         await page.GetByRole(AriaRole.Button, new() { Name = "Start recording", Exact = true }).ClickAsync().ConfigureAwait(false);
-        await UntilAsync(() => SocketCountAsync(page), n => n >= 1, FrameTimeout, "the frontend's realtime socket to open", ct);
+        await UntilAsync(() => SocketCountAsync(page), n => n >= 1, s_frameTimeout, "the frontend's realtime socket to open", ct);
         await page.GetByText("Session ended after inactivity. Tap the mic to start a new order.", new() { Exact = true })
             .WaitForAsync(new() { Timeout = 14000 }).ConfigureAwait(false);
         await Task.Delay(TimeSpan.FromSeconds(2), ct); // would a background reconnect happen anyway?
         Assert.Equal(1, await SocketCountAsync(page));
 
-        var freshConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        Task<FakeRealtimeConnection?> freshConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
         await page.GetByRole(AriaRole.Button, new() { Name = "Start recording", Exact = true }).ClickAsync().ConfigureAwait(false);
-        var freshConnection = await freshConnectionTask;
-        Assert.True(freshConnection is not null, $"Expected a fresh upstream connection after the tap within {FrameTimeout}.");
+        FakeRealtimeConnection? freshConnection = await freshConnectionTask;
+        Assert.True(freshConnection is not null, $"Expected a fresh upstream connection after the tap within {s_frameTimeout}.");
 
-        await UntilAsync(() => SocketCountAsync(page), n => n == 2, FrameTimeout, "a second (fresh) realtime socket after the tap", ct);
-        var freshSent = await UntilAsync(() => SentAsync(page, 1), sent => sent.GetArrayLength() > 0,
-            FrameTimeout, "the fresh socket to send its first frame", ct);
+        await UntilAsync(() => SocketCountAsync(page), n => n == 2, s_frameTimeout, "a second (fresh) realtime socket after the tap", ct);
+        JsonElement freshSent = await UntilAsync(() => SentAsync(page, 1), sent => sent.GetArrayLength() > 0,
+            s_frameTimeout, "the fresh socket to send its first frame", ct);
         Assert.NotEqual("extension.resume", freshSent[0].GetProperty("type").GetString());
 
         // A genuinely fresh session still greets -- unlike a resume, which stays silent.
-        var greeting = await freshConnection!.ReceivedFrames.WaitForAsync(f => f.Type == "response.create", FrameTimeout, ct);
+        RecordedFrame? greeting = await freshConnection!.ReceivedFrames.WaitForAsync(f => f.Type == "response.create", s_frameTimeout, ct);
         Assert.True(greeting is not null, "Expected the fresh session to greet.");
     });
 
     [Fact]
     public Task Reloading_the_page_restores_the_session_and_waits_for_a_tap_to_continue() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (context, page) = await NewPageAsync(fixture.Browser!, ct);
-        await using var _ = context;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!, ct);
+        await using IBrowserContext _ = context;
 
-        var firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
         await page.GotoAsync(fixture.Backend!.BaseUri.ToString()).ConfigureAwait(false);
-        Assert.True(await firstConnectionTask is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Assert.True(await firstConnectionTask is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await page.GetByRole(AriaRole.Button, new() { Name = "Start recording", Exact = true }).ClickAsync().ConfigureAwait(false);
-        await UntilAsync(() => SocketCountAsync(page), n => n >= 1, FrameTimeout, "the frontend's realtime socket to open", ct);
-        var firstReceived = await UntilAsync(
+        await UntilAsync(() => SocketCountAsync(page), n => n >= 1, s_frameTimeout, "the frontend's realtime socket to open", ct);
+        JsonElement firstReceived = await UntilAsync(
             () => ReceivedAsync(page, 0),
             frames => SessionTokenOf(frames, "extension.session_metadata") is not null,
-            FrameTimeout, "extension.session_metadata on the first socket", ct);
-        var firstSessionToken = SessionTokenOf(firstReceived, "extension.session_metadata");
+            s_frameTimeout, "extension.session_metadata on the first socket", ct);
+        string? firstSessionToken = SessionTokenOf(firstReceived, "extension.session_metadata");
         Assert.True(!string.IsNullOrEmpty(firstSessionToken));
 
         // Reload in the same tab -- the resume id survives in sessionStorage (unlike a fresh tab
@@ -381,17 +381,17 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
         // socket is always window.__sockets[0] in the *new* page, not
         // window.__sockets[<pre-reload count>]; indexing by the pre-reload count would read past
         // the end of the freshly-reset array and never see any frames.
-        var reloadConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        Task<FakeRealtimeConnection?> reloadConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
         await page.ReloadAsync().ConfigureAwait(false);
-        var reloadConnection = await reloadConnectionTask;
-        Assert.True(reloadConnection is not null, $"No upstream connection was accepted after reload within {FrameTimeout}.");
-        await UntilAsync(() => SocketCountAsync(page), n => n >= 1, FrameTimeout, "the post-reload realtime socket to open", ct);
+        FakeRealtimeConnection? reloadConnection = await reloadConnectionTask;
+        Assert.True(reloadConnection is not null, $"No upstream connection was accepted after reload within {s_frameTimeout}.");
+        await UntilAsync(() => SocketCountAsync(page), n => n >= 1, s_frameTimeout, "the post-reload realtime socket to open", ct);
 
-        var reloadReceived = await UntilAsync(
+        JsonElement reloadReceived = await UntilAsync(
             () => ReceivedAsync(page, 0),
             frames => SessionTokenOf(frames, "extension.session_resumed") is not null,
-            FrameTimeout, "extension.session_resumed on the post-reload socket", ct);
-        var reloadSessionToken = SessionTokenOf(reloadReceived, "extension.session_resumed");
+            s_frameTimeout, "extension.session_resumed on the post-reload socket", ct);
+        string? reloadSessionToken = SessionTokenOf(reloadReceived, "extension.session_resumed");
         Assert.Equal(firstSessionToken, reloadSessionToken);
 
         // Not asserting App.tsx's "Reconnected -- your order is still here. Tap the mic to
@@ -407,9 +407,9 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
         await page.GetByRole(AriaRole.Button, new() { Name = "Start recording", Exact = true }).ClickAsync().ConfigureAwait(false);
         await UntilAsync(
             () => Task.FromResult(reloadConnection!.ReceivedFrames.Snapshot().Any(f => f.Type == "input_audio_buffer.append")),
-            ok => ok, FrameTimeout, "mic audio reaching the resumed (post-reload) upstream connection", ct);
+            ok => ok, s_frameTimeout, "mic audio reaching the resumed (post-reload) upstream connection", ct);
 
-        var reloadResponseCreate = await reloadConnection!.ReceivedFrames.WaitForAsync(
+        RecordedFrame? reloadResponseCreate = await reloadConnection!.ReceivedFrames.WaitForAsync(
             f => f.Type == "response.create", TimeSpan.FromMilliseconds(800), ct);
         Assert.True(reloadResponseCreate is null, "No greeting should fire after a resume, including one after a reload.");
     });
@@ -417,15 +417,15 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
     [Fact]
     public Task Tapping_the_mic_while_reconnecting_still_sends_resume_as_the_literal_first_frame() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (context, page) = await NewPageAsync(fixture.Browser!, ct);
-        await using var _ = context;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!, ct);
+        await using IBrowserContext _ = context;
 
-        var firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
         await page.GotoAsync(fixture.Backend!.BaseUri.ToString()).ConfigureAwait(false);
-        Assert.True(await firstConnectionTask is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Assert.True(await firstConnectionTask is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await page.GetByRole(AriaRole.Button, new() { Name = "Start recording", Exact = true }).ClickAsync().ConfigureAwait(false);
-        await UntilAsync(() => SocketCountAsync(page), n => n >= 1, FrameTimeout, "the frontend's realtime socket to open", ct);
+        await UntilAsync(() => SocketCountAsync(page), n => n >= 1, s_frameTimeout, "the frontend's realtime socket to open", ct);
 
         // Wait for extension.session_metadata (carrying the resumeId) to round-trip before
         // dropping: without this, the drop can race ahead of the frontend ever learning it has a
@@ -436,10 +436,10 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
         await UntilAsync(
             () => ReceivedAsync(page, 0),
             frames => SessionTokenOf(frames, "extension.session_metadata") is not null,
-            FrameTimeout, "extension.session_metadata on the first socket", ct);
+            s_frameTimeout, "extension.session_metadata on the first socket", ct);
 
-        var socketsBeforeDrop = await SocketCountAsync(page);
-        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        int socketsBeforeDrop = await SocketCountAsync(page);
+        Task<FakeRealtimeConnection?> secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
         await DropLastSocketAsync(page).ConfigureAwait(false);
 
         // Tap immediately -- before the reconnect socket has necessarily even opened -- exactly
@@ -448,17 +448,17 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
         // socket sends.
         await page.GetByRole(AriaRole.Button, new() { Name = "Start recording", Exact = true }).ClickAsync().ConfigureAwait(false);
 
-        await UntilAsync(() => SocketCountAsync(page), n => n > socketsBeforeDrop, FrameTimeout, "browser auto-reconnect", ct);
-        Assert.True(await secondConnectionTask is not null, $"No upstream reconnection was accepted within {FrameTimeout}.");
-        var sent = await UntilAsync(() => SentAsync(page, socketsBeforeDrop), s => s.GetArrayLength() > 0,
-            FrameTimeout, "the reconnect socket to send its first frame", ct);
+        await UntilAsync(() => SocketCountAsync(page), n => n > socketsBeforeDrop, s_frameTimeout, "browser auto-reconnect", ct);
+        Assert.True(await secondConnectionTask is not null, $"No upstream reconnection was accepted within {s_frameTimeout}.");
+        JsonElement sent = await UntilAsync(() => SentAsync(page, socketsBeforeDrop), s => s.GetArrayLength() > 0,
+            s_frameTimeout, "the reconnect socket to send its first frame", ct);
         Assert.Equal("extension.resume", sent[0].GetProperty("type").GetString());
     });
 
     [Fact]
     public async Task Strict_autoplay_policy_still_auto_restarts_the_mic_after_a_drop_but_not_after_a_reload()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         if (fixture.Browser is null)
         {
             // fixture.RunAsync itself would skip cleanly on the same condition, but this
@@ -470,7 +470,7 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
 
         await fixture.RunAsync(async () =>
         {
-            var strictBrowser = await fixture.Playwright!.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
+            IBrowser strictBrowser = await fixture.Playwright!.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
             {
                 Channel = fixture.BrowserChannel,
                 Headless = true,
@@ -483,19 +483,19 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
             }).ConfigureAwait(false);
             try
             {
-                var (context, page) = await NewPageAsync(strictBrowser, ct);
-                await using var _ = context;
+                (IBrowserContext? context, IPage? page) = await NewPageAsync(strictBrowser, ct);
+                await using IBrowserContext _ = context;
 
-                var firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+                Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
                 await page.GotoAsync(fixture.Backend!.BaseUri.ToString()).ConfigureAwait(false);
-                Assert.True(await firstConnectionTask is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+                Assert.True(await firstConnectionTask is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
-                var noGestureState = await UntilAsync(() => page.EvaluateAsync<string?>("window.__probe"),
-                    s => s is not null, FrameTimeout, "the gesture probe's AudioContext state", ct);
+                string? noGestureState = await UntilAsync(() => page.EvaluateAsync<string?>("window.__probe"),
+                    s => s is not null, s_frameTimeout, "the gesture probe's AudioContext state", ct);
                 Assert.Equal("suspended", noGestureState);
 
                 await page.GetByRole(AriaRole.Button, new() { Name = "Start recording", Exact = true }).ClickAsync().ConfigureAwait(false);
-                await UntilAsync(() => SocketCountAsync(page), n => n >= 1, FrameTimeout, "the frontend's realtime socket to open", ct);
+                await UntilAsync(() => SocketCountAsync(page), n => n >= 1, s_frameTimeout, "the frontend's realtime socket to open", ct);
 
                 // Wait for extension.session_metadata (the resumeId) to round-trip before
                 // dropping -- otherwise the drop can race ahead of the frontend ever learning it
@@ -505,33 +505,33 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
                 await UntilAsync(
                     () => ReceivedAsync(page, 0),
                     frames => SessionTokenOf(frames, "extension.session_metadata") is not null,
-                    FrameTimeout, "extension.session_metadata on the first socket", ct);
+                    s_frameTimeout, "extension.session_metadata on the first socket", ct);
 
-                var socketsBeforeDrop = await SocketCountAsync(page);
-                var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+                int socketsBeforeDrop = await SocketCountAsync(page);
+                Task<FakeRealtimeConnection?> secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
                 await DropLastSocketAsync(page).ConfigureAwait(false);
-                await UntilAsync(() => SocketCountAsync(page), n => n > socketsBeforeDrop, FrameTimeout, "browser auto-reconnect", ct);
-                var secondConnection = await secondConnectionTask;
-                Assert.True(secondConnection is not null, $"No upstream reconnection was accepted within {FrameTimeout}.");
+                await UntilAsync(() => SocketCountAsync(page), n => n > socketsBeforeDrop, s_frameTimeout, "browser auto-reconnect", ct);
+                FakeRealtimeConnection? secondConnection = await secondConnectionTask;
+                Assert.True(secondConnection is not null, $"No upstream reconnection was accepted within {s_frameTimeout}.");
 
                 // The AudioContext created on the very first tap keeps running across the drop
                 // (no new gesture happened) -- the mic must still auto-restart on the resume.
                 await UntilAsync(
                     () => Task.FromResult(secondConnection!.ReceivedFrames.Snapshot().Any(f => f.Type == "input_audio_buffer.append")),
-                    ok => ok, FrameTimeout, "mic audio reaching the resumed upstream connection with no new gesture", ct);
+                    ok => ok, s_frameTimeout, "mic audio reaching the resumed upstream connection with no new gesture", ct);
 
                 // A reload, though, drops the page's own AudioContext/mic refs entirely -- even
                 // under this same strict policy, the mic must stay off until a fresh tap.
-                var reloadConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+                Task<FakeRealtimeConnection?> reloadConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
                 await page.ReloadAsync().ConfigureAwait(false);
-                var reloadConnection = await reloadConnectionTask;
-                Assert.True(reloadConnection is not null, $"No upstream connection was accepted after reload within {FrameTimeout}.");
+                FakeRealtimeConnection? reloadConnection = await reloadConnectionTask;
+                Assert.True(reloadConnection is not null, $"No upstream connection was accepted after reload within {s_frameTimeout}.");
                 await Task.Delay(TimeSpan.FromSeconds(1), ct);
                 Assert.DoesNotContain(reloadConnection!.ReceivedFrames.Snapshot(), f => f.Type == "input_audio_buffer.append");
                 await page.GetByRole(AriaRole.Button, new() { Name = "Start recording", Exact = true }).ClickAsync().ConfigureAwait(false);
                 await UntilAsync(
                     () => Task.FromResult(reloadConnection!.ReceivedFrames.Snapshot().Any(f => f.Type == "input_audio_buffer.append")),
-                    ok => ok, FrameTimeout, "mic audio reaching the post-reload upstream connection after a fresh tap", ct);
+                    ok => ok, s_frameTimeout, "mic audio reaching the post-reload upstream connection after a fresh tap", ct);
             }
             finally
             {

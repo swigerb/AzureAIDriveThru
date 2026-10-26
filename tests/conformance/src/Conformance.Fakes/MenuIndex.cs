@@ -17,18 +17,18 @@ public static class MenuIndex
 {
     public static IReadOnlyList<MenuDocument> Load(string menuItemsJsonPath)
     {
-        using var stream = File.OpenRead(menuItemsJsonPath);
+        using FileStream stream = File.OpenRead(menuItemsJsonPath);
         using var document = JsonDocument.Parse(stream);
 
         var documents = new List<MenuDocument>();
-        foreach (var category in document.RootElement.GetProperty("menuItems").EnumerateArray())
+        foreach (JsonElement category in document.RootElement.GetProperty("menuItems").EnumerateArray())
         {
-            var categoryName = category.GetProperty("category").GetString() ?? "";
-            foreach (var item in category.GetProperty("items").EnumerateArray())
+            string categoryName = category.GetProperty("category").GetString() ?? "";
+            foreach (JsonElement item in category.GetProperty("items").EnumerateArray())
             {
-                var name = item.GetProperty("name").GetString() ?? "";
-                var description = item.TryGetProperty("description", out var d) ? d.GetString() ?? "" : "";
-                var sizesJson = item.TryGetProperty("sizes", out var sizes)
+                string name = item.GetProperty("name").GetString() ?? "";
+                string description = item.TryGetProperty("description", out JsonElement d) ? d.GetString() ?? "" : "";
+                string sizesJson = item.TryGetProperty("sizes", out JsonElement sizes)
                     ? sizes.GetRawText()
                     : "[]";
                 documents.Add(new MenuDocument(Id: Slugify(categoryName, name), Name: name, Category: categoryName,
@@ -65,19 +65,19 @@ public static class MenuIndex
     {
         var map = new Dictionary<string, string>(StringComparer.Ordinal);
         var ownerByIndexName = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var personaId in personaIds)
+        foreach (string personaId in personaIds)
         {
-            var personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
-            using var stream = File.OpenRead(personaJsonPath);
+            string personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
+            using FileStream stream = File.OpenRead(personaJsonPath);
             using var document = JsonDocument.Parse(stream);
-            var indexName = document.RootElement.GetProperty("search").GetProperty("indexName").GetString();
+            string? indexName = document.RootElement.GetProperty("search").GetProperty("indexName").GetString();
             if (string.IsNullOrEmpty(indexName))
             {
                 throw new InvalidOperationException(
                     $"persona.json for '{personaId}' under '{personasDir}' has no search.indexName.");
             }
 
-            if (ownerByIndexName.TryGetValue(indexName, out var firstOwner) && firstOwner != personaId)
+            if (ownerByIndexName.TryGetValue(indexName, out string? firstOwner) && firstOwner != personaId)
             {
                 throw new InvalidOperationException(
                     $"Duplicate Azure AI Search index name '{indexName}': both '{firstOwner}' and " +
@@ -97,9 +97,9 @@ public static class MenuIndex
 
     private static string Slugify(string category, string name)
     {
-        var combined = $"{category}-{name}";
+        string combined = $"{category}-{name}";
         var builder = new StringBuilder(combined.Length);
-        foreach (var c in combined.ToLowerInvariant())
+        foreach (char c in combined.ToLowerInvariant())
         {
             if (char.IsLetterOrDigit(c))
             {

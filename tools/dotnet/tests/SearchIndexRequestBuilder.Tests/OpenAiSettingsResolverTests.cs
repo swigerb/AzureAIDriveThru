@@ -11,7 +11,7 @@ public sealed class OpenAiSettingsResolverTests
     [Fact]
     public void Resolve_UsesDefaultEmbeddingDeployment_WhenNeitherFlagNorEnvVarIsSet()
     {
-        var settings = OpenAiSettingsResolver.Resolve(
+        OpenAiSettingsResolver.Settings settings = OpenAiSettingsResolver.Resolve(
             openAiEndpointFlag: "https://real.openai.azure.com",
             embeddingDeploymentFlag: null,
             getEnvironmentVariable: _ => null);
@@ -23,7 +23,7 @@ public sealed class OpenAiSettingsResolverTests
     [Fact]
     public void Resolve_UsesEmbeddingDeploymentEnvVar_WhenFlagIsAbsent()
     {
-        var settings = OpenAiSettingsResolver.Resolve(
+        OpenAiSettingsResolver.Settings settings = OpenAiSettingsResolver.Resolve(
             openAiEndpointFlag: "https://real.openai.azure.com",
             embeddingDeploymentFlag: null,
             getEnvironmentVariable: name => name == "AZURE_OPENAI_EMBEDDING_DEPLOYMENT" ? "text-embedding-3-small" : null);
@@ -34,7 +34,7 @@ public sealed class OpenAiSettingsResolverTests
     [Fact]
     public void Resolve_EmbeddingDeploymentFlag_TakesPriorityOverEnvVar()
     {
-        var settings = OpenAiSettingsResolver.Resolve(
+        OpenAiSettingsResolver.Settings settings = OpenAiSettingsResolver.Resolve(
             openAiEndpointFlag: "https://real.openai.azure.com",
             embeddingDeploymentFlag: "flag-deployment",
             getEnvironmentVariable: name => name == "AZURE_OPENAI_EMBEDDING_DEPLOYMENT" ? "env-deployment" : null);
@@ -45,7 +45,7 @@ public sealed class OpenAiSettingsResolverTests
     [Fact]
     public void Resolve_UsesOpenAiEndpointEnvVar_WhenFlagIsAbsent()
     {
-        var settings = OpenAiSettingsResolver.Resolve(
+        OpenAiSettingsResolver.Settings settings = OpenAiSettingsResolver.Resolve(
             openAiEndpointFlag: null,
             embeddingDeploymentFlag: null,
             getEnvironmentVariable: name => name == "AZURE_OPENAI_EASTUS2_ENDPOINT" ? "https://env.openai.azure.com" : null);
@@ -56,7 +56,7 @@ public sealed class OpenAiSettingsResolverTests
     [Fact]
     public void Resolve_OpenAiEndpointFlag_TakesPriorityOverEnvVar()
     {
-        var settings = OpenAiSettingsResolver.Resolve(
+        OpenAiSettingsResolver.Settings settings = OpenAiSettingsResolver.Resolve(
             openAiEndpointFlag: "https://flag.openai.azure.com",
             embeddingDeploymentFlag: null,
             getEnvironmentVariable: name => name == "AZURE_OPENAI_EASTUS2_ENDPOINT" ? "https://env.openai.azure.com" : null);
@@ -78,7 +78,7 @@ public sealed class OpenAiSettingsResolverTests
     [Fact]
     public void Resolve_Throws_WhenOpenAiEndpointIsMissing_FromBothFlagAndEnvVar()
     {
-        var ex = Assert.Throws<InvalidOperationException>(() => OpenAiSettingsResolver.Resolve(
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => OpenAiSettingsResolver.Resolve(
             openAiEndpointFlag: null,
             embeddingDeploymentFlag: null,
             getEnvironmentVariable: _ => null));
@@ -90,7 +90,7 @@ public sealed class OpenAiSettingsResolverTests
     [Fact]
     public void Resolve_TreatsEmptyStringFlag_SameAsMissingFlag()
     {
-        var settings = OpenAiSettingsResolver.Resolve(
+        OpenAiSettingsResolver.Settings settings = OpenAiSettingsResolver.Resolve(
             openAiEndpointFlag: "",
             embeddingDeploymentFlag: "",
             getEnvironmentVariable: name => name switch
@@ -111,7 +111,7 @@ public sealed class OpenAiSettingsResolverTests
     [Fact]
     public void Resolve_UsesAzdEnvValue_WhenNoFlagAndNoProcessEnvVar()
     {
-        var settings = OpenAiSettingsResolver.Resolve(
+        OpenAiSettingsResolver.Settings settings = OpenAiSettingsResolver.Resolve(
             openAiEndpointFlag: null,
             embeddingDeploymentFlag: null,
             getEnvironmentVariable: _ => null,
@@ -133,7 +133,7 @@ public sealed class OpenAiSettingsResolverTests
     [Fact]
     public void Resolve_AzdEnvValue_TakesPriorityOverProcessEnvVar()
     {
-        var settings = OpenAiSettingsResolver.Resolve(
+        OpenAiSettingsResolver.Settings settings = OpenAiSettingsResolver.Resolve(
             openAiEndpointFlag: null,
             embeddingDeploymentFlag: null,
             getEnvironmentVariable: name => name switch
@@ -159,7 +159,7 @@ public sealed class OpenAiSettingsResolverTests
     [Fact]
     public void Resolve_FlagTakesPriorityOverAzdEnvValue()
     {
-        var settings = OpenAiSettingsResolver.Resolve(
+        OpenAiSettingsResolver.Settings settings = OpenAiSettingsResolver.Resolve(
             openAiEndpointFlag: "https://flag.openai.azure.com",
             embeddingDeploymentFlag: "flag-deployment",
             getEnvironmentVariable: _ => null,
@@ -184,7 +184,7 @@ public sealed class OpenAiSettingsResolverTests
     [Fact]
     public void Resolve_TreatsEmptyStringAzdValue_SameAsMissing_FallsBackToProcessEnvThenDefault()
     {
-        var settings = OpenAiSettingsResolver.Resolve(
+        OpenAiSettingsResolver.Settings settings = OpenAiSettingsResolver.Resolve(
             openAiEndpointFlag: "https://real.openai.azure.com",
             embeddingDeploymentFlag: null,
             getEnvironmentVariable: name => name == "AZURE_OPENAI_EMBEDDING_DEPLOYMENT" ? "process-env-deployment" : null,
@@ -213,7 +213,7 @@ public sealed class OpenAiSettingsResolverTests
     [Fact]
     public void Resolve_TreatsEmptyStringAzdValue_ForEndpoint_SameAsMissing_FallsBackToProcessEnvThenSucceeds()
     {
-        var settings = OpenAiSettingsResolver.Resolve(
+        OpenAiSettingsResolver.Settings settings = OpenAiSettingsResolver.Resolve(
             openAiEndpointFlag: null,
             embeddingDeploymentFlag: "flag-deployment",
             getEnvironmentVariable: name => name == "AZURE_OPENAI_EASTUS2_ENDPOINT" ? "https://real.openai.azure.com" : null,
@@ -228,7 +228,7 @@ public sealed class OpenAiSettingsResolverTests
     [Fact]
     public void Resolve_WorksWithNoAzdEnvValuesGiven_SameAsBeforeThisFeatureExisted()
     {
-        var settings = OpenAiSettingsResolver.Resolve(
+        OpenAiSettingsResolver.Settings settings = OpenAiSettingsResolver.Resolve(
             openAiEndpointFlag: null,
             embeddingDeploymentFlag: null,
             getEnvironmentVariable: name => name == "AZURE_OPENAI_EASTUS2_ENDPOINT" ? "https://env.openai.azure.com" : null,

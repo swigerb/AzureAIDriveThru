@@ -50,7 +50,6 @@ public sealed class EntraPipelineCooldownTests
         public const string Kid = "pipeline-test-key";
 
         private RSA _rsa;
-        private string _kid = Kid;
         private readonly List<RSA> _allKeys = [];
         private WebApplication? _app;
         private int _discoveryRequestCount;
@@ -70,7 +69,7 @@ public sealed class EntraPipelineCooldownTests
 
         public int TotalRequestCount => _discoveryRequestCount + _jwksRequestCount;
 
-        public string CurrentKid => _kid;
+        public string CurrentKid { get; private set; } = Kid;
 
         public Uri BaseUri { get; private set; } = new("http://127.0.0.1:0/");
 
@@ -84,10 +83,10 @@ public sealed class EntraPipelineCooldownTests
 
         public async Task StartAsync()
         {
-            var builder = WebApplication.CreateBuilder();
+            WebApplicationBuilder builder = WebApplication.CreateBuilder();
             builder.Logging.ClearProviders();
             builder.WebHost.UseUrls("http://127.0.0.1:0");
-            var app = builder.Build();
+            WebApplication app = builder.Build();
 
             app.MapGet("/{tenant}/v2.0/.well-known/openid-configuration", async (HttpContext ctx) =>
             {
@@ -131,9 +130,9 @@ public sealed class EntraPipelineCooldownTests
 
         private string BuildJwksJson()
         {
-            var jwk = JsonWebKeyConverter.ConvertFromRSASecurityKey(new RsaSecurityKey(_rsa.ExportParameters(false)) { KeyId = _kid });
+            JsonWebKey jwk = JsonWebKeyConverter.ConvertFromRSASecurityKey(new RsaSecurityKey(_rsa.ExportParameters(false)) { KeyId = CurrentKid });
             return $$"""
-                {"keys": [{"kty": "{{jwk.Kty}}", "use": "sig", "kid": "{{_kid}}", "n": "{{jwk.N}}", "e": "{{jwk.E}}", "alg": "RS256"}]}
+                {"keys": [{"kty": "{{jwk.Kty}}", "use": "sig", "kid": "{{CurrentKid}}", "n": "{{jwk.N}}", "e": "{{jwk.E}}", "alg": "RS256"}]}
                 """;
         }
 
@@ -148,10 +147,10 @@ public sealed class EntraPipelineCooldownTests
         /// </summary>
         public (RSA OldKey, string OldKid) RotateKey()
         {
-            var oldKey = _rsa;
-            var oldKid = _kid;
+            RSA oldKey = _rsa;
+            string oldKid = CurrentKid;
             _rsa = RSA.Create(2048);
-            _kid = $"pipeline-test-key-rotated-{Guid.NewGuid():N}";
+            CurrentKid = $"pipeline-test-key-rotated-{Guid.NewGuid():N}";
             _allKeys.Add(_rsa);
             return (oldKey, oldKid);
         }
@@ -162,11 +161,11 @@ public sealed class EntraPipelineCooldownTests
             {
                 new("tid", Tenant),
                 new("oid", "33333333-3333-3333-3333-333333333333"),
+                new("roles", settings.AppRole),
+                new("scp", settings.ApiScope)
             };
-            claims.Add(new Claim("roles", settings.AppRole));
-            claims.Add(new Claim("scp", settings.ApiScope));
-            var now = DateTime.UtcNow;
-            var signingKey = new RsaSecurityKey(signingKeyOverride ?? _rsa) { KeyId = kidOverride ?? _kid };
+            DateTime now = DateTime.UtcNow;
+            var signingKey = new RsaSecurityKey(signingKeyOverride ?? _rsa) { KeyId = kidOverride ?? CurrentKid };
             var token = new JwtSecurityToken(
                 issuer: Issuer,
                 audience: settings.ClientId,
@@ -191,7 +190,7 @@ public sealed class EntraPipelineCooldownTests
                 await _app.DisposeAsync();
             }
 
-            foreach (var key in _allKeys)
+            foreach (RSA key in _allKeys)
             {
                 key.Dispose();
             }
@@ -227,10 +226,10 @@ public sealed class EntraPipelineCooldownTests
         FakeDiscoveryServer server, FakeTimeProvider? timeProvider = null, TimeSpan? lastKnownGoodLifetime = null,
         TimeSpan? backchannelTimeout = null, CancellationToken cancellationToken = default)
     {
-        var settings = SettingsFor(server);
+        EntraSettings settings = SettingsFor(server);
         var gate = new DiscoveryFailureGate(timeProvider);
         BaseConfigurationManager? capturedConfigurationManager = null;
-        var hostBuilder = new HostBuilder()
+        IHostBuilder hostBuilder = new HostBuilder()
             .ConfigureWebHost(webHost =>
             {
                 webHost.UseTestServer();
@@ -248,7 +247,7 @@ public sealed class EntraPipelineCooldownTests
                     services.AddSingleton<IAuthorizationHandler, EntraAccessRequirementHandler>();
                     services.AddAuthorization(options =>
                     {
-                        var policy = EntraAuthentication.BuildAccessPolicy(settings);
+                        AuthorizationPolicy policy = EntraAuthentication.BuildAccessPolicy(settings);
                         options.DefaultPolicy = policy;
                         options.FallbackPolicy = policy;
                     });
@@ -261,7 +260,7 @@ public sealed class EntraPipelineCooldownTests
                     app.UseEndpoints(endpoints => endpoints.MapGet("/protected", () => Results.Ok()));
                 });
             });
-        var host = await hostBuilder.StartAsync(cancellationToken);
+        IHost host = await hostBuilder.StartAsync(cancellationToken);
         // Force IOptionsMonitor to resolve JwtBearerOptions (and so run the AddJwtBearer configure
         // delegate above, populating capturedConfigurationManager) before returning -- ASP.NET
         // Core's options system only invokes it lazily, on first Get()/CurrentValue access, which
@@ -285,13 +284,13 @@ public sealed class EntraPipelineCooldownTests
     [Fact]
     public async Task ColdOutage_AtMostOneFetchPerWindow_AndFastFailures()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         var timeProvider = new FakeTimeProvider();
         await using var server = new FakeDiscoveryServer();
         await server.StartAsync();
         server.Mode = ServerMode.Hang;
-        var (host, client, gate, _) = await StartAppAsync(server, timeProvider, cancellationToken: ct);
-        using var disposableHost = host;
+        (IHost? host, HttpClient? client, DiscoveryFailureGate? gate, BaseConfigurationManager _) = await StartAppAsync(server, timeProvider, cancellationToken: ct);
+        using IHost disposableHost = host;
 
         // First request: the only one allowed to actually touch the (hung) network -- it eats the
         // 500ms BackchannelTimeout, then fails closed (401), arming the 30s cooldown. Must be a
@@ -299,9 +298,9 @@ public sealed class EntraPipelineCooldownTests
         // JsonWebTokenHandler rejects an unparseable bearer string before ever needing a signing
         // key, which would never reach (and so never exercise) the ConfigurationManager fetch this
         // test is about.
-        var settingsForTokenShape = SettingsFor(server);
-        var wellFormedToken = server.MintToken(settingsForTokenShape);
-        var first = await client.SendAsync(ProtectedRequest(wellFormedToken), ct);
+        EntraSettings settingsForTokenShape = SettingsFor(server);
+        string wellFormedToken = server.MintToken(settingsForTokenShape);
+        HttpResponseMessage first = await client.SendAsync(ProtectedRequest(wellFormedToken), ct);
         Assert.Equal(HttpStatusCode.Unauthorized, first.StatusCode);
         Assert.Equal(1, server.DiscoveryRequestCount);
         Assert.True(gate.IsInCooldown());
@@ -310,10 +309,10 @@ public sealed class EntraPipelineCooldownTests
         // ConfigurationManager is ever touched again -- fast (no BackchannelTimeout wait) and the
         // IdP sees no additional traffic. This is Rick's exact complaint: "concurrent requests
         // queue 10/20/30/40s" must no longer happen.
-        for (var i = 0; i < 5; i++)
+        for (int i = 0; i < 5; i++)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            var response = await client.SendAsync(ProtectedRequest(wellFormedToken), ct);
+            HttpResponseMessage response = await client.SendAsync(ProtectedRequest(wellFormedToken), ct);
             sw.Stop();
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
             Assert.True(
@@ -327,9 +326,9 @@ public sealed class EntraPipelineCooldownTests
         // fetch attempt, and a request bearing a valid, cached-kid token succeeds.
         timeProvider.Advance(TimeSpan.FromSeconds(31));
         server.Mode = ServerMode.Succeed;
-        var settings = SettingsFor(server);
-        var validToken = server.MintToken(settings);
-        var afterRecovery = await client.SendAsync(ProtectedRequest(validToken), ct);
+        EntraSettings settings = SettingsFor(server);
+        string validToken = server.MintToken(settings);
+        HttpResponseMessage afterRecovery = await client.SendAsync(ProtectedRequest(validToken), ct);
         Assert.Equal(HttpStatusCode.OK, afterRecovery.StatusCode);
         Assert.Equal(2, server.DiscoveryRequestCount);
     }
@@ -337,18 +336,18 @@ public sealed class EntraPipelineCooldownTests
     [Fact]
     public async Task WarmCache_IdpFaultAndForgedKidFlood_CachedKidTokenStillSucceeds_AtMostOneExtraFetch()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         await using var server = new FakeDiscoveryServer();
         await server.StartAsync();
-        var (host, client, _, _) = await StartAppAsync(server, cancellationToken: ct);
-        using var disposableHost = host;
-        var settings = SettingsFor(server);
-        var cachedKidToken = server.MintToken(settings);
+        (IHost? host, HttpClient? client, DiscoveryFailureGate _, BaseConfigurationManager _) = await StartAppAsync(server, cancellationToken: ct);
+        using IHost disposableHost = host;
+        EntraSettings settings = SettingsFor(server);
+        string cachedKidToken = server.MintToken(settings);
 
         // Warm the configuration with one genuinely successful request first.
-        var warmup = await client.SendAsync(ProtectedRequest(cachedKidToken), ct);
+        HttpResponseMessage warmup = await client.SendAsync(ProtectedRequest(cachedKidToken), ct);
         Assert.Equal(HttpStatusCode.OK, warmup.StatusCode);
-        var fetchesAfterWarmup = server.TotalRequestCount;
+        int fetchesAfterWarmup = server.TotalRequestCount;
         Assert.True(fetchesAfterWarmup > 0);
 
         // The IdP now faults, and a flood of forged tokens with random, never-published kids
@@ -359,10 +358,10 @@ public sealed class EntraPipelineCooldownTests
         // than the "at most one" this assertion still checks for, which is what IdentityModel's
         // own un-throttled-first-call RequestRefresh quirk would otherwise have allowed through.
         server.Mode = ServerMode.Fail;
-        for (var i = 0; i < 25; i++)
+        for (int i = 0; i < 25; i++)
         {
-            var forged = server.MintToken(settings, kidOverride: $"forged-unknown-kid-{i}");
-            var response = await client.SendAsync(ProtectedRequest(forged), ct);
+            string forged = server.MintToken(settings, kidOverride: $"forged-unknown-kid-{i}");
+            HttpResponseMessage response = await client.SendAsync(ProtectedRequest(forged), ct);
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         }
 
@@ -373,7 +372,7 @@ public sealed class EntraPipelineCooldownTests
         // The cached-kid token must still succeed -- its signing key is already held in the warm
         // configuration and needs no network call at all, regardless of the IdP's current fault or
         // however many unrelated forged-kid lookups just failed.
-        var afterFlood = await client.SendAsync(ProtectedRequest(cachedKidToken), ct);
+        HttpResponseMessage afterFlood = await client.SendAsync(ProtectedRequest(cachedKidToken), ct);
         Assert.Equal(HttpStatusCode.OK, afterFlood.StatusCode);
     }
 
@@ -389,7 +388,7 @@ public sealed class EntraPipelineCooldownTests
         // rather than merely asserting the property is set (CooldownAwareConfigurationManagerTests
         // already pins the production 300s default separately -- see
         // CooldownAwareConfigurationManagerTests.ConfigureJwtBearer_DefaultsLastKnownGoodLifetimeTo300Seconds).
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         var lkgLifetime = TimeSpan.FromMilliseconds(300);
         await using var server = new FakeDiscoveryServer();
         await server.StartAsync();
@@ -403,22 +402,22 @@ public sealed class EntraPipelineCooldownTests
         // see RequestRefresh() below) with no way to retry -- RequestRefresh()'s own RefreshInterval
         // throttle (5-minute default) blocks a second attempt long past this test's lifetime. A
         // generous, CI-noise-tolerant timeout removes that false-failure mode entirely.
-        var (host, client, _, configurationManager) = await StartAppAsync(
+        (IHost? host, HttpClient? client, DiscoveryFailureGate _, BaseConfigurationManager? configurationManager) = await StartAppAsync(
             server, lastKnownGoodLifetime: lkgLifetime, backchannelTimeout: TimeSpan.FromSeconds(5), cancellationToken: ct);
-        using var disposableHost = host;
-        var settings = SettingsFor(server);
+        using IHost disposableHost = host;
+        EntraSettings settings = SettingsFor(server);
 
         // Warm up with the ORIGINAL key -- this is also the moment IdentityModel stamps
         // LastKnownGoodConfiguration (and starts its lifetime clock) against the config this
         // token validated against.
-        var originalToken = server.MintToken(settings);
-        var warmup = await client.SendAsync(ProtectedRequest(originalToken), ct);
+        string originalToken = server.MintToken(settings);
+        HttpResponseMessage warmup = await client.SendAsync(ProtectedRequest(originalToken), ct);
         Assert.Equal(HttpStatusCode.OK, warmup.StatusCode);
 
         // The IdP rotates: a brand new key/kid is now published; the OLD key/kid is retained only
         // by this test, to keep minting "stale cached client" tokens with it.
-        var (oldKey, oldKid) = server.RotateKey();
-        var jwksHitsBeforeRefresh = server.JwksRequestCount;
+        (RSA? oldKey, string? oldKid) = server.RotateKey();
+        int jwksHitsBeforeRefresh = server.JwksRequestCount;
 
         // Force the inner ConfigurationManager<T> to re-fetch immediately rather than waiting out
         // the real 12-hour AutomaticRefreshInterval -- RequestRefresh's own RefreshInterval throttle
@@ -442,8 +441,8 @@ public sealed class EntraPipelineCooldownTests
         // background re-fetch never even reached the wire (a RequestRefresh-call/throttle bug),
         // which is a different failure mode from "it fetched but didn't converge" and is called out
         // separately below for diagnosability.
-        var newKid = server.CurrentKid;
-        var deadline = DateTime.UtcNow.AddSeconds(10);
+        string newKid = server.CurrentKid;
+        DateTime deadline = DateTime.UtcNow.AddSeconds(10);
         OpenIdConnectConfiguration? refreshedConfiguration = null;
         while (DateTime.UtcNow < deadline)
         {
@@ -466,8 +465,8 @@ public sealed class EntraPipelineCooldownTests
 
         // The configuration manager has now picked up the new key: a fresh token signed with it
         // validates immediately.
-        var rotatedToken = server.MintToken(settings);
-        var afterRotation = await client.SendAsync(ProtectedRequest(rotatedToken), ct);
+        string rotatedToken = server.MintToken(settings);
+        HttpResponseMessage afterRotation = await client.SendAsync(ProtectedRequest(rotatedToken), ct);
         Assert.Equal(HttpStatusCode.OK, afterRotation.StatusCode);
 
         // Sleep comfortably past the (test-shrunk) LastKnownGoodLifetime, anchored at warmup's
@@ -479,8 +478,8 @@ public sealed class EntraPipelineCooldownTests
         // (replaced by rotation), and its Last-Known-Good grace period (anchored at warmup, not at
         // rotation time) has elapsed. Without fix #3 (i.e. at IdentityModel's 1-hour default
         // LastKnownGoodLifetime), this same request would still succeed.
-        var staleToken = server.MintToken(settings, kidOverride: oldKid, signingKeyOverride: oldKey);
-        var afterLkgExpiry = await client.SendAsync(ProtectedRequest(staleToken), ct);
+        string staleToken = server.MintToken(settings, kidOverride: oldKid, signingKeyOverride: oldKey);
+        HttpResponseMessage afterLkgExpiry = await client.SendAsync(ProtectedRequest(staleToken), ct);
         Assert.Equal(HttpStatusCode.Unauthorized, afterLkgExpiry.StatusCode);
     }
 }

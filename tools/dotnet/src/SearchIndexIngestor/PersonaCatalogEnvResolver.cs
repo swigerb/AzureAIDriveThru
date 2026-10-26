@@ -71,7 +71,7 @@ internal static class PersonaCatalogEnvResolver
         Func<string, string?> getEnvironmentVariable,
         IReadOnlyDictionary<string, string> azdEnvValues)
     {
-        var value = GetNonEmptyOrNull(azdEnvValues, PersonasVariableName)
+        string? value = GetNonEmptyOrNull(azdEnvValues, PersonasVariableName)
             ?? getEnvironmentVariable(PersonasVariableName);
         if (string.IsNullOrEmpty(value))
         {
@@ -87,5 +87,5 @@ internal static class PersonaCatalogEnvResolver
     }
 
     private static string? GetNonEmptyOrNull(IReadOnlyDictionary<string, string> values, string key) =>
-        values.TryGetValue(key, out var value) && !string.IsNullOrEmpty(value) ? value : null;
+        values.TryGetValue(key, out string? value) && !string.IsNullOrEmpty(value) ? value : null;
 }

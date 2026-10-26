@@ -11,7 +11,7 @@ internal static class HealthEndpoint
 
     public static IResult Handle(StartupChecks checks, PersonaCatalog? catalog)
     {
-        var allOk = checks.AllPassed;
+        bool allOk = checks.AllPassed;
         var body = new Dictionary<string, object?>
         {
             ["status"] = allOk ? "healthy" : "unhealthy",

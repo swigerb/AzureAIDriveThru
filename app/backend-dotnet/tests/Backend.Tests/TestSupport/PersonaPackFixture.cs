@@ -19,10 +19,10 @@ public sealed class PersonaPackFixture : IDisposable
 
     public PersonaPackFixture()
     {
-        var sourceDir = Path.Combine(RepoRootLocator.Find(), "personas");
+        string sourceDir = Path.Combine(RepoRootLocator.Find(), "personas");
         PersonasDir = Path.Combine(Path.GetTempPath(), "beth-persona-tests-" + Guid.NewGuid().ToString("n"));
         Directory.CreateDirectory(PersonasDir);
-        foreach (var file in Directory.EnumerateFiles(sourceDir))
+        foreach (string file in Directory.EnumerateFiles(sourceDir))
         {
             File.Copy(file, Path.Combine(PersonasDir, Path.GetFileName(file)));
         }
@@ -60,7 +60,7 @@ public sealed class PersonaPackFixture : IDisposable
 
     private static void MutateJsonFile(string path, Action<JsonObject> mutate)
     {
-        var node = JsonNode.Parse(File.ReadAllText(path)) as JsonObject
+        JsonObject node = JsonNode.Parse(File.ReadAllText(path)) as JsonObject
             ?? throw new InvalidOperationException($"{path} did not parse as a JSON object.");
         mutate(node);
         File.WriteAllText(path, node.ToJsonString());
@@ -69,11 +69,11 @@ public sealed class PersonaPackFixture : IDisposable
     private static void CopyDirectory(string sourceDir, string destDir)
     {
         Directory.CreateDirectory(destDir);
-        foreach (var file in Directory.EnumerateFiles(sourceDir))
+        foreach (string file in Directory.EnumerateFiles(sourceDir))
         {
             File.Copy(file, Path.Combine(destDir, Path.GetFileName(file)));
         }
-        foreach (var dir in Directory.EnumerateDirectories(sourceDir))
+        foreach (string dir in Directory.EnumerateDirectories(sourceDir))
         {
             CopyDirectory(dir, Path.Combine(destDir, Path.GetFileName(dir)));
         }

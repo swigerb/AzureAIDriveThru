@@ -21,7 +21,7 @@ public sealed class BackendExitCodeParserTests
     [InlineData("C# backend exited early (code -1) before becoming healthy.\n", -1)]
     public void Parses_the_exit_code_out_of_either_launcher_s_own_message_shape(string message, int expectedCode)
     {
-        var parsed = BackendExitCodeParser.TryParse(message);
+        int? parsed = BackendExitCodeParser.TryParse(message);
 
         Assert.Equal(expectedCode, parsed);
     }

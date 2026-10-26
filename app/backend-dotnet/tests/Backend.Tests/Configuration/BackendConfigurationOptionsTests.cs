@@ -8,7 +8,7 @@ namespace Backend.Tests.Configuration;
 [Collection(EnvironmentVariableTestCollection.Name)]
 public sealed class BackendConfigurationOptionsTests : IDisposable
 {
-    private static readonly string[] EnvVars =
+    private static readonly string[] s_envVars =
     [
         BackendEnvironment.AzureOpenAiEastUs2Endpoint,
         BackendEnvironment.AzureOpenAiRealtimeDeployment,
@@ -23,11 +23,11 @@ public sealed class BackendConfigurationOptionsTests : IDisposable
         BackendEnvironment.AzureSearchUseVectorQuery,
     ];
 
-    private readonly Dictionary<string, string?> _originalValues = EnvVars.ToDictionary(name => name, Environment.GetEnvironmentVariable);
+    private readonly Dictionary<string, string?> _originalValues = s_envVars.ToDictionary(name => name, Environment.GetEnvironmentVariable);
 
     public void Dispose()
     {
-        foreach (var (name, value) in _originalValues)
+        foreach ((string? name, string? value) in _originalValues)
         {
             Environment.SetEnvironmentVariable(name, value);
         }
@@ -39,9 +39,9 @@ public sealed class BackendConfigurationOptionsTests : IDisposable
         ClearAll();
         Environment.SetEnvironmentVariable(BackendEnvironment.AzureSearchIndex, "menu-index");
 
-        using var services = BuildServices();
+        using ServiceProvider services = BuildServices();
 
-        var ex = Assert.Throws<OptionsValidationException>(
+        OptionsValidationException ex = Assert.Throws<OptionsValidationException>(
             () => services.GetRequiredService<IOptions<RequiredBackendOptions>>().Value);
 
         Assert.Equal(
@@ -64,9 +64,9 @@ public sealed class BackendConfigurationOptionsTests : IDisposable
         Environment.SetEnvironmentVariable(BackendEnvironment.AzureSearchEndpoint, "https://search.example");
         Environment.SetEnvironmentVariable(BackendEnvironment.AzureSearchIndex, "menu-index");
 
-        using var services = BuildServices();
+        using ServiceProvider services = BuildServices();
 
-        var options = services.GetRequiredService<IOptions<RequiredBackendOptions>>().Value;
+        RequiredBackendOptions options = services.GetRequiredService<IOptions<RequiredBackendOptions>>().Value;
 
         Assert.Equal("https://openai.example", options.AzureOpenAiEastUs2Endpoint);
         Assert.Equal("gpt-realtime", options.AzureOpenAiRealtimeDeployment);
@@ -79,9 +79,9 @@ public sealed class BackendConfigurationOptionsTests : IDisposable
     {
         ClearAll();
 
-        using var services = BuildServices();
+        using ServiceProvider services = BuildServices();
 
-        var config = services.GetRequiredService<IOptions<SearchEndpointConfig>>().Value;
+        SearchEndpointConfig config = services.GetRequiredService<IOptions<SearchEndpointConfig>>().Value;
 
         Assert.Equal(string.Empty, config.Endpoint);
         Assert.Null(config.ApiKey);
@@ -106,9 +106,9 @@ public sealed class BackendConfigurationOptionsTests : IDisposable
         Environment.SetEnvironmentVariable(BackendEnvironment.AzureSearchUseVectorQuery, "no");
         Environment.SetEnvironmentVariable(BackendEnvironment.AzureSearchSemanticRanker, "disabled");
 
-        using var services = BuildServices();
+        using ServiceProvider services = BuildServices();
 
-        var config = services.GetRequiredService<SearchEndpointConfig>();
+        SearchEndpointConfig config = services.GetRequiredService<SearchEndpointConfig>();
 
         Assert.Equal("https://search.example", config.Endpoint);
         Assert.Equal("secret", config.ApiKey);
@@ -129,7 +129,7 @@ public sealed class BackendConfigurationOptionsTests : IDisposable
 
     private static void ClearAll()
     {
-        foreach (var envVar in EnvVars)
+        foreach (string envVar in s_envVars)
         {
             Environment.SetEnvironmentVariable(envVar, null);
         }

@@ -49,30 +49,30 @@ namespace Conformance.Tests.Scenarios.Security;
 [Trait("Dotnet", "ready")]
 public sealed class ScrubHardeningTests(ConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
     public Task Session_updated_never_carries_ga_only_secret_fields() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
         await browser.SendStartSessionAsync(cancellationToken: ct);
 
-        var updated = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "session.updated", FrameTimeout, ct);
+        RecordedFrame? updated = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "session.updated", s_frameTimeout, ct);
         Assert.True(updated is not null, "Expected the browser to receive a session.updated frame within the timeout.");
 
-        var session = updated!.Json.GetProperty("session");
+        JsonElement session = updated!.Json.GetProperty("session");
 
         Assert.False(session.TryGetProperty("max_output_tokens", out _),
             "The browser must never receive the GA max-token cap (max_output_tokens) via session.updated.");
         Assert.False(session.TryGetProperty("model", out _),
             "The browser must never receive the internal Azure deployment name (model) via session.updated.");
 
-        var hasLeakedTranscriptionModel =
-            session.TryGetProperty("audio", out var audio) &&
-            audio.TryGetProperty("input", out var input) &&
-            input.TryGetProperty("transcription", out var transcription) &&
+        bool hasLeakedTranscriptionModel =
+            session.TryGetProperty("audio", out JsonElement audio) &&
+            audio.TryGetProperty("input", out JsonElement input) &&
+            input.TryGetProperty("transcription", out JsonElement transcription) &&
             transcription.TryGetProperty("model", out _);
         Assert.False(hasLeakedTranscriptionModel,
             "The browser must never receive the transcription deployment name (audio.input.transcription.model) via session.updated.");
@@ -105,11 +105,11 @@ public sealed class ScrubHardeningTests(ConformanceFixture fixture)
     public Task Session_updated_relays_only_the_allow_listed_shape_even_with_every_ga_top_level_key_set() =>
         fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
         Assert.True(connection is not null, "No upstream connection was accepted for the browser socket.");
 
         // Seeded directly onto the fake's effective session -- not sent by the browser, which the
@@ -123,11 +123,11 @@ public sealed class ScrubHardeningTests(ConformanceFixture fixture)
         // session.updated with the now-seeded EffectiveSession folded in.
         await browser.SendStartSessionAsync(cancellationToken: ct);
 
-        var updated = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Sequence > 0 && f.Type == "session.updated", FrameTimeout, ct);
+        RecordedFrame? updated = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > 0 && f.Type == "session.updated", s_frameTimeout, ct);
         Assert.True(updated is not null, "Expected the browser's own session.update to produce a session.updated echo.");
 
-        var session = updated!.Json.GetProperty("session");
+        JsonElement session = updated!.Json.GetProperty("session");
         var topLevelKeys = new HashSet<string>(session.EnumerateObject().Select(p => p.Name), StringComparer.Ordinal);
         Assert.Equal(new HashSet<string>(["id", "object", "audio"], StringComparer.Ordinal), topLevelKeys);
 
@@ -153,15 +153,15 @@ public sealed class ScrubHardeningTests(ConformanceFixture fixture)
     [Fact]
     public Task Session_updated_never_carries_reasoning_for_a_reasoning_capable_deployment() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
         await browser.SendStartSessionAsync(cancellationToken: ct);
 
-        var updated = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "session.updated", FrameTimeout, ct);
+        RecordedFrame? updated = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "session.updated", s_frameTimeout, ct);
         Assert.True(updated is not null, "Expected the browser to receive a session.updated frame within the timeout.");
 
-        var session = updated!.Json.GetProperty("session");
+        JsonElement session = updated!.Json.GetProperty("session");
         Assert.False(session.TryGetProperty("reasoning", out _),
             $"The browser must never receive the server-owned `reasoning` tuning knob via " +
             $"session.updated, even for a reasoning-capable deployment " +
@@ -178,22 +178,22 @@ public sealed class ScrubHardeningTests(ConformanceFixture fixture)
     [Fact]
     public Task Browser_never_receives_secrets_in_session_created() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
 
-        var created = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "session.created", FrameTimeout, ct);
+        RecordedFrame? created = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "session.created", s_frameTimeout, ct);
         Assert.True(created is not null, "Expected the browser to receive a session.created frame within the timeout.");
 
-        var session = created!.Json.GetProperty("session");
+        JsonElement session = created!.Json.GetProperty("session");
 
-        var hasNonEmptyInstructions = session.TryGetProperty("instructions", out var instructions) &&
+        bool hasNonEmptyInstructions = session.TryGetProperty("instructions", out JsonElement instructions) &&
             instructions.ValueKind == JsonValueKind.String &&
             instructions.GetString() is { Length: > 0 };
         Assert.False(hasNonEmptyInstructions,
             "The browser must never receive the (even fake/default) system prompt via session.created.");
 
-        var hasNonEmptyTools = session.TryGetProperty("tools", out var toolsProp) &&
+        bool hasNonEmptyTools = session.TryGetProperty("tools", out JsonElement toolsProp) &&
             toolsProp.ValueKind == JsonValueKind.Array &&
             toolsProp.GetArrayLength() > 0;
         Assert.False(hasNonEmptyTools,

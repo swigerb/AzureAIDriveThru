@@ -3,8 +3,6 @@ using System.Net.WebSockets;
 using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
 
 namespace Conformance.Fakes;
 
@@ -362,7 +360,7 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
         {
             return true;
         }
-        var header = context.Request.Headers.Authorization.ToString();
+        string header = context.Request.Headers.Authorization.ToString();
         return string.Equals(header, $"Bearer {ExpectedCascadeBearerToken}", StringComparison.Ordinal);
     }
 
@@ -388,7 +386,7 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
             return;
         }
 
-        var form = await context.Request.ReadFormAsync().ConfigureAwait(false);
+        IFormCollection form = await context.Request.ReadFormAsync().ConfigureAwait(false);
         _transcriptionRequestModels.Enqueue(form["model"].ToString());
 
         context.Response.ContentType = "application/json";
@@ -404,7 +402,7 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
             return;
         }
 
-        var errorStatus = NextSpeechErrorStatus;
+        int? errorStatus = NextSpeechErrorStatus;
         if (errorStatus is int status)
         {
             NextSpeechErrorStatus = null;
@@ -415,11 +413,11 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
             return;
         }
 
-        using var document = await JsonDocument.ParseAsync(context.Request.Body).ConfigureAwait(false);
-        var root = document.RootElement;
-        _ttsRequestModels.Enqueue(root.TryGetProperty("model", out var modelProp) ? modelProp.GetString() ?? "" : "");
-        _ttsRequestInputs.Enqueue(root.TryGetProperty("input", out var inputProp) ? inputProp.GetString() ?? "" : "");
-        _ttsRequestVoices.Enqueue(root.TryGetProperty("voice", out var voiceProp) ? voiceProp.GetString() ?? "" : "");
+        using JsonDocument document = await JsonDocument.ParseAsync(context.Request.Body).ConfigureAwait(false);
+        JsonElement root = document.RootElement;
+        _ttsRequestModels.Enqueue(root.TryGetProperty("model", out JsonElement modelProp) ? modelProp.GetString() ?? "" : "");
+        _ttsRequestInputs.Enqueue(root.TryGetProperty("input", out JsonElement inputProp) ? inputProp.GetString() ?? "" : "");
+        _ttsRequestVoices.Enqueue(root.TryGetProperty("voice", out JsonElement voiceProp) ? voiceProp.GetString() ?? "" : "");
 
         context.Response.ContentType = "application/octet-stream";
         await context.Response.Body.WriteAsync(NextTtsAudio).ConfigureAwait(false);
@@ -477,7 +475,7 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
     public void AssertNoHandlerFaults(int since = 0)
     {
         List<Exception> faults = [];
-        foreach (var connection in _connections.SnapshotSince(since))
+        foreach (FakeRealtimeConnection connection in _connections.SnapshotSince(since))
         {
             faults.AddRange(connection.DrainHandlerFaults());
         }
@@ -497,10 +495,10 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
 
     public async Task StartAsync(CancellationToken cancellationToken = default, int? fixedPort = null)
     {
-        var builder = WebApplication.CreateBuilder();
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
         builder.WebHost.UseUrls($"http://127.0.0.1:{fixedPort?.ToString() ?? "0"}");
-        var app = builder.Build();
+        WebApplication app = builder.Build();
         app.UseWebSockets();
         app.MapGet("/", () => Results.Ok());
         app.Map("/openai/v1/realtime", HandleConnectionAsync);
@@ -553,9 +551,9 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
 
         if (RequireApiKey)
         {
-            var apiKey = context.Request.Headers["api-key"].ToString();
-            var keyMissing = string.IsNullOrEmpty(apiKey);
-            var keyMismatched = !keyMissing && ExpectedApiKey is not null &&
+            string apiKey = context.Request.Headers["api-key"].ToString();
+            bool keyMissing = string.IsNullOrEmpty(apiKey);
+            bool keyMismatched = !keyMissing && ExpectedApiKey is not null &&
                 !string.Equals(apiKey, ExpectedApiKey, StringComparison.Ordinal);
             if (keyMissing || keyMismatched)
             {
@@ -567,9 +565,9 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
             }
         }
 
-        var deployment = context.Request.Query["model"].ToString();
+        string deployment = context.Request.Query["model"].ToString();
 
-        var connection = _connections.Create(context.Request.Headers["api-key"], context.Request.Query["model"]);
+        FakeRealtimeConnection connection = _connections.Create(context.Request.Headers["api-key"], context.Request.Query["model"]);
         if (ConsumeSessionUpdatedSuppressionForNewConnection())
         {
             connection.SuppressAllSessionUpdated = true;
@@ -584,13 +582,13 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
             // resume rehydration item) getting acknowledged normally.
             connection.Script.RemoveVadSpeechDefaultRule();
         }
-        using var socket = await context.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
+        using WebSocket socket = await context.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
         connection.AttachSocket(socket);
         // Only publish (making the connection visible to WaitForNextConnectionAsync) once the
         // socket is attached -- otherwise a test racing the handshake could observe the
         // connection and call SendAsync on it before there's anything to send on (item N2).
         _connections.Publish(connection);
-        var ct = context.RequestAborted;
+        CancellationToken ct = context.RequestAborted;
 
         // ct itself firing (a harder, transport-level abort -- as opposed to the receive loop
         // observing a graceful client-sent Close frame) must *also* mark this connection as
@@ -603,7 +601,7 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
         // synchronously as part of ct.Cancel() itself, strictly before any *other* ct-linked
         // continuation is scheduled to resume -- so by the time RespondAsync's own catch runs,
         // this is guaranteed to have already fired (PR #22 review item N3).
-        using var teardownOnAbort = ct.Register(() => connection.TeardownCancellation.Cancel());
+        using CancellationTokenRegistration teardownOnAbort = ct.Register(() => connection.TeardownCancellation.Cancel());
 
         // Frame handling runs off the receive loop (non-blocking receive loop, item 8) so a
         // slow-streaming response.create reply, a VAD-default echo, and the next incoming client
@@ -660,7 +658,7 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
 
         void TrackHandler(Task task)
         {
-            var observed = ObserveHandlerFaultsAsync(task);
+            Task observed = ObserveHandlerFaultsAsync(task);
             lock (outstandingGate)
             {
                 outstanding.RemoveAll(t => t.IsCompleted);
@@ -693,13 +691,13 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
 
             while (socket.State == WebSocketState.Open)
             {
-                var received = await WebSocketJson.ReceiveJsonAsync(socket, ct).ConfigureAwait(false);
+                JsonElement? received = await WebSocketJson.ReceiveJsonAsync(socket, ct).ConfigureAwait(false);
                 if (received is null)
                 {
                     break;
                 }
 
-                var frame = connection.ReceivedFrames.Add(received.Value);
+                RecordedFrame frame = connection.ReceivedFrames.Add(received.Value);
                 TrackHandler(HandleFrameAsync(connection, frame, deployment, ct));
             }
 
@@ -750,7 +748,7 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
         // below or the rule-based triggers, exactly like the real service refusing to act on it
         // at all. Catches a leaked internal frame type (e.g. a stray `extension.*` frame)
         // forwarded upstream unchanged by mistake.
-        var typeCheck = GaSessionValidator.ValidateClientEventType(frame.Type);
+        SessionUpdateValidationResult typeCheck = GaSessionValidator.ValidateClientEventType(frame.Type);
         if (!typeCheck.IsAccepted)
         {
             await SendValidationErrorAsync(connection, typeCheck, TryGetString(frame.Json, "event_id"), ct).ConfigureAwait(false);
@@ -799,7 +797,7 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
         // for every frame type, independent of — and in addition to — the two built-in handlers
         // above, since real GA acknowledges input-buffer/conversation-item frames regardless of
         // whether a response is also in flight.
-        foreach (var rule in connection.Script.Rules)
+        foreach (RealtimeScriptRule rule in connection.Script.Rules)
         {
             if (rule.Predicate(frame))
             {
@@ -829,13 +827,13 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
 
     private async Task HandleSessionUpdateAsync(FakeRealtimeConnection connection, RecordedFrame frame, string deployment, CancellationToken ct)
     {
-        var state = connection.SessionState;
+        RealtimeSessionState state = connection.SessionState;
         // A scripted RejectNextSessionUpdates(...) rejection (if armed) takes priority over the
         // GA rule-based validator for this frame, regardless of its actual content -- this is how
         // a test forces even an otherwise-perfectly-valid session.update (e.g. the backend's own
         // minimal fallback) to also be rejected, to exercise the no-second-fallback loop guard.
-        var result = TryConsumeScriptedSessionUpdateRejection() ?? GaSessionValidator.Validate(frame.Json, state, deployment);
-        var eventId = TryGetString(frame.Json, "event_id");
+        SessionUpdateValidationResult result = TryConsumeScriptedSessionUpdateRejection() ?? GaSessionValidator.Validate(frame.Json, state, deployment);
+        string? eventId = TryGetString(frame.Json, "event_id");
 
         if (!result.IsAccepted)
         {
@@ -843,9 +841,9 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
             return;
         }
 
-        if (frame.Json.TryGetProperty("session", out var session))
+        if (frame.Json.TryGetProperty("session", out JsonElement session))
         {
-            var voice = TryGetVoice(session);
+            string? voice = TryGetVoice(session);
             if (voice is not null)
             {
                 state.CurrentVoice = voice;
@@ -858,7 +856,7 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
 
         // id/object/model are server-assigned and always reflect this connection, regardless of
         // whatever the client's session.update body happened to include for them.
-        var effective = JsonNode.Parse(state.EffectiveSession.ToJsonString())!.AsObject();
+        JsonObject effective = JsonNode.Parse(state.EffectiveSession.ToJsonString())!.AsObject();
         effective["id"] = "sess_fake";
         effective["object"] = "realtime.session";
         effective["model"] = deployment;
@@ -895,9 +893,9 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
     /// </summary>
     private static async Task HandleResponseCancelAsync(FakeRealtimeConnection connection, RecordedFrame frame, CancellationToken ct)
     {
-        var requestedResponseId = TryGetString(frame.Json, "response_id");
-        var activeResponseId = connection.ActiveResponseId;
-        var targetsActiveResponse = activeResponseId is not null &&
+        string? requestedResponseId = TryGetString(frame.Json, "response_id");
+        string? activeResponseId = connection.ActiveResponseId;
+        bool targetsActiveResponse = activeResponseId is not null &&
             (requestedResponseId is null || string.Equals(requestedResponseId, activeResponseId, StringComparison.Ordinal));
 
         if (!targetsActiveResponse)
@@ -930,10 +928,10 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
     // previous_item_id tracking on the create path are #30's concern, not this handler's.
     private static async Task HandleConversationItemRetrieveAsync(FakeRealtimeConnection connection, RecordedFrame frame, CancellationToken ct)
     {
-        var itemId = TryGetString(frame.Json, "item_id");
-        var eventId = TryGetString(frame.Json, "event_id");
+        string? itemId = TryGetString(frame.Json, "item_id");
+        string? eventId = TryGetString(frame.Json, "event_id");
 
-        if (itemId is not null && connection.SessionState.ConversationItemsById.TryGetValue(itemId, out var item))
+        if (itemId is not null && connection.SessionState.ConversationItemsById.TryGetValue(itemId, out JsonObject? item))
         {
             await connection.SendAsync(new JsonObject
             {
@@ -964,11 +962,11 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
 
     private async Task RespondAsync(FakeRealtimeConnection connection, CancellationToken ct)
     {
-        var state = connection.SessionState;
-        var script = connection.Script.QueuedResponses.TryDequeue(out var scripted)
+        RealtimeSessionState state = connection.SessionState;
+        ResponseScript script = connection.Script.QueuedResponses.TryDequeue(out ResponseScript? scripted)
             ? scripted
             : ResponseScript.Default;
-        var responseId = $"resp_{Guid.NewGuid():N}";
+        string responseId = $"resp_{Guid.NewGuid():N}";
 
         // Tracks this response as "active" for the lifetime of this method, so a concurrent
         // response.cancel (handled by HandleResponseCancelAsync off the same non-blocking receive
@@ -993,13 +991,13 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
         // Accumulated into the final response.done's `output[]`, exactly like GA: every item this
         // response produced, each carrying its own completed `status`.
         var output = new JsonArray();
-        var outputIndex = 0;
+        int outputIndex = 0;
 
         // An open (in_progress) assistant "message" item that consecutive AudioDeltaEvents are
         // collected into — GA groups audio deltas under one output item + one content part, it
         // does not open a fresh item per delta.
         string? audioItemId = null;
-        var audioContentIndex = 0;
+        int audioContentIndex = 0;
 
         async Task CloseOpenAudioItemAsync(string itemStatus = "completed")
         {
@@ -1056,7 +1054,7 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
                 ["item"] = completedItem.DeepClone(),
             }, ct).ConfigureAwait(false);
             // #28 N18: overwrite the in-progress mirror with the finalized content.
-            state.ConversationItemsById[audioItemId] = (JsonObject)completedItem.DeepClone()!;
+            state.ConversationItemsById[audioItemId] = (JsonObject)completedItem.DeepClone();
 
             output.Add(completedItem.DeepClone());
             outputIndex++;
@@ -1064,10 +1062,10 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
             audioContentIndex = 0;
         }
 
-        var cancelled = false;
+        bool cancelled = false;
         try
         {
-            foreach (var evt in script.Events)
+            foreach (ResponseEvent evt in script.Events)
             {
                 // Checked between events (not just inside the paced Task.Delay above) so a
                 // response.cancel accepted while processing a non-paced event (e.g. a
@@ -1125,7 +1123,7 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
                             state.LastConversationItemId = audioItemId;
                             // #28 N18: mirror the in-progress item so a retrieve mid-response
                             // gets whatever content had actually gone out by then.
-                            state.ConversationItemsById[audioItemId] = (JsonObject)openItem.DeepClone()!;
+                            state.ConversationItemsById[audioItemId] = (JsonObject)openItem.DeepClone();
                             await connection.SendAsync(new JsonObject
                             {
                                 ["type"] = "response.content_part.added",
@@ -1161,7 +1159,7 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
                         // a tool, rather than interleaving).
                         await CloseOpenAudioItemAsync().ConfigureAwait(false);
 
-                        var callItemId = $"item_{Guid.NewGuid():N}";
+                        string callItemId = $"item_{Guid.NewGuid():N}";
                         var openCallItem = new JsonObject
                         {
                             ["id"] = callItemId,
@@ -1192,7 +1190,7 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
                         state.LastConversationItemId = callItemId;
                         // #28 N18: mirror the in-progress item so a retrieve mid-response gets
                         // whatever content had actually gone out by then.
-                        state.ConversationItemsById[callItemId] = (JsonObject)openCallItem.DeepClone()!;
+                        state.ConversationItemsById[callItemId] = (JsonObject)openCallItem.DeepClone();
 
                         await connection.SendAsync(new JsonObject
                         {
@@ -1238,7 +1236,7 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
                             ["item"] = completedCallItem.DeepClone(),
                         }, ct).ConfigureAwait(false);
                         // #28 N18: overwrite the in-progress mirror with the finalized content.
-                        state.ConversationItemsById[callItemId] = (JsonObject)completedCallItem.DeepClone()!;
+                        state.ConversationItemsById[callItemId] = (JsonObject)completedCallItem.DeepClone();
 
                         output.Add(completedCallItem.DeepClone());
                         outputIndex++;
@@ -1355,16 +1353,16 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
     /// special-case the fake.</summary>
     private static JsonObject BuildUsage(int outputItemCount)
     {
-        var outputTokens = 16 * Math.Max(outputItemCount, 1);
-        const int inputTokens = 32;
+        int outputTokens = 16 * Math.Max(outputItemCount, 1);
+        const int InputTokens = 32;
         return new JsonObject
         {
-            ["total_tokens"] = inputTokens + outputTokens,
-            ["input_tokens"] = inputTokens,
+            ["total_tokens"] = InputTokens + outputTokens,
+            ["input_tokens"] = InputTokens,
             ["output_tokens"] = outputTokens,
             ["input_token_details"] = new JsonObject
             {
-                ["text_tokens"] = inputTokens,
+                ["text_tokens"] = InputTokens,
                 ["audio_tokens"] = 0,
                 ["cached_tokens"] = 0,
             },
@@ -1449,17 +1447,17 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
 
     private static string? TryGetString(JsonElement obj, string property) =>
         obj.ValueKind == JsonValueKind.Object &&
-        obj.TryGetProperty(property, out var value) &&
+        obj.TryGetProperty(property, out JsonElement value) &&
         value.ValueKind == JsonValueKind.String
             ? value.GetString()
             : null;
 
     private static string? TryGetVoice(JsonElement session) =>
-        session.TryGetProperty("audio", out var audio) &&
+        session.TryGetProperty("audio", out JsonElement audio) &&
         audio.ValueKind == JsonValueKind.Object &&
-        audio.TryGetProperty("output", out var output) &&
+        audio.TryGetProperty("output", out JsonElement output) &&
         output.ValueKind == JsonValueKind.Object &&
-        output.TryGetProperty("voice", out var voice) &&
+        output.TryGetProperty("voice", out JsonElement voice) &&
         voice.ValueKind == JsonValueKind.String
             ? voice.GetString()
             : null;

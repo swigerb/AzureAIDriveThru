@@ -52,13 +52,11 @@ internal sealed class MenuCatalog
     public string PersonaId { get; }
     public string SpeechStyle { get; private init; } = "fullReadback";
 
-    private readonly IReadOnlyDictionary<string, string> _sizeMap;
     private readonly IReadOnlyDictionary<string, string> _sizeAliases;
     private readonly IReadOnlySet<string> _hiddenSizes;
     private readonly IReadOnlyDictionary<string, string> _spokenAs;
     private readonly IReadOnlyDictionary<string, ItemFields> _itemFields;
     private readonly IReadOnlyDictionary<string, string> _aliasMap;
-    private readonly IReadOnlyDictionary<string, string> _categoryMap;
     private readonly IReadOnlyDictionary<string, (string Status, string Label)> _machines;
 
     public IReadOnlySet<string> AllowedExtraCategories { get; }
@@ -80,14 +78,14 @@ internal sealed class MenuCatalog
     /// tools.py's <c>update_order</c> to list a rejected item's real available sizes by their
     /// display labels (e.g. <c>"Medium"</c>, not the raw key <c>"medium"</c>) in a
     /// size_not_available rejection.</summary>
-    public IReadOnlyDictionary<string, string> SizeMap => _sizeMap;
+    public IReadOnlyDictionary<string, string> SizeMap { get; }
 
     /// <summary>This persona's own normalized-item-key -> lower-cased category map -- mirrors
     /// menu_utils.py's public <c>category_map</c> attribute (parity gap closed for #165 round 2,
     /// Rick's review item 4: lets a test enumerate this pack's own real category set, e.g. to
     /// verify every <c>hints.yaml</c> <c>trigger_categories</c> entry actually resolves to one of
     /// them, the same way the Python pack-lint test does).</summary>
-    public IReadOnlyDictionary<string, string> CategoryMap => _categoryMap;
+    public IReadOnlyDictionary<string, string> CategoryMap { get; }
 
     private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _mealNumberIndex;
 
@@ -112,13 +110,13 @@ internal sealed class MenuCatalog
         string searchQueryRewrite)
     {
         PersonaId = personaId;
-        _sizeMap = sizeMap;
+        SizeMap = sizeMap;
         _sizeAliases = sizeAliases;
         _hiddenSizes = hiddenSizes;
         _spokenAs = spokenAs;
         _itemFields = itemFields;
         _aliasMap = aliasMap;
-        _categoryMap = itemFields.ToDictionary(kv => kv.Key, kv => kv.Value.Category);
+        CategoryMap = itemFields.ToDictionary(kv => kv.Key, kv => kv.Value.Category);
         _machines = machines;
         AllowedExtraCategories = allowedExtraCategories;
         BlockedExtraCategories = blockedExtraCategories;
@@ -134,13 +132,13 @@ internal sealed class MenuCatalog
         SearchQueryRewrite = searchQueryRewrite;
 
         var mealNumberIndex = new Dictionary<string, List<string>>();
-        foreach (var fields in itemFields.Values)
+        foreach (ItemFields fields in itemFields.Values)
         {
             if (string.IsNullOrEmpty(fields.MealNumber))
             {
                 continue;
             }
-            if (!mealNumberIndex.TryGetValue(fields.MealNumber, out var names))
+            if (!mealNumberIndex.TryGetValue(fields.MealNumber, out List<string>? names))
             {
                 names = [];
                 mealNumberIndex[fields.MealNumber] = names;
@@ -160,7 +158,7 @@ internal sealed class MenuCatalog
     /// validation.</summary>
     public static MenuCatalog FromPersona(Persona persona)
     {
-        var sizesCfg = persona.Sizes;
+        PersonaSizes sizesCfg = persona.Sizes;
         var sizeMap = new Dictionary<string, string>(sizesCfg.Canonical);
         var sizeAliases = new Dictionary<string, string>(sizesCfg.Aliases);
         var hiddenSizes = sizesCfg.Hidden.Select(s => (s ?? "").Trim().ToLowerInvariant()).ToHashSet();
@@ -172,27 +170,27 @@ internal sealed class MenuCatalog
 
         var itemFields = new Dictionary<string, ItemFields>();
         var aliasMap = new Dictionary<string, string>();
-        foreach (var category in persona.Menu.MenuItems)
+        foreach (PersonaMenuCategory category in persona.Menu.MenuItems)
         {
-            var categoryName = (category.Category ?? "").Trim().ToLowerInvariant();
-            foreach (var item in category.Items)
+            string categoryName = (category.Category ?? "").Trim().ToLowerInvariant();
+            foreach (PersonaMenuItem item in category.Items)
             {
                 if (string.IsNullOrEmpty(item.Name))
                 {
                     continue;
                 }
 
-                var key = MenuKeyValidator.MenuKey(item.Name);
+                string key = MenuKeyValidator.MenuKey(item.Name);
                 var sizeKeys = item.Sizes.Select(s => SizeKeyFn(s.Size)).Distinct().ToList();
                 var prices = new Dictionary<string, decimal>();
-                foreach (var s in item.Sizes)
+                foreach (PersonaMenuItemSize s in item.Sizes)
                 {
                     prices[SizeKeyFn(s.Size)] = s.Price;
                 }
 
-                var bundleAutoFill = item.Bundle?.AutoFill is { } af
-                    ? new Dictionary<string, string>(af)
-                    : new Dictionary<string, string>();
+                Dictionary<string, string> bundleAutoFill = item.Bundle?.AutoFill is { } af
+                    ? new(af)
+                    : [];
 
                 itemFields[key] = new ItemFields(
                     Name: item.Name,
@@ -209,9 +207,9 @@ internal sealed class MenuCatalog
                     MealNumber: item.MealNumber,
                     MenuPeriod: item.MenuPeriod);
 
-                foreach (var alias in item.Aliases)
+                foreach (string alias in item.Aliases)
                 {
-                    var aliasKey = MenuKeyValidator.MenuKey(alias);
+                    string aliasKey = MenuKeyValidator.MenuKey(alias);
                     if (!string.IsNullOrEmpty(aliasKey))
                     {
                         aliasMap[aliasKey] = key;
@@ -230,8 +228,8 @@ internal sealed class MenuCatalog
             }
         }
 
-        var extrasCfg = persona.Extras;
-        var bundlesCfg = persona.Bundles;
+        PersonaExtras extrasCfg = persona.Extras;
+        PersonaBundles bundlesCfg = persona.Bundles;
         var machines = persona.Machines.ToDictionary(kv => kv.Key, kv => (kv.Value.Status, kv.Value.Label));
 
         return new MenuCatalog(
@@ -247,9 +245,8 @@ internal sealed class MenuCatalog
             blockedExtraCategories: extrasCfg.BlockedBaseCategories.Select(c => (c ?? "").Trim().ToLowerInvariant()).ToHashSet(),
             invalidModifiers: persona.InvalidModifiers.ToDictionary(
                 kv => (kv.Key ?? "").Trim().ToLowerInvariant(),
-                kv => (IReadOnlyList<string>)kv.Value.ToList()),
-            bundleNameMarkers: bundlesCfg.NameMarkers.Select(m => (m ?? "").Trim().ToLowerInvariant())
-                .Where(m => m.Length > 0).ToList(),
+                kv => (IReadOnlyList<string>)[.. kv.Value]),
+            bundleNameMarkers: [.. bundlesCfg.NameMarkers.Select(m => (m ?? "").Trim().ToLowerInvariant()).Where(m => m.Length > 0)],
             bundleConvertStandalone: bundlesCfg.ConvertStandalone,
             bundleMissingPartText: new Dictionary<string, string>(bundlesCfg.MissingPartText),
             bundleResizeRule: string.IsNullOrEmpty(bundlesCfg.ResizeRule) ? "includedAnySize" : bundlesCfg.ResizeRule,
@@ -265,20 +262,20 @@ internal sealed class MenuCatalog
     // _compact_size_key/_normalize_size_for/_canonical_size_key_for exactly.
     private static string CompactSizeKey(string? size)
     {
-        var key = (size ?? "").Trim().ToLowerInvariant();
-        return new string(key.Where(ch => !SizeAliasIgnoredChars.Contains(ch)).ToArray());
+        string key = (size ?? "").Trim().ToLowerInvariant();
+        return new string([.. key.Where(ch => !SizeAliasIgnoredChars.Contains(ch))]);
     }
 
     private static string CanonicalSizeKeyFor(
         string? size, IReadOnlyDictionary<string, string> sizeAliases, IReadOnlySet<string> hiddenSizes)
     {
-        var key = (size ?? "").Trim().ToLowerInvariant();
+        string key = (size ?? "").Trim().ToLowerInvariant();
         if (hiddenSizes.Contains(key))
         {
             return "standard";
         }
-        var compactKey = CompactSizeKey(size);
-        if (sizeAliases.TryGetValue(compactKey, out var aliased))
+        string compactKey = CompactSizeKey(size);
+        if (sizeAliases.TryGetValue(compactKey, out string? aliased))
         {
             return aliased;
         }
@@ -291,7 +288,7 @@ internal sealed class MenuCatalog
         IReadOnlyDictionary<string, string> sizeAliases,
         IReadOnlySet<string> hiddenSizes)
     {
-        var key = (size ?? "").Trim().ToLowerInvariant();
+        string key = (size ?? "").Trim().ToLowerInvariant();
         if (hiddenSizes.Contains(key))
         {
             return "";
@@ -300,18 +297,18 @@ internal sealed class MenuCatalog
     }
 
     public string MachineStatus(string machine) =>
-        _machines.TryGetValue(machine, out var entry) ? entry.Status : "";
+        _machines.TryGetValue(machine, out (string Status, string Label) entry) ? entry.Status : "";
 
     /// <summary>Returns <c>null</c> (not empty string) when the pack never mentions this machine
     /// at all -- distinct from <see cref="MachineStatus"/>'s "" which callers treat as "not
     /// down".</summary>
     public string? MachineStatusOrNull(string machine) =>
-        _machines.TryGetValue(machine, out var entry) ? entry.Status : null;
+        _machines.TryGetValue(machine, out (string Status, string Label) entry) ? entry.Status : null;
 
     public string MachineLabel(string machine) =>
-        _machines.TryGetValue(machine, out var entry) ? entry.Label : $"{machine} is down";
+        _machines.TryGetValue(machine, out (string Status, string Label) entry) ? entry.Label : $"{machine} is down";
 
-    public string NormalizeSize(string size) => NormalizeSizeFor(size, _sizeMap, _sizeAliases, _hiddenSizes);
+    public string NormalizeSize(string size) => NormalizeSizeFor(size, SizeMap, _sizeAliases, _hiddenSizes);
 
     public string CanonicalSizeKey(string size) => CanonicalSizeKeyFor(size, _sizeAliases, _hiddenSizes);
 
@@ -319,7 +316,7 @@ internal sealed class MenuCatalog
 
     private static string SpokenSubstitutionPattern(string raw)
     {
-        var rightBoundaryChars = raw.EndsWith('®') ||
+        string rightBoundaryChars = raw.EndsWith('®') ||
                                  raw.EndsWith('™')
             ? "A-Za-z0-9"
             : "A-Za-z0-9®™";
@@ -336,9 +333,9 @@ internal sealed class MenuCatalog
     /// <c>apply_lexicon</c>.</summary>
     public static string ApplyLexicon(string text, IReadOnlyDictionary<string, string> lexicon)
     {
-        foreach (var entry in lexicon.OrderByDescending(kv => kv.Key.Length))
+        foreach (KeyValuePair<string, string> entry in lexicon.OrderByDescending(kv => kv.Key.Length))
         {
-            var raw = entry.Key;
+            string raw = entry.Key;
             if (string.IsNullOrEmpty(raw))
             {
                 continue;
@@ -356,14 +353,14 @@ internal sealed class MenuCatalog
 
     public string InferCategory(string itemName)
     {
-        var normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
-        return _categoryMap.GetValueOrDefault(normalized, "");
+        string normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
+        return CategoryMap.GetValueOrDefault(normalized, "");
     }
 
     public string InferComboComponent(string itemName)
     {
-        var normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
-        if (!_itemFields.TryGetValue(normalized, out var fields))
+        string normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
+        if (!_itemFields.TryGetValue(normalized, out ItemFields? fields))
         {
             return "";
         }
@@ -372,14 +369,14 @@ internal sealed class MenuCatalog
 
     public bool IsHappyHourDiscounted(string itemName)
     {
-        var normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
-        return _itemFields.TryGetValue(normalized, out var fields) && fields.HappyHourDiscounted;
+        string normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
+        return _itemFields.TryGetValue(normalized, out ItemFields? fields) && fields.HappyHourDiscounted;
     }
 
     public IReadOnlyList<string> BundleSlots(string itemName)
     {
-        var normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
-        return _itemFields.TryGetValue(normalized, out var fields) ? fields.BundleSlots : [];
+        string normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
+        return _itemFields.TryGetValue(normalized, out ItemFields? fields) ? fields.BundleSlots : [];
     }
 
     /// <summary>PR #184 round 4 (Rick's review, item 4): this bundle item's own
@@ -392,8 +389,8 @@ internal sealed class MenuCatalog
     /// <c>bundle_default_size</c>.</summary>
     public string BundleDefaultSize(string itemName)
     {
-        var normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
-        return _itemFields.TryGetValue(normalized, out var fields) ? fields.BundleDefaultSize ?? "" : "";
+        string normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
+        return _itemFields.TryGetValue(normalized, out ItemFields? fields) ? fields.BundleDefaultSize ?? "" : "";
     }
 
     /// <summary>This bundle item's own slot -> filler-description map (menu.schema.json
@@ -403,13 +400,13 @@ internal sealed class MenuCatalog
     /// menu_utils.py's <c>bundle_autofill</c>.</summary>
     public IReadOnlyDictionary<string, string> BundleAutoFill(string itemName, string resolvedSizeLabel = "")
     {
-        var normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
-        if (!_itemFields.TryGetValue(normalized, out var fields) || fields.BundleAutoFill.Count == 0)
+        string normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
+        if (!_itemFields.TryGetValue(normalized, out ItemFields? fields) || fields.BundleAutoFill.Count == 0)
         {
             return new Dictionary<string, string>();
         }
-        var defaultSize = fields.BundleDefaultSize ?? "";
-        var sizeLabel = string.IsNullOrEmpty(resolvedSizeLabel) || resolvedSizeLabel.Equals("standard", StringComparison.OrdinalIgnoreCase)
+        string defaultSize = fields.BundleDefaultSize ?? "";
+        string sizeLabel = string.IsNullOrEmpty(resolvedSizeLabel) || resolvedSizeLabel.Equals("standard", StringComparison.OrdinalIgnoreCase)
             ? defaultSize
             : resolvedSizeLabel;
         return fields.BundleAutoFill.ToDictionary(
@@ -427,8 +424,8 @@ internal sealed class MenuCatalog
     /// <c>bundle_autofill_names</c>.</summary>
     public IReadOnlyDictionary<string, string> BundleAutoFillNames(string itemName)
     {
-        var normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
-        if (!_itemFields.TryGetValue(normalized, out var fields) || fields.BundleAutoFill.Count == 0)
+        string normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
+        if (!_itemFields.TryGetValue(normalized, out ItemFields? fields) || fields.BundleAutoFill.Count == 0)
         {
             return new Dictionary<string, string>();
         }
@@ -452,12 +449,12 @@ internal sealed class MenuCatalog
         {
             return query;
         }
-        var match = System.Text.RegularExpressions.Regex.Match(query, @"\d+");
+        Match match = System.Text.RegularExpressions.Regex.Match(query, @"\d+");
         if (!match.Success)
         {
             return query;
         }
-        var candidates = MealNumberCandidates(match.Value);
+        IReadOnlyList<string> candidates = MealNumberCandidates(match.Value);
         if (candidates.Count == 0)
         {
             return query;
@@ -465,7 +462,7 @@ internal sealed class MenuCatalog
         return $"{query} {string.Join(" ", candidates)}";
     }
 
-    private static readonly string[] CombinedNameConnectors = [" with ", " and ", " + ", " & "];
+    private static readonly string[] s_combinedNameConnectors = [" with ", " and ", " + ", " & "];
 
     /// <summary>#77 (shared extras engine, <c>extras.splitCombinedNames</c>): if
     /// <paramref name="itemName"/> isn't on the menu but is really a known base item plus a known
@@ -479,25 +476,25 @@ internal sealed class MenuCatalog
         {
             return null;
         }
-        foreach (var connector in CombinedNameConnectors)
+        foreach (string connector in s_combinedNameConnectors)
         {
-            var idx = itemName.IndexOf(connector.Trim(), StringComparison.OrdinalIgnoreCase);
+            int idx = itemName.IndexOf(connector.Trim(), StringComparison.OrdinalIgnoreCase);
             if (idx < 0)
             {
                 continue;
             }
-            var basePart = itemName[..idx].Trim();
-            var extraPart = itemName[(idx + connector.Trim().Length)..].Trim();
+            string basePart = itemName[..idx].Trim();
+            string extraPart = itemName[(idx + connector.Trim().Length)..].Trim();
             if (basePart.Length == 0 || extraPart.Length == 0)
             {
                 continue;
             }
-            var baseItem = ResolveMenuItem(basePart);
+            ResolvedMenuItem? baseItem = ResolveMenuItem(basePart);
             if (baseItem is null || !IsExtraItem(extraPart))
             {
                 continue;
             }
-            var extraItem = ResolveMenuItem(extraPart);
+            ResolvedMenuItem? extraItem = ResolveMenuItem(extraPart);
             if (extraItem is null)
             {
                 continue;
@@ -509,14 +506,14 @@ internal sealed class MenuCatalog
 
     public string? RequiresMachine(string itemName)
     {
-        var normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
-        return _itemFields.TryGetValue(normalized, out var fields) ? fields.RequiresMachine : null;
+        string normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
+        return _itemFields.TryGetValue(normalized, out ItemFields? fields) ? fields.RequiresMachine : null;
     }
 
     public bool IsExtraItem(string itemName)
     {
-        var normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
-        return _itemFields.TryGetValue(normalized, out var fields) && fields.IsExtra;
+        string normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
+        return _itemFields.TryGetValue(normalized, out ItemFields? fields) && fields.IsExtra;
     }
 
     /// <summary>THE single on-menu gate (#73): resolves <paramref name="itemName"/> (or one of
@@ -524,8 +521,8 @@ internal sealed class MenuCatalog
     /// all.</summary>
     public ResolvedMenuItem? ResolveMenuItem(string itemName)
     {
-        var normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
-        if (!_itemFields.TryGetValue(normalized, out var fields))
+        string normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
+        if (!_itemFields.TryGetValue(normalized, out ItemFields? fields))
         {
             return null;
         }
@@ -546,12 +543,12 @@ internal sealed class MenuCatalog
         {
             return true;
         }
-        var normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
-        if (!_itemFields.TryGetValue(normalized, out var fields))
+        string normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
+        if (!_itemFields.TryGetValue(normalized, out ItemFields? fields))
         {
             return true;
         }
-        var period = fields.MenuPeriod;
+        string? period = fields.MenuPeriod;
         if (string.IsNullOrEmpty(period) || period == "allDay")
         {
             return true;
@@ -565,8 +562,8 @@ internal sealed class MenuCatalog
     /// charges from; the tool call's own <c>price</c> argument is never trusted (#104).</summary>
     public decimal? PriceFor(string itemName, string sizeKey)
     {
-        var normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
-        if (!_itemFields.TryGetValue(normalized, out var fields))
+        string normalized = ResolveAlias(MenuKeyValidator.MenuKey(itemName));
+        if (!_itemFields.TryGetValue(normalized, out ItemFields? fields))
         {
             return null;
         }

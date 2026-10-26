@@ -34,8 +34,8 @@ public static class PersonaMenuLocator
 
     public static Discovery Locate(string repoRoot)
     {
-        var personasDir = Path.Combine(repoRoot, "personas");
-        var candidates = FindProductionExports(personasDir);
+        string personasDir = Path.Combine(repoRoot, "personas");
+        List<string> candidates = FindProductionExports(personasDir);
 
         if (candidates.Count == 0)
         {
@@ -65,10 +65,10 @@ public static class PersonaMenuLocator
                 "--menu explicitly to pick one.");
         }
 
-        var productionFilePath = optedIn[0];
-        var menuDir = MenuDirectoryFor(productionFilePath);
-        var personaDir = Directory.GetParent(menuDir)!.FullName;   // personas/<id>
-        var personaId = Path.GetFileName(personaDir);
+        string productionFilePath = optedIn[0];
+        string menuDir = MenuDirectoryFor(productionFilePath);
+        string personaDir = Directory.GetParent(menuDir)!.FullName;   // personas/<id>
+        string personaId = Path.GetFileName(personaDir);
 
         return new Discovery(
             personaId,
@@ -81,7 +81,7 @@ public static class PersonaMenuLocator
     /// <c>personas/&lt;id&gt;/menu</c>.</summary>
     private static string MenuDirectoryFor(string productionFilePath)
     {
-        var sourceDir = Path.GetDirectoryName(productionFilePath)!; // personas/<id>/menu/source
+        string sourceDir = Path.GetDirectoryName(productionFilePath)!; // personas/<id>/menu/source
         return Directory.GetParent(sourceDir)!.FullName;            // personas/<id>/menu
     }
 
@@ -99,9 +99,9 @@ public static class PersonaMenuLocator
         }
 
         var matches = new List<string>();
-        foreach (var personaDir in Directory.GetDirectories(personasDir))
+        foreach (string personaDir in Directory.GetDirectories(personasDir))
         {
-            var sourceDir = Path.Combine(personaDir, "menu", "source");
+            string sourceDir = Path.Combine(personaDir, "menu", "source");
             if (!Directory.Exists(sourceDir))
             {
                 continue;

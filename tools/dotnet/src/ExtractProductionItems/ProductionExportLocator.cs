@@ -23,8 +23,8 @@ public static class ProductionExportLocator
 
     public static Discovery Locate(string repoRoot)
     {
-        var personasDir = Path.Combine(repoRoot, "personas");
-        var candidates = FindProductionExports(personasDir);
+        string personasDir = Path.Combine(repoRoot, "personas");
+        List<string> candidates = FindProductionExports(personasDir);
 
         if (candidates.Count == 0)
         {
@@ -42,11 +42,11 @@ public static class ProductionExportLocator
                 "--menu explicitly to pick one.");
         }
 
-        var productionFilePath = candidates[0];
-        var sourceDir = Path.GetDirectoryName(productionFilePath)!; // personas/<id>/menu/source
-        var menuDir = Directory.GetParent(sourceDir)!.FullName;     // personas/<id>/menu
-        var personaDir = Directory.GetParent(menuDir)!.FullName;    // personas/<id>
-        var personaId = Path.GetFileName(personaDir);
+        string productionFilePath = candidates[0];
+        string sourceDir = Path.GetDirectoryName(productionFilePath)!; // personas/<id>/menu/source
+        string menuDir = Directory.GetParent(sourceDir)!.FullName;     // personas/<id>/menu
+        string personaDir = Directory.GetParent(menuDir)!.FullName;    // personas/<id>
+        string personaId = Path.GetFileName(personaDir);
 
         return new Discovery(personaId, productionFilePath, Path.Combine(menuDir, "menuItems.json"));
     }
@@ -59,9 +59,9 @@ public static class ProductionExportLocator
         }
 
         var matches = new List<string>();
-        foreach (var personaDir in Directory.GetDirectories(personasDir))
+        foreach (string personaDir in Directory.GetDirectories(personasDir))
         {
-            var sourceDir = Path.Combine(personaDir, "menu", "source");
+            string sourceDir = Path.Combine(personaDir, "menu", "source");
             if (!Directory.Exists(sourceDir))
             {
                 continue;

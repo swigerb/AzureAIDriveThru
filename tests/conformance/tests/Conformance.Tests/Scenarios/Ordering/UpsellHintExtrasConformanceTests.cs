@@ -23,11 +23,11 @@ public sealed class UpsellHintExtrasConformanceTests(HappyHourJustBeforeOpenFixt
     [Trait("Dotnet", "ready")]
     public Task Adding_an_extra_right_after_a_drink_does_not_trigger_the_side_completion_hint() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [
                 ("add", "Cherry Limeade", "medium", 1, 2.89m),
@@ -43,11 +43,11 @@ public sealed class UpsellHintExtrasConformanceTests(HappyHourJustBeforeOpenFixt
     [Trait("Dotnet", "ready")]
     public Task A_real_side_sharing_the_extras_category_still_triggers_the_side_completion_hint() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", "Cheese Tots", "medium", 1, 3.39m)],
             roundTripIndex, ct);

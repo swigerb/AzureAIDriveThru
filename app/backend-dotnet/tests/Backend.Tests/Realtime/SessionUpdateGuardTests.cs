@@ -26,10 +26,10 @@ public sealed class SessionUpdateGuardTests
     {
         var guard = new SessionUpdateGuard();
 
-        var added = JsonNode.Parse(guard.Track("""{"type":"session.update","session":{}}"""))!.AsObject();
+        JsonObject added = JsonNode.Parse(guard.Track("""{"type":"session.update","session":{}}"""))!.AsObject();
         Assert.StartsWith("sonic_su_", added["event_id"]!.GetValue<string>());
 
-        var kept = JsonNode.Parse(guard.Track("""{"type":"session.update","event_id":"mine","session":{}}"""))!.AsObject();
+        JsonObject kept = JsonNode.Parse(guard.Track("""{"type":"session.update","event_id":"mine","session":{}}"""))!.AsObject();
         Assert.Equal("mine", kept["event_id"]!.GetValue<string>());
     }
 
@@ -73,7 +73,7 @@ public sealed class SessionUpdateGuardTests
             ["session"] = new JsonObject(),
         };
 
-        var stamped = guard.Stamp(message);
+        JsonObject stamped = guard.Stamp(message);
 
         Assert.IsAssignableFrom<JsonValue>(stamped["event_id"]);
         Assert.NotEmpty(stamped["event_id"]!.GetValue<string>());
@@ -90,7 +90,7 @@ public sealed class SessionUpdateGuardTests
             ["session"] = new JsonObject(),
         };
 
-        var stamped = guard.Stamp(message);
+        JsonObject stamped = guard.Stamp(message);
 
         Assert.IsAssignableFrom<JsonValue>(stamped["event_id"]);
         Assert.NotEmpty(stamped["event_id"]!.GetValue<string>());
@@ -102,7 +102,7 @@ public sealed class SessionUpdateGuardTests
         var guard = new SessionUpdateGuard();
         var message = new JsonObject { ["type"] = "session.update", ["event_id"] = "", ["session"] = new JsonObject() };
 
-        var stamped = guard.Stamp(message);
+        JsonObject stamped = guard.Stamp(message);
 
         Assert.NotEqual("", stamped["event_id"]!.GetValue<string>());
     }
@@ -126,7 +126,7 @@ public sealed class SessionUpdateGuardTests
     public void Stamp_EvictsOldestEntryPastSixtyFourTracked()
     {
         var guard = new SessionUpdateGuard();
-        for (var i = 0; i < 65; i++)
+        for (int i = 0; i < 65; i++)
         {
             guard.Stamp(new JsonObject { ["type"] = "session.update", ["event_id"] = $"su{i}", ["session"] = new JsonObject() });
         }
@@ -148,7 +148,7 @@ public sealed class SessionUpdateGuardTests
     public void Stamp_And_Track_Are_Threadsafe_Against_Correlate_And_OnSessionUpdated()
     {
         var guard = new SessionUpdateGuard();
-        const int iterations = 10_000;
+        const int Iterations = 10_000;
         using var barrier = new Barrier(2);
         Exception? browserException = null;
         Exception? upstreamException = null;
@@ -158,7 +158,7 @@ public sealed class SessionUpdateGuardTests
             barrier.SignalAndWait();
             try
             {
-                for (var i = 0; i < iterations; i++)
+                for (int i = 0; i < Iterations; i++)
                 {
                     guard.Stamp(new JsonObject { ["type"] = "session.update", ["session"] = new JsonObject { ["voice"] = "marin" } });
                     guard.Track("""{"type":"session.update","session":{"voice":"marin"}}""");
@@ -175,7 +175,7 @@ public sealed class SessionUpdateGuardTests
             barrier.SignalAndWait();
             try
             {
-                for (var i = 0; i < iterations; i++)
+                for (int i = 0; i < Iterations; i++)
                 {
                     guard.Correlate(Error(param: "session.voice"));
                     guard.OnSessionUpdated();

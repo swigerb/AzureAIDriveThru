@@ -12,7 +12,7 @@ public sealed class ProductionItemsExtractorTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var path in _tempFiles)
+        foreach (string path in _tempFiles)
         {
             if (File.Exists(path))
             {
@@ -23,7 +23,7 @@ public sealed class ProductionItemsExtractorTests : IDisposable
 
     private string WriteTempJson(string prefix, string json)
     {
-        var path = Path.Combine(Path.GetTempPath(), $"squanchy-extract-items-{prefix}-{Guid.NewGuid():n}.json");
+        string path = Path.Combine(Path.GetTempPath(), $"squanchy-extract-items-{prefix}-{Guid.NewGuid():n}.json");
         File.WriteAllText(path, json);
         _tempFiles.Add(path);
         return path;
@@ -47,7 +47,7 @@ public sealed class ProductionItemsExtractorTests : IDisposable
     [Fact]
     public void NormalizeSizeName_StripsParentNameAndTrademarkSymbol_WhenNoPrefixMatches()
     {
-        var result = ProductionItemsExtractor.NormalizeSizeName("Footlong Ocean Water\u00ae", "Ocean Water\u00ae");
+        string result = ProductionItemsExtractor.NormalizeSizeName("Footlong Ocean Water\u00ae", "Ocean Water\u00ae");
 
         Assert.Equal("Footlong", result);
     }
@@ -55,7 +55,7 @@ public sealed class ProductionItemsExtractorTests : IDisposable
     [Fact]
     public void NormalizeSizeName_FallsBackToStandard_WhenNothingDistinctiveRemainsAfterStripping()
     {
-        var result = ProductionItemsExtractor.NormalizeSizeName("Cherry Limeade", "Cherry Limeade");
+        string result = ProductionItemsExtractor.NormalizeSizeName("Cherry Limeade", "Cherry Limeade");
 
         Assert.Equal("Standard", result);
     }
@@ -67,7 +67,7 @@ public sealed class ProductionItemsExtractorTests : IDisposable
         // product.get("displayName", "") can legitimately return "" for a malformed/incomplete
         // product entry, so this guards the exact regression a naive unconditional .Replace(parent, "")
         // would hit (Python's str.replace("", "") is a harmless no-op by contrast).
-        var result = ProductionItemsExtractor.NormalizeSizeName("Footlong Drink", "");
+        string result = ProductionItemsExtractor.NormalizeSizeName("Footlong Drink", "");
 
         Assert.Equal("Footlong Drink", result);
     }
@@ -77,7 +77,7 @@ public sealed class ProductionItemsExtractorTests : IDisposable
     [Fact]
     public void Normalize_LowercasesStripsTrademarkSymbolsAndCollapsesWhitespace()
     {
-        var result = ProductionItemsExtractor.Normalize("  Ocean Water\u00ae & Lime\u2122  Float  ");
+        string result = ProductionItemsExtractor.Normalize("  Ocean Water\u00ae & Lime\u2122  Float  ");
 
         Assert.Equal("ocean water lime float", result);
     }
@@ -85,7 +85,7 @@ public sealed class ProductionItemsExtractorTests : IDisposable
     [Fact]
     public void Normalize_ReplacesNonAlphanumericCharactersWithASpace_ThenCollapsesRuns()
     {
-        var result = ProductionItemsExtractor.Normalize("Jalapeños!!");
+        string result = ProductionItemsExtractor.Normalize("Jalapeños!!");
 
         Assert.Equal("jalape os", result);
     }
@@ -130,9 +130,9 @@ public sealed class ProductionItemsExtractorTests : IDisposable
     [Fact]
     public void ExtractProductionItems_WalksNestedCategoriesInDocumentOrder_AssigningTheLeafCategoryName()
     {
-        var path = WriteTempJson("nested", NestedCategoryProductionJson);
+        string path = WriteTempJson("nested", NestedCategoryProductionJson);
 
-        var items = ProductionItemsExtractor.ExtractProductionItems(path);
+        IReadOnlyList<ProductionItem> items = ProductionItemsExtractor.ExtractProductionItems(path);
 
         // p-recipe is skipped (isRecipe); p-combo is reachable from BOTH cat-top and cat-top2,
         // but cat-top is walked first (categories.keys() document order) so it wins -- p-combo is
@@ -147,10 +147,10 @@ public sealed class ProductionItemsExtractorTests : IDisposable
     [Fact]
     public void ExtractProductionItems_ResolvesSizeVariants_InProductGroupChildRefDocumentOrder()
     {
-        var path = WriteTempJson("nested", NestedCategoryProductionJson);
+        string path = WriteTempJson("nested", NestedCategoryProductionJson);
 
-        var items = ProductionItemsExtractor.ExtractProductionItems(path);
-        var drink = items.Single(i => i.ProductId == "p-drink");
+        IReadOnlyList<ProductionItem> items = ProductionItemsExtractor.ExtractProductionItems(path);
+        ProductionItem drink = items.Single(i => i.ProductId == "p-drink");
 
         Assert.Equal(
             [("Mini", 1.5), ("Small", 2.0)],
@@ -160,10 +160,10 @@ public sealed class ProductionItemsExtractorTests : IDisposable
     [Fact]
     public void ExtractProductionItems_FallsBackToAStandardSize_UsingTheProductsOwnPrice_WhenNoVariantsResolve()
     {
-        var path = WriteTempJson("nested", NestedCategoryProductionJson);
+        string path = WriteTempJson("nested", NestedCategoryProductionJson);
 
-        var items = ProductionItemsExtractor.ExtractProductionItems(path);
-        var combo = items.Single(i => i.ProductId == "p-combo");
+        IReadOnlyList<ProductionItem> items = ProductionItemsExtractor.ExtractProductionItems(path);
+        ProductionItem combo = items.Single(i => i.ProductId == "p-combo");
 
         Assert.Equal([("Standard", 5.0)], combo.Sizes.Select(s => (s.Size, s.Price)));
     }
@@ -171,9 +171,9 @@ public sealed class ProductionItemsExtractorTests : IDisposable
     [Fact]
     public void ExtractProductionItems_SkipsRecipes()
     {
-        var path = WriteTempJson("nested", NestedCategoryProductionJson);
+        string path = WriteTempJson("nested", NestedCategoryProductionJson);
 
-        var items = ProductionItemsExtractor.ExtractProductionItems(path);
+        IReadOnlyList<ProductionItem> items = ProductionItemsExtractor.ExtractProductionItems(path);
 
         Assert.DoesNotContain(items, i => i.ProductId == "p-recipe");
     }
@@ -181,7 +181,7 @@ public sealed class ProductionItemsExtractorTests : IDisposable
     [Fact]
     public void ExtractProductionItems_UsesTheFirstMenuInDocumentOrder_WhenMultipleMenusExist()
     {
-        const string twoMenusJson = """
+        const string TwoMenusJson = """
             {
               "menus": {
                 "menu-first": {
@@ -197,9 +197,9 @@ public sealed class ProductionItemsExtractorTests : IDisposable
               }
             }
             """;
-        var path = WriteTempJson("two-menus", twoMenusJson);
+        string path = WriteTempJson("two-menus", TwoMenusJson);
 
-        var items = ProductionItemsExtractor.ExtractProductionItems(path);
+        IReadOnlyList<ProductionItem> items = ProductionItemsExtractor.ExtractProductionItems(path);
 
         Assert.Equal(["p-a"], items.Select(i => i.ProductId));
     }
@@ -212,7 +212,7 @@ public sealed class ProductionItemsExtractorTests : IDisposable
         // `product = products.get(prod_id); if not product: continue` -- Python's falsy check
         // skips a product present as `{}` the same as a missing one; a naive "does the key exist"
         // lookup would wrongly keep it (falling back to displayName=productId, price=0.0).
-        const string json = """
+        const string Json = """
             {
               "menus": {
                 "menu-1": {
@@ -231,9 +231,9 @@ public sealed class ProductionItemsExtractorTests : IDisposable
               }
             }
             """;
-        var path = WriteTempJson("empty-product", json);
+        string path = WriteTempJson("empty-product", Json);
 
-        var items = ProductionItemsExtractor.ExtractProductionItems(path);
+        IReadOnlyList<ProductionItem> items = ProductionItemsExtractor.ExtractProductionItems(path);
 
         Assert.Equal(["p-real"], items.Select(i => i.ProductId));
     }
@@ -244,7 +244,7 @@ public sealed class ProductionItemsExtractorTests : IDisposable
         // `child_product = products.get(child_id); if child_product: sizes.append(...)` -- a
         // present-but-empty `{}` child product must NOT contribute a bogus
         // "<id>=$0.00" size entry; it should be silently skipped, same as Python.
-        const string json = """
+        const string Json = """
             {
               "menus": {
                 "menu-1": {
@@ -269,10 +269,10 @@ public sealed class ProductionItemsExtractorTests : IDisposable
               }
             }
             """;
-        var path = WriteTempJson("empty-child-product", json);
+        string path = WriteTempJson("empty-child-product", Json);
 
-        var items = ProductionItemsExtractor.ExtractProductionItems(path);
-        var drink = items.Single(i => i.ProductId == "p-drink");
+        IReadOnlyList<ProductionItem> items = ProductionItemsExtractor.ExtractProductionItems(path);
+        ProductionItem drink = items.Single(i => i.ProductId == "p-drink");
 
         Assert.Equal([("Mini", 1.5)], drink.Sizes.Select(s => (s.Size, s.Price)));
     }
@@ -286,7 +286,7 @@ public sealed class ProductionItemsExtractorTests : IDisposable
         // value -- including a literal "-0.0" JSON price (`bool(-0.0) is False`) -- with the
         // literal positive 0.0. Left unreplicated, this would format as "-0.00" (via :.2f/F2),
         // not Python's "0.00".
-        const string json = """
+        const string Json = """
             {
               "menus": {
                 "menu-1": {
@@ -301,10 +301,10 @@ public sealed class ProductionItemsExtractorTests : IDisposable
               }
             }
             """;
-        var path = WriteTempJson("negative-zero-price", json);
+        string path = WriteTempJson("negative-zero-price", Json);
 
-        var items = ProductionItemsExtractor.ExtractProductionItems(path);
-        var price = items.Single(i => i.ProductId == "p-zero").Sizes.Single().Price;
+        IReadOnlyList<ProductionItem> items = ProductionItemsExtractor.ExtractProductionItems(path);
+        double price = items.Single(i => i.ProductId == "p-zero").Sizes.Single().Price;
 
         Assert.False(double.IsNegative(price), "The Standard-fallback price must not be negative zero.");
         Assert.Equal("0.00", price.ToString("F2", System.Globalization.CultureInfo.InvariantCulture));
@@ -315,7 +315,7 @@ public sealed class ProductionItemsExtractorTests : IDisposable
     [Fact]
     public void LoadUiItems_FlattensEveryGroupsItemsWithItsOwnCategory_InDocumentOrder()
     {
-        const string menuJson = """
+        const string MenuJson = """
             {
               "menuItems": [
                 { "category": "Drinks", "items": [ { "name": "Cherry Limeade" }, { "name": "Ocean Water" } ] },
@@ -323,9 +323,9 @@ public sealed class ProductionItemsExtractorTests : IDisposable
               ]
             }
             """;
-        var path = WriteTempJson("ui-menu", menuJson);
+        string path = WriteTempJson("ui-menu", MenuJson);
 
-        var items = ProductionItemsExtractor.LoadUiItems(path);
+        IReadOnlyList<UiItem> items = ProductionItemsExtractor.LoadUiItems(path);
 
         Assert.Equal(
             [("Cherry Limeade", "Drinks"), ("Ocean Water", "Drinks"), ("Bacon Combo", "Combos")],
@@ -335,9 +335,9 @@ public sealed class ProductionItemsExtractorTests : IDisposable
     [Fact]
     public void LoadUiItems_ReturnsEmpty_WhenMenuItemsKeyIsAbsent()
     {
-        var path = WriteTempJson("empty-ui-menu", "{}");
+        string path = WriteTempJson("empty-ui-menu", "{}");
 
-        var items = ProductionItemsExtractor.LoadUiItems(path);
+        IReadOnlyList<UiItem> items = ProductionItemsExtractor.LoadUiItems(path);
 
         Assert.Empty(items);
     }

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
@@ -21,7 +22,7 @@ namespace Conformance.Tests.Scenarios.RateLimit;
 [Collection(ShortTimersConformanceCollection.Name)]
 public sealed class RateLimitRecoveryTests(ShortTimersConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     /// <summary>Enqueues a rate-limited failure with no parseable hint, so retry_delay() falls
     /// through to the ShortTimers-overridden default instead of clamping a hint.</summary>
@@ -43,17 +44,17 @@ public sealed class RateLimitRecoveryTests(ShortTimersConformanceFixture fixture
     private static async Task<FakeRealtimeConnection> ConnectAndGetPastGreetingAsync(
         Task<FakeRealtimeConnection?> connectionTask, RealtimeBrowserClient browser, CancellationToken ct)
     {
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await browser.SendStartSessionAsync(cancellationToken: ct);
 
         // Same marker UpdateOrderToolCallTests uses: the greeting's round trip must fully finish
         // (tools_pending cleared, ladder idle) before scripting the scenario's own turn, or the
         // automatic greeting response.create would consume our script instead.
-        var greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        RecordedFrame? greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token", s_frameTimeout, ct);
         Assert.True(greetingRoundTrip is not null, "Greeting round trip never completed.");
-        return connection!;
+        return connection;
     }
 
     // Ladder_runs_silent_then_two_notifications_then_gives_up and
@@ -84,10 +85,10 @@ public sealed class RateLimitRecoveryTests(ShortTimersConformanceFixture fixture
     [Trait("Dotnet", "ready")]
     public Task A_pending_retry_is_cancelled_by_detach() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await ConnectAndGetPastGreetingAsync(connectionTask, browser, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection connection = await ConnectAndGetPastGreetingAsync(connectionTask, browser, ct);
 
         // Same two-failure structure as A_pending_retry_is_cancelled_by_guest_speech above, and
         // for the same reason: attempt 0's own failure is silent and FakeRealtimeUpstreamServer
@@ -100,22 +101,22 @@ public sealed class RateLimitRecoveryTests(ShortTimersConformanceFixture fixture
         connection.Script.Enqueue(NoHintRateLimited());
         await browser.SendResponseCreateAsync(ct);
 
-        var attempt1Notification = await browser.ReceivedFrames.WaitForAsync(
+        RecordedFrame? attempt1Notification = await browser.ReceivedFrames.WaitForAsync(
             f => f.Type == "extension.rate_limited" && f.Json.GetProperty("attempt").GetInt32() == 1,
-            FrameTimeout, ct);
+            s_frameTimeout, ct);
         Assert.True(attempt1Notification is not null,
             "Expected extension.rate_limited{attempt:1} after the first retry also failed.");
-        var boundary = connection.ReceivedFrames.Snapshot().Last(f => f.Type == "response.create").Sequence;
+        int boundary = connection.ReceivedFrames.Snapshot().Last(f => f.Type == "response.create").Sequence;
 
         // Drop while attempt 2 is still pending. rtmt.py's connection handler calls
         // recovery.cancel("socket closed") in its outer `finally`, unconditionally, for any
         // teardown path -- so this proves a detach cancels a pending retry exactly like guest
         // speech does, via a completely different code path.
         await browser.CloseAsync(cancellationToken: ct);
-        await browser.WaitForCloseAsync(FrameTimeout, ct);
+        await browser.WaitForCloseAsync(s_frameTimeout, ct);
         await browser.DisposeAsync();
 
-        var thirdResponseCreate = await connection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? thirdResponseCreate = await connection.ReceivedFrames.WaitForAsync(
             f => f.Sequence > boundary && f.Type == "response.create", TimeSpan.FromSeconds(1.5), ct);
         Assert.True(thirdResponseCreate is null,
             "Expected no retried response.create -- detaching should have cancelled the pending retry.");
@@ -125,17 +126,17 @@ public sealed class RateLimitRecoveryTests(ShortTimersConformanceFixture fixture
     [Trait("Dotnet", "ready")]
     public Task A_retried_tool_follow_up_never_re_runs_the_tool() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await ConnectAndGetPastGreetingAsync(connectionTask, browser, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection connection = await ConnectAndGetPastGreetingAsync(connectionTask, browser, ct);
 
-        const string callId = "call_rate_limited_follow_up_1";
+        const string CallId = "call_rate_limited_follow_up_1";
         connection.Script.Enqueue(new ResponseScript([
             new FunctionCallEvent(
                 Name: "update_order",
                 ArgumentsJson: """{"action":"add","item_name":"Small Fries","size":"Small","quantity":1,"price":2.49}""",
-                CallId: callId),
+                CallId: CallId),
             new DoneEvent(),
         ]));
         // rtmt.py auto-sends a bare follow-up response.create as soon as the tool's
@@ -147,38 +148,38 @@ public sealed class RateLimitRecoveryTests(ShortTimersConformanceFixture fixture
         // upstream by RateLimitRecovery, not by the tool-follow-up path) gets a normal reply so
         // the ladder ends quietly.
 
-        var turnStart = connection.ReceivedFrames.Count;
+        int turnStart = connection.ReceivedFrames.Count;
         await browser.SendResponseCreateAsync(ct);
 
-        var functionCallOutput = await connection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? functionCallOutput = await connection.ReceivedFrames.WaitForAsync(
             f => f.Sequence >= turnStart &&
                  f.Type == "conversation.item.create" &&
-                 f.Json.TryGetProperty("item", out var item) &&
-                 item.TryGetProperty("type", out var itemType) &&
+                 f.Json.TryGetProperty("item", out JsonElement item) &&
+                 item.TryGetProperty("type", out JsonElement itemType) &&
                  itemType.GetString() == "function_call_output" &&
-                 item.TryGetProperty("call_id", out var respondedCallId) &&
-                 respondedCallId.GetString() == callId,
-            FrameTimeout, ct);
+                 item.TryGetProperty("call_id", out JsonElement respondedCallId) &&
+                 respondedCallId.GetString() == CallId,
+            s_frameTimeout, ct);
         Assert.True(functionCallOutput is not null,
-            $"Expected exactly one conversation.item.create(function_call_output) for call_id={callId}.");
+            $"Expected exactly one conversation.item.create(function_call_output) for call_id={CallId}.");
 
         // The follow-up's own rate-limited failure notifies the browser (attempt:1's bounds
         // don't apply here -- this is attempt 0, so it must be silent) -- then its retry (a bare
         // response.create with no new tool call) must complete without ever producing a *second*
         // function_call_output for the same call_id.
-        var laterFunctionCallOutput = await connection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? laterFunctionCallOutput = await connection.ReceivedFrames.WaitForAsync(
             f => f.Sequence > functionCallOutput!.Sequence &&
                  f.Type == "conversation.item.create" &&
-                 f.Json.TryGetProperty("item", out var item) &&
-                 item.TryGetProperty("type", out var itemType) &&
+                 f.Json.TryGetProperty("item", out JsonElement item) &&
+                 item.TryGetProperty("type", out JsonElement itemType) &&
                  itemType.GetString() == "function_call_output" &&
-                 item.TryGetProperty("call_id", out var respondedCallId) &&
-                 respondedCallId.GetString() == callId,
+                 item.TryGetProperty("call_id", out JsonElement respondedCallId) &&
+                 respondedCallId.GetString() == CallId,
             TimeSpan.FromSeconds(1.5), ct);
         Assert.True(laterFunctionCallOutput is null,
             "The tool must not be re-run -- no second function_call_output for the same call_id.");
 
-        var responseCreatesAfterTheTool = connection.ReceivedFrames.Snapshot()
+        int responseCreatesAfterTheTool = connection.ReceivedFrames.Snapshot()
             .Skip(functionCallOutput!.Sequence + 1)
             .Count(f => f.Type == "response.create");
         // Exactly two: rtmt.py's own auto-sent tool follow-up, then the ladder's one retry of it.

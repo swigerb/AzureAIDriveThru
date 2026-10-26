@@ -3,7 +3,6 @@ using System.Text.Json.Nodes;
 using Backend.Cascade;
 using Backend.Prompts;
 using Backend.Realtime;
-using Backend.Shared;
 
 namespace Backend.Sessions;
 
@@ -61,9 +60,9 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
             context.State.CurrentTurnTask = null;
             context.State.CurrentTurnCts = null;
         }
-        var wasInFlight = task is { IsCompleted: false };
+        bool wasInFlight = task is { IsCompleted: false };
         cts?.Cancel();
-        var previousTail = context.State.BargeInTail;
+        Task? previousTail = context.State.BargeInTail;
         context.State.BargeInTail = Task.Run(async () =>
         {
             await AwaitQuietlyAsync(previousTail).ConfigureAwait(false);
@@ -132,7 +131,7 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
 
     public void ScheduleNudge()
     {
-        var (cts, task) = Spawn(async nudgeCt =>
+        (CancellationTokenSource? cts, Task? task) = Spawn(async nudgeCt =>
         {
             await Task.Delay(
                     TimeSpan.FromSeconds(context.SessionManager!.Config.NudgeAfterSeconds),
@@ -146,7 +145,7 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
                 {
                     return;
                 }
-                var inFlight = context.State.CurrentTurnTask;
+                Task? inFlight = context.State.CurrentTurnTask;
                 skipped = (inFlight is not null && !inFlight.IsCompleted)
                     || context.State.BargeInTail is { IsCompleted: false };
                 if (!skipped)
@@ -193,7 +192,7 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
 
     public async Task RunTurnAndSpeakAsync(CancellationToken turnCt, string? greetingInstructions = null)
     {
-        var responseId = MiddleTierItemIds.NewId();
+        string responseId = MiddleTierItemIds.NewId();
         if (context.Diagnostic is { } diagnostic)
         {
             diagnostic.ResponseId = responseId;
@@ -212,7 +211,9 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
                 ? await context.ToolCallDispatcher.RunChatToolLoopAsync(turnCt).ConfigureAwait(false)
                 : await context.ToolCallDispatcher.RunGreetingAsync(greetingInstructions, turnCt).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(finalText))
+            {
                 throw new InvalidOperationException("Chat tool loop returned no spoken answer; the ticket may have changed.");
+            }
         }
         catch (CascadeRateLimitExhaustedException)
         {
@@ -303,6 +304,14 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
     /// line from <c>output[].content[].transcript</c>, exactly as it does for realtime turns.</summary>
     private async Task SendResponseDoneAsync(string responseId, string? finalText, CancellationToken turnCt)
     {
+        JsonArray output = string.IsNullOrEmpty(finalText)
+            ? []
+            : [new JsonObject
+            {
+                ["type"] = "message",
+                ["role"] = "assistant",
+                ["content"] = new JsonArray(new JsonObject { ["type"] = "audio", ["transcript"] = finalText }),
+            }];
         await CascadeProcessor.SendTextAsync(context.BrowserSocket, new JsonObject
         {
             ["type"] = "response.done",
@@ -310,14 +319,7 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
             {
                 ["id"] = responseId,
                 ["status"] = "completed",
-                ["output"] = string.IsNullOrEmpty(finalText)
-                    ? new JsonArray()
-                    : new JsonArray(new JsonObject
-                    {
-                        ["type"] = "message",
-                        ["role"] = "assistant",
-                        ["content"] = new JsonArray(new JsonObject { ["type"] = "audio", ["transcript"] = finalText }),
-                    }),
+                ["output"] = output,
             },
         }.ToJsonString(), turnCt, context.CancellationToken).ConfigureAwait(false);
         context.Diagnostic?.Emission("response.done");
@@ -416,7 +418,10 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
             return;
         }
         if (!scoped)
+        {
             context.State.Messages.Add(CascadeChatMessage.User(text));
+        }
+
         context.SessionManager?.MarkConversationStarted(context.SessionId);
         await RunTurnAndSpeakAsync(turnCt, scoped ? text : null).ConfigureAwait(false);
     }

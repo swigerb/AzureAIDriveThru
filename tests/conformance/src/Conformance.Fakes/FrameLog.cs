@@ -23,8 +23,8 @@ public sealed class FrameLog
     /// <summary>Records a raw JSON frame, deriving its "type" field for convenient matching.</summary>
     public RecordedFrame Add(JsonElement json)
     {
-        var type = json.ValueKind == JsonValueKind.Object &&
-                    json.TryGetProperty("type", out var typeProp) &&
+        string type = json.ValueKind == JsonValueKind.Object &&
+                    json.TryGetProperty("type", out JsonElement typeProp) &&
                     typeProp.ValueKind == JsonValueKind.String
             ? typeProp.GetString() ?? ""
             : "";
@@ -72,13 +72,13 @@ public sealed class FrameLog
         TimeSpan timeout,
         CancellationToken cancellationToken = default)
     {
-        var deadline = _timeProvider.GetUtcNow() + timeout;
+        DateTimeOffset deadline = _timeProvider.GetUtcNow() + timeout;
         while (true)
         {
             Task signalTask;
             lock (_gate)
             {
-                var match = _frames.FirstOrDefault(predicate);
+                RecordedFrame? match = _frames.FirstOrDefault(predicate);
                 if (match is not null)
                 {
                     return match;
@@ -86,7 +86,7 @@ public sealed class FrameLog
                 signalTask = _signal.Task;
             }
 
-            var remaining = deadline - _timeProvider.GetUtcNow();
+            TimeSpan remaining = deadline - _timeProvider.GetUtcNow();
             if (remaining <= TimeSpan.Zero)
             {
                 return null;
@@ -94,7 +94,7 @@ public sealed class FrameLog
 
             cancellationToken.ThrowIfCancellationRequested();
             var delayTask = Task.Delay(remaining, _timeProvider, cancellationToken);
-            var completed = await Task.WhenAny(signalTask, delayTask).ConfigureAwait(false);
+            Task completed = await Task.WhenAny(signalTask, delayTask).ConfigureAwait(false);
             if (completed != signalTask)
             {
                 return null;

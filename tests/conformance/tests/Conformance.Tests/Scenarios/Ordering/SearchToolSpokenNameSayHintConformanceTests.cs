@@ -19,12 +19,12 @@ public sealed class SearchToolSpokenNameSayHintConformanceTests(ZetaConformanceF
     [Trait("Dotnet", "ready")]
     public Task Search_appends_say_hint_for_an_item_with_a_spoken_name_override() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
             fixture, ct, persona: ZetaConformanceFixture.PersonaId);
-        await using var _ = browser;
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult result = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "search",
             """{"query":"zorbs bite treats"}""",
             "call_search_zorbs_say_hint", roundTripIndex, ct, toClient: false);

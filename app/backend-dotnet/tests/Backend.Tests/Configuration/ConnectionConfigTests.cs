@@ -19,7 +19,7 @@ public sealed class ConnectionConfigTests
         // `connection` section to be PRESENT -- see AppConfig.cs's RequiredSections -- so this
         // test can't exercise a fully-absent section the way SecurityConfigTests does for
         // `security`, which isn't required.)
-        var config = LoadWithConnection("connection: {}\n");
+        AppConfig config = LoadWithConnection("connection: {}\n");
 
         var connection = ConnectionConfig.FromConfig(config);
 
@@ -34,7 +34,7 @@ public sealed class ConnectionConfigTests
     [Fact]
     public void FromConfig_ParsesAllFourFields()
     {
-        var config = LoadWithConnection(
+        AppConfig config = LoadWithConnection(
             "connection:\n" +
             "  ws_heartbeat_seconds: 20.0\n" +
             "  ws_compression: true\n" +
@@ -51,7 +51,7 @@ public sealed class ConnectionConfigTests
 
     private static AppConfig LoadWithConnection(string? section)
     {
-        var yaml =
+        string yaml =
             "model:\n  foo: bar\n" +
             "business_rules:\n  foo: bar\n" +
             "cache:\n  foo: bar\n" +
@@ -59,7 +59,7 @@ public sealed class ConnectionConfigTests
             "security:\n  foo: bar\n" +
             (section ?? string.Empty);
 
-        var path = Path.Combine(Path.GetTempPath(), "squanchy-connection-config-" + Guid.NewGuid().ToString("n") + ".yaml");
+        string path = Path.Combine(Path.GetTempPath(), "squanchy-connection-config-" + Guid.NewGuid().ToString("n") + ".yaml");
         File.WriteAllText(path, yaml);
         try
         {

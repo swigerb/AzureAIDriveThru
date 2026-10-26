@@ -21,7 +21,7 @@ namespace Backend.Personas;
 /// </summary>
 internal static class PersonaRoutes
 {
-    private static readonly Dictionary<string, string> AssetContentTypes = new(StringComparer.Ordinal)
+    private static readonly Dictionary<string, string> s_assetContentTypes = new(StringComparer.Ordinal)
     {
         [".svg"] = "image/svg+xml",
         [".wav"] = "audio/wav",
@@ -30,7 +30,7 @@ internal static class PersonaRoutes
         [".json"] = "application/json",
     };
 
-    private static readonly JsonSerializerOptions SerializeOptions = new()
+    private static readonly JsonSerializerOptions s_serializeOptions = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
@@ -56,15 +56,15 @@ internal static class PersonaRoutes
                 return;
             }
 
-            var persona = catalog.Get(personaId);
+            Persona persona = catalog.Get(personaId);
             if (!File.Exists(persona.MenuPath))
             {
                 await WriteJsonAsync(context, 404, new JsonObject { ["error"] = $"No menu data for persona: '{personaId}'" });
                 return;
             }
 
-            var bytes = await File.ReadAllBytesAsync(persona.MenuPath, context.RequestAborted);
-            var hash = PersonaAssetHash.ComputeHash(persona.MenuPath);
+            byte[] bytes = await File.ReadAllBytesAsync(persona.MenuPath, context.RequestAborted);
+            string hash = PersonaAssetHash.ComputeHash(persona.MenuPath);
             await WriteAssetAsync(context, bytes, "application/json", hash, cacheConfig);
         }).WithName("persona-menu");
 
@@ -79,16 +79,16 @@ internal static class PersonaRoutes
             // Route values are already percent-decoded by ASP.NET Core's routing, same as
             // aiohttp's match_info -- nothing extra to decode here.
             assetPath ??= string.Empty;
-            var resolved = PersonaAssetResolver.Resolve(catalog.Get(personaId), assetPath);
+            string? resolved = PersonaAssetResolver.Resolve(catalog.Get(personaId), assetPath);
             if (resolved is null)
             {
                 await WriteJsonAsync(context, 404, new JsonObject { ["error"] = $"Unknown persona asset: '{assetPath}'" });
                 return;
             }
 
-            var bytes = await File.ReadAllBytesAsync(resolved, context.RequestAborted);
-            var contentType = AssetContentTypes.GetValueOrDefault(Path.GetExtension(resolved).ToLowerInvariant());
-            var hash = PersonaAssetHash.ComputeHash(resolved);
+            byte[] bytes = await File.ReadAllBytesAsync(resolved, context.RequestAborted);
+            string? contentType = s_assetContentTypes.GetValueOrDefault(Path.GetExtension(resolved).ToLowerInvariant());
+            string hash = PersonaAssetHash.ComputeHash(resolved);
             await WriteAssetAsync(context, bytes, contentType, hash, cacheConfig);
         }).WithName(PersonaAssetRouteName);
     }
@@ -127,7 +127,7 @@ internal static class PersonaRoutes
             context.Response.ContentType = contentType;
         }
 
-        var requestedV = context.Request.Query["v"].ToString();
+        string requestedV = context.Request.Query["v"].ToString();
         context.Response.Headers.CacheControl = requestedV.Length > 0 && requestedV == contentHash
             ? $"public, max-age={cacheConfig.ImmutableMaxAgeSeconds}, immutable"
             : $"public, max-age={cacheConfig.DefaultMaxAgeSeconds}";
@@ -139,7 +139,7 @@ internal static class PersonaRoutes
     private static JsonObject BuildPersonasIndexBody(PersonaCatalog catalog)
     {
         var personas = new JsonArray();
-        foreach (var id in catalog.Ids)
+        foreach (string id in catalog.Ids)
         {
             personas.Add(BuildPersonaSummaryBody(catalog.Get(id)));
         }
@@ -175,7 +175,7 @@ internal static class PersonaRoutes
             new JsonObject { ["id"] = "python", ["url"] = (BackendEnvironment.Get(BackendEnvironment.BackendUri) ?? string.Empty).Trim() },
         };
 
-        var dotnetUri = (BackendEnvironment.Get(BackendEnvironment.BackendDotnetUri) ?? string.Empty).Trim();
+        string dotnetUri = (BackendEnvironment.Get(BackendEnvironment.BackendDotnetUri) ?? string.Empty).Trim();
         if (dotnetUri.Length > 0)
         {
             entries.Add(new JsonObject { ["id"] = "dotnet", ["url"] = dotnetUri });
@@ -194,8 +194,8 @@ internal static class PersonaRoutes
         // the result, mirroring Python's `**manifest.ui.model_dump(exclude_none=True)` dict
         // spread. A JsonNode can only have one parent, so each child must be detached from the
         // temporary `ui` object before being reparented onto `result`.
-        var uiObject = ToJsonObject(persona.Ui);
-        foreach (var (key, value) in uiObject.ToList())
+        JsonObject uiObject = ToJsonObject(persona.Ui);
+        foreach ((string? key, JsonNode? value) in uiObject.ToList())
         {
             uiObject.Remove(key);
             result[key] = value;
@@ -204,7 +204,11 @@ internal static class PersonaRoutes
         result["voice"] = new JsonObject { ["default"] = persona.Voice.Default };
         result["locales"] = ToJsonObject(persona.Locales);
         var features = new JsonObject { ["dayparts"] = persona.Features.Dayparts };
-        if (persona.RewardsDemo is not null) features["demoRewards"] = true;
+        if (persona.RewardsDemo is not null)
+        {
+            features["demoRewards"] = true;
+        }
+
         result["features"] = features;
         result["menuUrl"] = BuildMenuUrl(persona);
         result["models"] = BuildModelPipelinesBody(persona.Models, modelCatalog);
@@ -219,7 +223,7 @@ internal static class PersonaRoutes
     private static JsonObject BuildMachinesBody(IReadOnlyDictionary<string, PersonaMachine> machines)
     {
         var result = new JsonObject();
-        foreach (var (key, value) in machines)
+        foreach ((string? key, PersonaMachine? value) in machines)
         {
             result[key] = new JsonObject
             {
@@ -254,13 +258,13 @@ internal static class PersonaRoutes
     private static JsonObject BuildPipelineBody(PersonaModelPipeline pipelineCfg, string pipelineName, ModelCatalog modelCatalog)
     {
         var selectable = new JsonArray();
-        foreach (var modelId in pipelineCfg.Allowed)
+        foreach (string modelId in pipelineCfg.Allowed)
         {
             if (!modelCatalog.IsSelectable(modelId, pipelineName))
             {
                 continue;
             }
-            var entry = modelCatalog.Get(modelId);
+            ModelEntry entry = modelCatalog.Get(modelId);
             selectable.Add(new JsonObject { ["id"] = modelId, ["label"] = entry.Label, ["reasoning"] = entry.Reasoning });
         }
 
@@ -277,10 +281,10 @@ internal static class PersonaRoutes
     /// </summary>
     private static string BuildLogoUrl(Persona persona)
     {
-        var logo = persona.Ui.Assets.Logo;
-        var relative = logo.StartsWith("assets/", StringComparison.Ordinal) ? logo["assets/".Length..] : logo;
-        var route = $"/personas/{persona.Id}/assets/{relative}";
-        var resolved = PersonaAssetResolver.Resolve(persona, relative);
+        string logo = persona.Ui.Assets.Logo;
+        string relative = logo.StartsWith("assets/", StringComparison.Ordinal) ? logo["assets/".Length..] : logo;
+        string route = $"/personas/{persona.Id}/assets/{relative}";
+        string? resolved = PersonaAssetResolver.Resolve(persona, relative);
         if (resolved is not null)
         {
             route += $"?v={PersonaAssetHash.ComputeHash(resolved)}";
@@ -295,5 +299,5 @@ internal static class PersonaRoutes
         $"/personas/{persona.Id}/menu.json?v={PersonaAssetHash.ComputeHash(persona.MenuPath)}";
 
     private static JsonObject ToJsonObject<T>(T value) =>
-        JsonSerializer.SerializeToNode(value, SerializeOptions)!.AsObject();
+        JsonSerializer.SerializeToNode(value, s_serializeOptions)!.AsObject();
 }

@@ -17,7 +17,7 @@ public sealed class FakeFixedPortBindingTests
     [Fact]
     public async Task FakeRealtimeUpstreamServer_binds_to_the_requested_fixed_port()
     {
-        var requestedPort = NetworkUtils.GetFreeTcpPort();
+        int requestedPort = NetworkUtils.GetFreeTcpPort();
         await using var realtime = new FakeRealtimeUpstreamServer();
 
         await realtime.StartAsync(TestContext.Current.CancellationToken, fixedPort: requestedPort);
@@ -28,9 +28,9 @@ public sealed class FakeFixedPortBindingTests
     [Fact]
     public async Task FakeSearchServer_binds_to_the_requested_fixed_port()
     {
-        var requestedPort = NetworkUtils.GetFreeTcpPort();
-        var repoRoot = RepoPaths.FindRepoRoot();
-        var indexPaths = MenuIndex.ResolveIndexPaths(
+        int requestedPort = NetworkUtils.GetFreeTcpPort();
+        string repoRoot = RepoPaths.FindRepoRoot();
+        IReadOnlyDictionary<string, string> indexPaths = MenuIndex.ResolveIndexPaths(
             RepoPaths.PersonasDirectory(repoRoot), [ConformancePersonas.DefaultPersonaId]);
         await using var search = new FakeSearchServer(indexPaths);
 

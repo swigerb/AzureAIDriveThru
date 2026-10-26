@@ -19,7 +19,7 @@ public sealed class PromptLoaderScalarTypingTests : IDisposable
     public static TheoryData<string> ShippedPersonas()
     {
         var data = new TheoryData<string>();
-        foreach (var dir in Directory.GetDirectories(Path.Combine(RepoRootLocator.Find(), "personas")).Order())
+        foreach (string? dir in Directory.GetDirectories(Path.Combine(RepoRootLocator.Find(), "personas")).Order())
         {
             if (File.Exists(Path.Combine(dir, "prompts", "tool_schemas.yaml")))
             {
@@ -36,12 +36,12 @@ public sealed class PromptLoaderScalarTypingTests : IDisposable
         var loader = new PromptLoader(Path.Combine(RepoRootLocator.Find(), "personas"), personaId);
         Assert.NotEmpty(loader.ToolSchemas);
 
-        var sawAdditionalProperties = false;
-        foreach (var schema in loader.ToolSchemas)
+        bool sawAdditionalProperties = false;
+        foreach (IReadOnlyDictionary<object, object> schema in loader.ToolSchemas)
         {
             var node = YamlJson.ToJsonNode(schema);
             Assert.NotNull(node);
-            foreach (var (path, value) in Walk(node!, "$"))
+            foreach ((string? path, JsonNode? value) in Walk(node, "$"))
             {
                 if (path.EndsWith(".additionalProperties", StringComparison.Ordinal))
                 {
@@ -51,7 +51,7 @@ public sealed class PromptLoaderScalarTypingTests : IDisposable
                 }
                 if (value is JsonValue v && v.GetValueKind() == JsonValueKind.String)
                 {
-                    var text = v.GetValue<string>();
+                    string text = v.GetValue<string>();
                     Assert.False(text is "true" or "false" && (path.EndsWith(".additionalProperties", StringComparison.Ordinal) || path.EndsWith(".strict", StringComparison.Ordinal)),
                         $"{personaId}: {path} is the string \"{text}\" -- the realtime API rejects this");
                 }
@@ -63,7 +63,7 @@ public sealed class PromptLoaderScalarTypingTests : IDisposable
     [Fact]
     public void PlainScalarsAreTyped_QuotedScalarsStayStrings()
     {
-        var prompts = Path.Combine(_tempDir, "acme", "prompts");
+        string prompts = Path.Combine(_tempDir, "acme", "prompts");
         Directory.CreateDirectory(prompts);
         File.WriteAllText(Path.Combine(prompts, "system_prompt.yaml"), "sections:\n  - name: a\n    priority: 1\n    content: \"Welcome to Acme.\"\n");
         File.WriteAllText(Path.Combine(prompts, "greeting.yaml"), """
@@ -82,8 +82,8 @@ public sealed class PromptLoaderScalarTypingTests : IDisposable
             "tools:\n  - type: function\n    name: search\n    parameters:\n      type: object\n      additionalProperties: false\n      properties:\n        q:\n          type: string\n          default: 'false'\n        n:\n          type: integer\n          default: 3\n          note: \"10\"\n");
 
         var loader = new PromptLoader(_tempDir, "acme");
-        var json = YamlJson.ToJsonNode(loader.ToolSchemas[0])!.AsObject();
-        var parameters = json["parameters"]!.AsObject();
+        JsonObject json = YamlJson.ToJsonNode(loader.ToolSchemas[0])!.AsObject();
+        JsonObject parameters = json["parameters"]!.AsObject();
 
         Assert.Equal(JsonValueKind.False, parameters["additionalProperties"]!.GetValueKind());
         Assert.Equal(JsonValueKind.String, parameters["properties"]!["q"]!["default"]!.GetValueKind());
@@ -97,19 +97,33 @@ public sealed class PromptLoaderScalarTypingTests : IDisposable
         switch (node)
         {
             case JsonObject obj:
-                foreach (var (key, child) in obj)
+                foreach ((string? key, JsonNode? child) in obj)
                 {
-                    if (child is null) continue;
-                    var childPath = $"{path}.{key}";
+                    if (child is null)
+                    {
+                        continue;
+                    }
+
+                    string childPath = $"{path}.{key}";
                     yield return (childPath, child);
-                    foreach (var inner in Walk(child, childPath)) yield return inner;
+                    foreach ((string Path, JsonNode Value) inner in Walk(child, childPath))
+                    {
+                        yield return inner;
+                    }
                 }
                 break;
             case JsonArray arr:
-                for (var i = 0; i < arr.Count; i++)
+                for (int i = 0; i < arr.Count; i++)
                 {
-                    if (arr[i] is null) continue;
-                    foreach (var inner in Walk(arr[i]!, $"{path}[{i}]")) yield return inner;
+                    if (arr[i] is null)
+                    {
+                        continue;
+                    }
+
+                    foreach ((string Path, JsonNode Value) inner in Walk(arr[i]!, $"{path}[{i}]"))
+                    {
+                        yield return inner;
+                    }
                 }
                 break;
         }
@@ -117,6 +131,9 @@ public sealed class PromptLoaderScalarTypingTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_tempDir)) Directory.Delete(_tempDir, recursive: true);
+        if (Directory.Exists(_tempDir))
+        {
+            Directory.Delete(_tempDir, recursive: true);
+        }
     }
 }

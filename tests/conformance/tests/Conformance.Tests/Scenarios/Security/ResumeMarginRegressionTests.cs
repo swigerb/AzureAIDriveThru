@@ -43,7 +43,7 @@ namespace Conformance.Tests.Scenarios.Security;
 [Collection(ResumeMarginConformanceCollection.Name)]
 public sealed class ResumeMarginRegressionTests(ResumeMarginConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     /// <summary>
     /// Stands in for the CI runs' slow pre-detach setup: comfortably longer than
@@ -52,48 +52,48 @@ public sealed class ResumeMarginRegressionTests(ResumeMarginConformanceFixture f
     /// under that profile), while staying well inside <see cref="BackendProfiles.ResumeMargin"/>'s
     /// 5s one.
     /// </summary>
-    private static readonly TimeSpan SimulatedSlowPreDetachSetup = TimeSpan.FromMilliseconds(1500);
+    private static readonly TimeSpan s_simulatedSlowPreDetachSetup = TimeSpan.FromMilliseconds(1500);
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Resumed_session_survives_a_slow_pre_detach_setup_with_real_margin() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
         // ── First connection: start a conversation and let the greeting complete, exactly like
         // the resume scenarios this regression test is modelled on. ──
-        var firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        var first = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var firstConnection = await firstConnectionTask;
+        Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        RealtimeBrowserClient first = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? firstConnection = await firstConnectionTask;
         Assert.True(firstConnection is not null, "No upstream connection was accepted for the first browser socket.");
 
         await first.SendStartSessionAsync(cancellationToken: ct);
 
-        var metadata = await first.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        RecordedFrame? metadata = await first.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_metadata", s_frameTimeout, ct);
         Assert.True(metadata is not null, "Expected extension.session_metadata on the first connection.");
-        var resumeId = metadata!.Json.GetProperty("resumeId").GetString();
+        string? resumeId = metadata!.Json.GetProperty("resumeId").GetString();
         Assert.False(string.IsNullOrEmpty(resumeId), "extension.session_metadata must carry a non-empty resumeId.");
 
-        var greetingDone = await first.ReceivedFrames.WaitForAsync(f => f.Type == "response.done", FrameTimeout, ct);
+        RecordedFrame? greetingDone = await first.ReceivedFrames.WaitForAsync(f => f.Type == "response.done", s_frameTimeout, ct);
         Assert.True(greetingDone is not null, "Expected the greeting's response.done on the first connection.");
 
         // ── The reproduction: simulate a slow pre-detach setup on a loaded runner (see the class
         // doc comment) before dropping the first socket. ──
-        await Task.Delay(SimulatedSlowPreDetachSetup, ct);
+        await Task.Delay(s_simulatedSlowPreDetachSetup, ct);
 
         await first.CloseAsync(cancellationToken: ct);
-        await first.WaitForCloseAsync(FrameTimeout, ct);
+        await first.WaitForCloseAsync(s_frameTimeout, ct);
         await first.DisposeAsync();
 
         // ── Resume on a fresh socket. ──
-        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var second = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var secondConnection = await secondConnectionTask;
+        Task<FakeRealtimeConnection?> secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient second = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? secondConnection = await secondConnectionTask;
         Assert.True(secondConnection is not null, "No upstream connection was accepted for the resumed browser socket.");
 
         await second.SendExtensionResumeAsync(resumeId!, ct);
 
-        var resumed = await second.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_resumed", FrameTimeout, ct);
+        RecordedFrame? resumed = await second.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_resumed", s_frameTimeout, ct);
         Assert.True(resumed is not null, "Expected extension.session_resumed on the resumed connection.");
 
         // ── The actual regression check: the resumed session must still be alive a full second

@@ -25,7 +25,7 @@ public sealed record WholeBundleGoldenData(
     WholeBundleGoldenVector StandardOnlyMealPlusDrink,
     WholeBundleGoldenVector QuantityTwoSplit)
 {
-    private static readonly JsonSerializerOptions Options = new()
+    private static readonly JsonSerializerOptions s_options = new()
     {
         PropertyNameCaseInsensitive = true,
         NumberHandling = JsonNumberHandling.AllowReadingFromString,
@@ -33,9 +33,9 @@ public sealed record WholeBundleGoldenData(
 
     public static WholeBundleGoldenData Load(string repoRoot, string personaId)
     {
-        var path = Path.Combine(
+        string path = Path.Combine(
             repoRoot, "tests", "conformance", "testdata", "personas", personaId, "wholeBundleSize.json");
-        return JsonSerializer.Deserialize<WholeBundleGoldenData>(File.ReadAllText(path), Options)
+        return JsonSerializer.Deserialize<WholeBundleGoldenData>(File.ReadAllText(path), s_options)
             ?? throw new InvalidDataException($"Whole-bundle golden data at '{path}' deserialized to null.");
     }
 
@@ -55,8 +55,8 @@ public sealed class PackOwnedWholeBundleGoldenConformanceTests
     public static TheoryData<string> PersonaIdsWithWholeBundleGoldenData()
     {
         var data = new TheoryData<string>();
-        var root = RepoPaths.FindRepoRoot();
-        foreach (var dir in Directory.EnumerateDirectories(RepoPaths.PersonaSmokeDataDirectory(root)))
+        string root = RepoPaths.FindRepoRoot();
+        foreach (string dir in Directory.EnumerateDirectories(RepoPaths.PersonaSmokeDataDirectory(root)))
         {
             if (File.Exists(Path.Combine(dir, "wholeBundleSize.json")))
             {
@@ -71,21 +71,21 @@ public sealed class PackOwnedWholeBundleGoldenConformanceTests
     [MemberData(nameof(PersonaIdsWithWholeBundleGoldenData))]
     public async Task Pack_owned_whole_bundle_vectors_match_expected_totals(string personaId)
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         var golden = WholeBundleGoldenData.Load(RepoPaths.FindRepoRoot(), personaId);
 
         await using var fixture = new PackOwnedWholeBundleGoldenFixture(golden.PersonaId);
         await fixture.InitializeAsync();
         await fixture.RunAsync(async () =>
         {
-            foreach (var vector in golden.AllVectors())
+            foreach (WholeBundleGoldenVector vector in golden.AllVectors())
             {
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+                (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
                     fixture, ct, persona: golden.PersonaId);
-                await using var _ = browser;
+                await using RealtimeBrowserClient _ = browser;
 
                 var steps = vector.Steps.Select(s => (s.Action, s.Item, s.Size, s.Quantity, s.Price)).ToList();
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+                ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
                     connection, browser, steps, roundTripIndex, ct, callIdPrefix: "call_pack_whole_bundle");
 
                 OrderScenarioHelpers.AssertMoneyEqual(
@@ -102,8 +102,8 @@ public sealed class PackOwnedWholeBundleGoldenConformanceTests
                 if (vector.ExpectedDisplayIncludes is { Count: > 0 } displayIncludes)
                 {
                     using var order = JsonDocument.Parse(result.ToolResultJson!);
-                    var display = order.RootElement.GetProperty("items")[0].GetProperty("display").GetString();
-                    foreach (var expected in displayIncludes)
+                    string? display = order.RootElement.GetProperty("items")[0].GetProperty("display").GetString();
+                    foreach (string expected in displayIncludes)
                     {
                         Assert.Contains(expected, display);
                     }
@@ -124,7 +124,7 @@ public sealed class PackOwnedWholeBundleGoldenConformanceTests
                         .EnumerateArray()
                         .Select(component => component.GetString() ?? "")
                         .ToList();
-                    foreach (var forbidden in forbiddenComponents)
+                    foreach (string forbidden in forbiddenComponents)
                     {
                         Assert.DoesNotContain(forbidden, components);
                     }

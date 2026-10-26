@@ -101,7 +101,7 @@ public static class BackendEnvironment
             env["PERSONAS_DIR"] = contract.PersonasDir;
         }
 
-        foreach (var (key, value) in options.ExtraEnvironment)
+        foreach ((string? key, string? value) in options.ExtraEnvironment)
         {
             env[key] = value;
         }
@@ -115,7 +115,7 @@ public static class BackendEnvironment
         // hooks.py's own exact-match semantics (only the literal string "1" enables hooks --
         // README.md's "Test hooks" table) so this stays in lockstep with the guard it's working
         // around.
-        if (env.TryGetValue("CONFORMANCE_TEST_HOOKS", out var hooks) && hooks == "1")
+        if (env.TryGetValue("CONFORMANCE_TEST_HOOKS", out string? hooks) && hooks == "1")
         {
             env["RUNNING_IN_PRODUCTION"] = "false";
         }

@@ -40,17 +40,17 @@ public static class SearchIndexRequestPlanner
         string embeddingDeployment,
         Func<string, IReadOnlyList<double>>? embeddingProvider = null)
     {
-        var menuData = JsonNode.Parse(File.ReadAllText(persona.MenuPath)) ??
+        JsonNode menuData = JsonNode.Parse(File.ReadAllText(persona.MenuPath)) ??
             throw new InvalidOperationException($"'{persona.MenuPath}' did not parse to a JSON value.");
-        var prepared = MenuDocumentBuilder.Build(menuData);
+        List<MenuDocumentBuilder.PreparedDocument> prepared = MenuDocumentBuilder.Build(menuData);
 
         var documents = new List<JsonObject>(prepared.Count);
-        foreach (var document in prepared)
+        foreach (MenuDocumentBuilder.PreparedDocument document in prepared)
         {
             if (embeddingProvider is not null)
             {
                 var embeddingArray = new JsonArray();
-                foreach (var component in embeddingProvider(document.CombinedTextForEmbedding))
+                foreach (double component in embeddingProvider(document.CombinedTextForEmbedding))
                 {
                     embeddingArray.Add(component);
                 }
@@ -59,8 +59,8 @@ public static class SearchIndexRequestPlanner
             documents.Add(document.Fields);
         }
 
-        var indexDefinition = SearchIndexDefinitionBuilder.Build(persona.IndexName, openAiEndpoint, embeddingDeployment);
-        var documentBatches = DocumentBatchBuilder.BuildBatches(documents);
+        JsonObject indexDefinition = SearchIndexDefinitionBuilder.Build(persona.IndexName, openAiEndpoint, embeddingDeployment);
+        List<JsonObject> documentBatches = DocumentBatchBuilder.BuildBatches(documents);
 
         return new PersonaRequestPlan(persona.PersonaId, persona.IndexName, indexDefinition, documentBatches, documents.Count);
     }

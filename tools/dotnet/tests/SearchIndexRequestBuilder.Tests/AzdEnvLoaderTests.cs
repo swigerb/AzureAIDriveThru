@@ -14,7 +14,7 @@ public sealed class AzdEnvLoaderTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var dir in _tempDirs)
+        foreach (string dir in _tempDirs)
         {
             if (Directory.Exists(dir))
             {
@@ -25,7 +25,7 @@ public sealed class AzdEnvLoaderTests : IDisposable
 
     private string CreateTempRepoRoot()
     {
-        var dir = Path.Combine(Path.GetTempPath(), $"squanchy-azd-env-loader-{Guid.NewGuid():n}");
+        string dir = Path.Combine(Path.GetTempPath(), $"squanchy-azd-env-loader-{Guid.NewGuid():n}");
         Directory.CreateDirectory(dir);
         _tempDirs.Add(dir);
         return dir;
@@ -33,7 +33,7 @@ public sealed class AzdEnvLoaderTests : IDisposable
 
     private static void WriteAzdEnv(string repoRoot, string environmentName, string dotEnvContents)
     {
-        var envDir = Path.Combine(repoRoot, ".azure", environmentName);
+        string envDir = Path.Combine(repoRoot, ".azure", environmentName);
         Directory.CreateDirectory(envDir);
         File.WriteAllText(
             Path.Combine(repoRoot, ".azure", "config.json"),
@@ -44,9 +44,9 @@ public sealed class AzdEnvLoaderTests : IDisposable
     [Fact]
     public void LoadDefaultEnvValues_ReturnsEmpty_WhenNoAzureFolderExists()
     {
-        var repoRoot = CreateTempRepoRoot();
+        string repoRoot = CreateTempRepoRoot();
 
-        var values = AzdEnvLoader.LoadDefaultEnvValues(repoRoot);
+        IReadOnlyDictionary<string, string> values = AzdEnvLoader.LoadDefaultEnvValues(repoRoot);
 
         Assert.Empty(values);
     }
@@ -54,11 +54,11 @@ public sealed class AzdEnvLoaderTests : IDisposable
     [Fact]
     public void LoadDefaultEnvValues_ReturnsEmpty_WhenConfigJsonHasNoDefaultEnvironment()
     {
-        var repoRoot = CreateTempRepoRoot();
+        string repoRoot = CreateTempRepoRoot();
         Directory.CreateDirectory(Path.Combine(repoRoot, ".azure"));
         File.WriteAllText(Path.Combine(repoRoot, ".azure", "config.json"), "{\"version\":1}");
 
-        var values = AzdEnvLoader.LoadDefaultEnvValues(repoRoot);
+        IReadOnlyDictionary<string, string> values = AzdEnvLoader.LoadDefaultEnvValues(repoRoot);
 
         Assert.Empty(values);
     }
@@ -66,13 +66,13 @@ public sealed class AzdEnvLoaderTests : IDisposable
     [Fact]
     public void LoadDefaultEnvValues_ReturnsEmpty_WhenDefaultEnvironmentHasNoEnvFile()
     {
-        var repoRoot = CreateTempRepoRoot();
+        string repoRoot = CreateTempRepoRoot();
         Directory.CreateDirectory(Path.Combine(repoRoot, ".azure", "dev"));
         File.WriteAllText(
             Path.Combine(repoRoot, ".azure", "config.json"),
             "{\"version\":1,\"defaultEnvironment\":\"dev\"}");
 
-        var values = AzdEnvLoader.LoadDefaultEnvValues(repoRoot);
+        IReadOnlyDictionary<string, string> values = AzdEnvLoader.LoadDefaultEnvValues(repoRoot);
 
         Assert.Empty(values);
     }
@@ -80,11 +80,11 @@ public sealed class AzdEnvLoaderTests : IDisposable
     [Fact]
     public void LoadDefaultEnvValues_ReturnsEmpty_WhenConfigJsonIsMalformed()
     {
-        var repoRoot = CreateTempRepoRoot();
+        string repoRoot = CreateTempRepoRoot();
         Directory.CreateDirectory(Path.Combine(repoRoot, ".azure"));
         File.WriteAllText(Path.Combine(repoRoot, ".azure", "config.json"), "{not valid json");
 
-        var values = AzdEnvLoader.LoadDefaultEnvValues(repoRoot);
+        IReadOnlyDictionary<string, string> values = AzdEnvLoader.LoadDefaultEnvValues(repoRoot);
 
         Assert.Empty(values);
     }
@@ -92,7 +92,7 @@ public sealed class AzdEnvLoaderTests : IDisposable
     [Fact]
     public void LoadDefaultEnvValues_ParsesQuotedValues_FromTheDefaultEnvironmentsDotEnvFile()
     {
-        var repoRoot = CreateTempRepoRoot();
+        string repoRoot = CreateTempRepoRoot();
         WriteAzdEnv(
             repoRoot,
             "dev",
@@ -100,7 +100,7 @@ public sealed class AzdEnvLoaderTests : IDisposable
             "AZURE_OPENAI_EASTUS2_ENDPOINT=\"https://azd.openai.azure.com\"\n" +
             "AZURE_OPENAI_EMBEDDING_DEPLOYMENT=\"azd-deployment\"\n");
 
-        var values = AzdEnvLoader.LoadDefaultEnvValues(repoRoot);
+        IReadOnlyDictionary<string, string> values = AzdEnvLoader.LoadDefaultEnvValues(repoRoot);
 
         Assert.Equal("https://azd.openai.azure.com", values["AZURE_OPENAI_EASTUS2_ENDPOINT"]);
         Assert.Equal("azd-deployment", values["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"]);
@@ -114,10 +114,10 @@ public sealed class AzdEnvLoaderTests : IDisposable
     [Fact]
     public void LoadDefaultEnvValues_UnescapesBackslashEscapedQuotes()
     {
-        var repoRoot = CreateTempRepoRoot();
+        string repoRoot = CreateTempRepoRoot();
         WriteAzdEnv(repoRoot, "dev", "TEST_WITH_QUOTE=\"a\\\"b\"\n");
 
-        var values = AzdEnvLoader.LoadDefaultEnvValues(repoRoot);
+        IReadOnlyDictionary<string, string> values = AzdEnvLoader.LoadDefaultEnvValues(repoRoot);
 
         Assert.Equal("a\"b", values["TEST_WITH_QUOTE"]);
     }
@@ -125,13 +125,13 @@ public sealed class AzdEnvLoaderTests : IDisposable
     [Fact]
     public void LoadDefaultEnvValues_SkipsBlankLinesAndComments()
     {
-        var repoRoot = CreateTempRepoRoot();
+        string repoRoot = CreateTempRepoRoot();
         WriteAzdEnv(
             repoRoot,
             "dev",
             "# a comment\n\nAZURE_ENV_NAME=\"dev\"\n   \n# AZURE_OPENAI_EASTUS2_ENDPOINT=\"commented-out\"\n");
 
-        var values = AzdEnvLoader.LoadDefaultEnvValues(repoRoot);
+        IReadOnlyDictionary<string, string> values = AzdEnvLoader.LoadDefaultEnvValues(repoRoot);
 
         Assert.Single(values);
         Assert.Equal("dev", values["AZURE_ENV_NAME"]);
@@ -145,10 +145,10 @@ public sealed class AzdEnvLoaderTests : IDisposable
     [Fact]
     public void LoadDefaultEnvValues_StripsSurroundingQuotes_NotJustLeavesThemIn()
     {
-        var repoRoot = CreateTempRepoRoot();
+        string repoRoot = CreateTempRepoRoot();
         WriteAzdEnv(repoRoot, "dev", "AZURE_ENV_NAME=\"dev\"\n");
 
-        var values = AzdEnvLoader.LoadDefaultEnvValues(repoRoot);
+        IReadOnlyDictionary<string, string> values = AzdEnvLoader.LoadDefaultEnvValues(repoRoot);
 
         Assert.Equal("dev", values["AZURE_ENV_NAME"]);
         Assert.DoesNotContain('"', values["AZURE_ENV_NAME"]);
@@ -176,10 +176,10 @@ public sealed class AzdEnvLoaderTests : IDisposable
     [Fact]
     public void LoadDefaultEnvValues_UnescapesBackslashEscapedDollarBangAndBacktick()
     {
-        var repoRoot = CreateTempRepoRoot();
+        string repoRoot = CreateTempRepoRoot();
         WriteAzdEnv(repoRoot, "dev", "TEST_WITH_SPECIAL_CHARS=\"a\\$b\\!c\\`d\"\n");
 
-        var values = AzdEnvLoader.LoadDefaultEnvValues(repoRoot);
+        IReadOnlyDictionary<string, string> values = AzdEnvLoader.LoadDefaultEnvValues(repoRoot);
 
         Assert.Equal("a$b!c`d", values["TEST_WITH_SPECIAL_CHARS"]);
     }

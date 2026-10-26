@@ -13,18 +13,18 @@ public sealed class WebSocketFrameReaderTests
     [Fact]
     public async Task ReadMessageAsync_ReassemblesMultipleChunksUnderTheCap()
     {
-        var part1 = Encoding.UTF8.GetBytes("{\"type\":\"input_audio_buffer.appen");
-        var part2 = Encoding.UTF8.GetBytes("d\",\"audio\":\"AAAA\"}");
+        byte[] part1 = Encoding.UTF8.GetBytes("{\"type\":\"input_audio_buffer.appen");
+        byte[] part2 = Encoding.UTF8.GetBytes("d\",\"audio\":\"AAAA\"}");
         var socket = new FakeWebSocket(new[]
         {
             (part1, false, WebSocketMessageType.Text),
             (part2, true, WebSocketMessageType.Text),
         });
 
-        var frame = await WebSocketFrameReader.ReadMessageAsync(socket, CancellationToken.None, maxMessageBytes: 1024);
+        WebSocketFrame? frame = await WebSocketFrameReader.ReadMessageAsync(socket, CancellationToken.None, maxMessageBytes: 1024);
 
         Assert.NotNull(frame);
-        Assert.Equal("{\"type\":\"input_audio_buffer.append\",\"audio\":\"AAAA\"}", Encoding.UTF8.GetString(frame!.Payload));
+        Assert.Equal("{\"type\":\"input_audio_buffer.append\",\"audio\":\"AAAA\"}", Encoding.UTF8.GetString(frame.Payload));
         Assert.False(socket.CloseOutputCalled);
     }
 
@@ -36,7 +36,7 @@ public sealed class WebSocketFrameReaderTests
             (Array.Empty<byte>(), true, WebSocketMessageType.Close),
         });
 
-        var frame = await WebSocketFrameReader.ReadMessageAsync(socket, CancellationToken.None, maxMessageBytes: 1024);
+        WebSocketFrame? frame = await WebSocketFrameReader.ReadMessageAsync(socket, CancellationToken.None, maxMessageBytes: 1024);
 
         Assert.Null(frame);
         Assert.False(socket.CloseOutputCalled);
@@ -54,7 +54,7 @@ public sealed class WebSocketFrameReaderTests
             (new byte[10], true, WebSocketMessageType.Text),
         });
 
-        var frame = await WebSocketFrameReader.ReadMessageAsync(socket, CancellationToken.None, maxMessageBytes: 16);
+        WebSocketFrame? frame = await WebSocketFrameReader.ReadMessageAsync(socket, CancellationToken.None, maxMessageBytes: 16);
 
         Assert.Null(frame);
         Assert.True(socket.CloseOutputCalled);
@@ -70,7 +70,7 @@ public sealed class WebSocketFrameReaderTests
             (new byte[17], true, WebSocketMessageType.Text),
         });
 
-        var frame = await WebSocketFrameReader.ReadMessageAsync(socket, CancellationToken.None, maxMessageBytes: 16);
+        WebSocketFrame? frame = await WebSocketFrameReader.ReadMessageAsync(socket, CancellationToken.None, maxMessageBytes: 16);
 
         Assert.Null(frame);
         Assert.Equal(WebSocketCloseStatus.MessageTooBig, socket.ClosedWithStatus);
@@ -84,10 +84,10 @@ public sealed class WebSocketFrameReaderTests
             (new byte[16], true, WebSocketMessageType.Text),
         });
 
-        var frame = await WebSocketFrameReader.ReadMessageAsync(socket, CancellationToken.None, maxMessageBytes: 16);
+        WebSocketFrame? frame = await WebSocketFrameReader.ReadMessageAsync(socket, CancellationToken.None, maxMessageBytes: 16);
 
         Assert.NotNull(frame);
-        Assert.Equal(16, frame!.Payload.Length);
+        Assert.Equal(16, frame.Payload.Length);
         Assert.False(socket.CloseOutputCalled);
     }
 

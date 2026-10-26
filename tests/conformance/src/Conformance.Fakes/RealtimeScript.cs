@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 
 namespace Conformance.Fakes;
 
@@ -57,7 +58,7 @@ public sealed class RealtimeScript
         {
             lock (_rulesGate)
             {
-                return _rules.ToArray();
+                return [.. _rules];
             }
         }
     }
@@ -134,7 +135,7 @@ public sealed class RealtimeScript
             frame => frame.Type == "input_audio_buffer.append",
             async (connection, frame, ct) =>
             {
-                var itemId = $"item_{Guid.NewGuid():N}";
+                string itemId = $"item_{Guid.NewGuid():N}";
                 await connection.SendAsync(new System.Text.Json.Nodes.JsonObject
                 {
                     ["type"] = "input_audio_buffer.speech_started",
@@ -170,11 +171,11 @@ public sealed class RealtimeScript
             frame => frame.Type == "conversation.item.create",
             async (connection, frame, ct) =>
             {
-                if (!frame.Json.TryGetProperty("item", out var item))
+                if (!frame.Json.TryGetProperty("item", out JsonElement item))
                 {
                     return;
                 }
-                var itemId = item.TryGetProperty("id", out var idProp) && idProp.ValueKind == System.Text.Json.JsonValueKind.String
+                string? itemId = item.TryGetProperty("id", out JsonElement idProp) && idProp.ValueKind == System.Text.Json.JsonValueKind.String
                     ? idProp.GetString()
                     : null;
 
@@ -200,7 +201,7 @@ public sealed class RealtimeScript
                 // part 2: previously LastConversationItemId was never updated for a client-created
                 // item at all, so a subsequent server-generated item's own previous_item_id could
                 // point at a stale predecessor instead of the client item that actually came last).
-                var previousItemId = connection.SessionState.LastConversationItemId;
+                string? previousItemId = connection.SessionState.LastConversationItemId;
                 var itemNode = System.Text.Json.Nodes.JsonNode.Parse(item.GetRawText());
                 if (itemId is not null && itemNode is System.Text.Json.Nodes.JsonObject itemObject)
                 {

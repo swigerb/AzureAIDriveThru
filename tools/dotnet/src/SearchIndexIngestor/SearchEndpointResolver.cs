@@ -27,7 +27,7 @@ internal static class SearchEndpointResolver
         Func<string, string?> getEnvironmentVariable,
         IReadOnlyDictionary<string, string> azdEnvValues)
     {
-        var endpoint = searchEndpointFlag;
+        string? endpoint = searchEndpointFlag;
         if (string.IsNullOrEmpty(endpoint))
         {
             endpoint = GetNonEmptyOrNull(azdEnvValues, SearchEndpointVariableName);
@@ -56,11 +56,11 @@ internal static class SearchEndpointResolver
         Func<string, string?> getEnvironmentVariable,
         IReadOnlyDictionary<string, string> azdEnvValues)
     {
-        var value = GetNonEmptyOrNull(azdEnvValues, SkipIndexSetupVariableName) ??
+        string? value = GetNonEmptyOrNull(azdEnvValues, SkipIndexSetupVariableName) ??
             getEnvironmentVariable(SkipIndexSetupVariableName);
         return value == "true";
     }
 
     private static string? GetNonEmptyOrNull(IReadOnlyDictionary<string, string> values, string key) =>
-        values.TryGetValue(key, out var value) && !string.IsNullOrEmpty(value) ? value : null;
+        values.TryGetValue(key, out string? value) && !string.IsNullOrEmpty(value) ? value : null;
 }

@@ -37,7 +37,7 @@ internal static class ConformanceHooks
     // Accepts a trailing numeric offset ("+05:00"/"-0500") or a literal "Z" (UTC) -- matches
     // Python's `datetime.fromisoformat` contract of "RFC 3339 with an explicit numeric UTC
     // offset", never an IANA zone *name* suffix.
-    private static readonly Regex ExplicitOffsetSuffix = new(@"(Z|[+-]\d{2}:?\d{2})$", RegexOptions.Compiled);
+    private static readonly Regex s_explicitOffsetSuffix = new(@"(Z|[+-]\d{2}:?\d{2})$", RegexOptions.Compiled);
 
     /// <summary>Live re-check of <c>CONFORMANCE_TEST_HOOKS</c> -- read fresh every call (never
     /// cached), matching Python's <c>hooks_enabled_now()</c> re-read contract so a test process
@@ -54,7 +54,7 @@ internal static class ConformanceHooks
     {
         if (HooksEnabled)
         {
-            var raw = BackendEnvironment.Get(FixedNowEnv);
+            string? raw = BackendEnvironment.Get(FixedNowEnv);
             if (!string.IsNullOrEmpty(raw))
             {
                 return TimeZoneInfo.ConvertTime(ParseFixedNow(raw), tz);
@@ -83,12 +83,12 @@ internal static class ConformanceHooks
         {
             return defaultValue;
         }
-        var raw = BackendEnvironment.Get(envVar);
+        string? raw = BackendEnvironment.Get(envVar);
         if (string.IsNullOrEmpty(raw))
         {
             return defaultValue;
         }
-        if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+        if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out double value))
         {
             throw new InvalidOperationException(
                 $"{envVar} must be a positive, finite number of seconds (test hooks are enabled), " +
@@ -172,13 +172,13 @@ internal static class ConformanceHooks
 
     private static DateTimeOffset ParseFixedNow(string raw)
     {
-        if (!ExplicitOffsetSuffix.IsMatch(raw.Trim()))
+        if (!s_explicitOffsetSuffix.IsMatch(raw.Trim()))
         {
             throw new InvalidOperationException(
                 $"{FixedNowEnv} must be an RFC 3339 timestamp with an explicit numeric UTC " +
                 $"offset (e.g. '2026-07-04T15:30:00-05:00' or '...Z'), got: '{raw}'");
         }
-        if (!DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+        if (!DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTimeOffset parsed))
         {
             throw new InvalidOperationException($"{FixedNowEnv} is not a parseable RFC 3339 timestamp: '{raw}'");
         }

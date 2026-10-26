@@ -55,8 +55,8 @@ internal sealed class ContextMonitor
 
     private void CheckThresholds()
     {
-        var pct = UsagePct;
-        var tokens = EstimatedTokens;
+        double pct = UsagePct;
+        int tokens = EstimatedTokens;
 
         if (!_warnedCritical && pct >= _criticalPct)
         {

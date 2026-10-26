@@ -21,14 +21,14 @@ internal static class DocumentBatchBuilder
     public static List<JsonObject> BuildBatches(IReadOnlyList<JsonObject> documents)
     {
         var batches = new List<JsonObject>();
-        for (var i = 0; i < documents.Count; i += BatchSize)
+        for (int i = 0; i < documents.Count; i += BatchSize)
         {
-            var batch = documents.Skip(i).Take(BatchSize);
+            IEnumerable<JsonObject> batch = documents.Skip(i).Take(BatchSize);
             var value = new JsonArray();
-            foreach (var doc in batch)
+            foreach (JsonObject? doc in batch)
             {
                 var tagged = new JsonObject { ["@search.action"] = "mergeOrUpload" };
-                foreach (var property in doc)
+                foreach (KeyValuePair<string, JsonNode?> property in doc)
                 {
                     tagged[property.Key] = property.Value?.DeepClone();
                 }

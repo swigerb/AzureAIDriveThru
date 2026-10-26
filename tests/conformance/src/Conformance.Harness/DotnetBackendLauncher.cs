@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Globalization;
-using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 
@@ -82,7 +81,7 @@ internal static class DotnetBackendEnvironment
             env["PERSONAS_DIR"] = contract.PersonasDir;
         }
 
-        foreach (var (key, value) in options.ExtraEnvironment)
+        foreach ((string? key, string? value) in options.ExtraEnvironment)
         {
             env[key] = value;
         }
@@ -125,8 +124,8 @@ internal static class DotnetBackendEnvironment
 /// </summary>
 public static class DotnetBackendLauncher
 {
-    private static readonly TimeSpan HealthTimeout = TimeSpan.FromSeconds(60);
-    private static readonly TimeSpan HealthPollInterval = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan s_healthTimeout = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan s_healthPollInterval = TimeSpan.FromMilliseconds(250);
 
     /// <summary>
     /// Issue #259: matches ASP.NET Core's own hosting-lifetime log line (`Microsoft.Hosting
@@ -142,7 +141,7 @@ public static class DotnetBackendLauncher
     /// exact substring, which is all this regex needs since it is applied against the whole
     /// dump, not anchored to line start.
     /// </summary>
-    private static readonly Regex ListeningOnPortPattern = new(
+    private static readonly Regex s_listeningOnPortPattern = new(
         @"Now listening on:\s*https?://[^\s:]+:(\d+)", RegexOptions.Compiled);
 
     /// <summary>
@@ -150,7 +149,7 @@ public static class DotnetBackendLauncher
     /// <c>MaxStartAttempts</c> (issue #240): bounded so a genuinely unbindable environment fails
     /// loudly instead of retrying forever. Kept as this class's own constant (not shared) so each
     /// launcher's retry policy can be tuned independently later, matching how
-    /// <see cref="HealthTimeout"/>/<see cref="HealthPollInterval"/> are already duplicated per
+    /// <see cref="s_healthTimeout"/>/<see cref="s_healthPollInterval"/> are already duplicated per
     /// launcher rather than factored out.
     /// </summary>
     private const int MaxStartAttempts = 3;
@@ -168,11 +167,11 @@ public static class DotnetBackendLauncher
     /// </summary>
     internal static Action<ProcessStartInfo>? TestOnlyProcessStartInfoObserver
     {
-        get => TestOnlyProcessStartInfoObserverLocal.Value;
-        set => TestOnlyProcessStartInfoObserverLocal.Value = value;
+        get => s_testOnlyProcessStartInfoObserverLocal.Value;
+        set => s_testOnlyProcessStartInfoObserverLocal.Value = value;
     }
 
-    private static readonly AsyncLocal<Action<ProcessStartInfo>?> TestOnlyProcessStartInfoObserverLocal = new();
+    private static readonly AsyncLocal<Action<ProcessStartInfo>?> s_testOnlyProcessStartInfoObserverLocal = new();
 
     // Issue #135: `dotnet run` rebuilds every time it's invoked. Several fixtures in parallel
     // xunit collections used to each call StartAsync (and therefore `dotnet run`) at the same
@@ -196,13 +195,13 @@ public static class DotnetBackendLauncher
     // the one and only shared instance real fixtures use; unit tests construct their own private
     // instances instead of touching anything here, so nothing a test does can ever be observed by
     // a real fixture calling StartAsync concurrently in another xunit collection.
-    private static readonly DotnetBackendBuildGate Builder = new(RunBuildAsync);
+    private static readonly DotnetBackendBuildGate s_builder = new(RunBuildAsync);
 
     public static async Task<IBackendUnderTest> StartAsync(
         BackendContract contract, DotnetBackendOptions options, CancellationToken cancellationToken = default)
     {
-        var attemptContract = contract;
-        for (var attempt = 1; ; attempt++)
+        BackendContract attemptContract = contract;
+        for (int attempt = 1; ; attempt++)
         {
             try
             {
@@ -228,8 +227,8 @@ public static class DotnetBackendLauncher
     private static async Task<IBackendUnderTest> StartAttemptAsync(
         BackendContract contract, DotnetBackendOptions options, CancellationToken cancellationToken)
     {
-        var repoRoot = RepoPaths.FindRepoRoot();
-        var csprojPath = Path.Combine(repoRoot, "app", "backend-dotnet", "src", "Backend", "Backend.csproj");
+        string repoRoot = RepoPaths.FindRepoRoot();
+        string csprojPath = Path.Combine(repoRoot, "app", "backend-dotnet", "src", "Backend", "Backend.csproj");
         if (!File.Exists(csprojPath))
         {
             throw new FileNotFoundException(
@@ -237,16 +236,16 @@ public static class DotnetBackendLauncher
                 csprojPath);
         }
 
-        var dllPath = await Builder.EnsureBuiltAsync(csprojPath, cancellationToken).ConfigureAwait(false);
+        string dllPath = await s_builder.EnsureBuiltAsync(csprojPath, cancellationToken).ConfigureAwait(false);
 
-        var env = DotnetBackendEnvironment.Build(contract, options);
-        var startInfo = BuildStartInfo(dllPath);
+        Dictionary<string, string> env = DotnetBackendEnvironment.Build(contract, options);
+        ProcessStartInfo startInfo = BuildStartInfo(dllPath);
 
         // Same rationale as PythonBackendLauncher: strip ambient CONFORMANCE_*/AZURE_*/*_PROXY
         // vars from this test process's own environment before layering the explicit, known-good
         // set below, so nothing leftover from a prior manual run leaks into the child process.
         InheritedEnvironmentFilter.Apply(startInfo);
-        foreach (var (key, value) in env)
+        foreach ((string? key, string? value) in env)
         {
             startInfo.Environment[key] = value;
         }
@@ -264,7 +263,7 @@ public static class DotnetBackendLauncher
         var output = new CapturedProcessOutput();
         output.Attach(process);
 
-        var startedAt = DateTimeOffset.UtcNow;
+        DateTimeOffset startedAt = DateTimeOffset.UtcNow;
         if (!process.Start())
         {
             throw new InvalidOperationException($"Failed to start C# backend process 'dotnet \"{dllPath}\"'.");
@@ -306,8 +305,8 @@ public static class DotnetBackendLauncher
     /// Now that the backend is launched with <c>PORT=0</c> (the OS assigns a genuinely free
     /// ephemeral port atomically at bind time), the real listening address is only known once
     /// Kestrel has actually bound it and logged "Now listening on" (<see
-    /// cref="ListeningOnPortPattern"/>) -- so this method discovers that address AND waits for
-    /// `/health` to come up, under one shared <see cref="HealthTimeout"/> deadline, returning the
+    /// cref="s_listeningOnPortPattern"/>) -- so this method discovers that address AND waits for
+    /// `/health` to come up, under one shared <see cref="s_healthTimeout"/> deadline, returning the
     /// discovered <see cref="Uri"/> once both are satisfied.
     /// </summary>
     private static async Task<Uri> WaitForListeningAndHealthyAsync(
@@ -315,7 +314,7 @@ public static class DotnetBackendLauncher
         CancellationToken cancellationToken)
     {
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-        var deadline = DateTimeOffset.UtcNow + HealthTimeout;
+        DateTimeOffset deadline = DateTimeOffset.UtcNow + s_healthTimeout;
         Uri? baseUri = null;
 
         while (DateTimeOffset.UtcNow < deadline)
@@ -335,10 +334,10 @@ public static class DotnetBackendLauncher
 
             if (baseUri is null)
             {
-                var match = ListeningOnPortPattern.Match(output.Dump());
+                Match match = s_listeningOnPortPattern.Match(output.Dump());
                 if (match.Success)
                 {
-                    var boundPort = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+                    int boundPort = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
                     baseUri = new Uri($"http://{BackendContract.Host}:{boundPort}/");
                 }
             }
@@ -347,7 +346,7 @@ public static class DotnetBackendLauncher
             {
                 try
                 {
-                    using var response = await http.GetAsync(new Uri(baseUri, "/health"), cancellationToken)
+                    using HttpResponseMessage response = await http.GetAsync(new Uri(baseUri, "/health"), cancellationToken)
                         .ConfigureAwait(false);
                     if (response.StatusCode == System.Net.HttpStatusCode.OK)
                     {
@@ -364,11 +363,11 @@ public static class DotnetBackendLauncher
                 }
             }
 
-            await Task.Delay(HealthPollInterval, cancellationToken).ConfigureAwait(false);
+            await Task.Delay(s_healthPollInterval, cancellationToken).ConfigureAwait(false);
         }
 
         throw new TimeoutException(
-            $"C# backend did not report listening/healthy within {HealthTimeout.TotalSeconds:F0}s " +
+            $"C# backend did not report listening/healthy within {s_healthTimeout.TotalSeconds:F0}s " +
             $"(bound port {(baseUri is null ? "never discovered" : baseUri.Port.ToString(CultureInfo.InvariantCulture))}).\n" +
             $"--- backend stdout/stderr ---\n{output.Dump()}");
     }
@@ -420,7 +419,7 @@ public static class DotnetBackendLauncher
     private const string TargetFramework = "net11.0";
 
     /// <summary>
-    /// Runs the real MSBuild build (issue #135). Always called by <see cref="Builder"/>'s
+    /// Runs the real MSBuild build (issue #135). Always called by <see cref="s_builder"/>'s
     /// <see cref="DotnetBackendBuildGate.EnsureBuiltAsync"/> with <see cref="CancellationToken.None"/>
     /// (R2 of Rick's #151 round-2 review) -- the <paramref name="cancellationToken"/> parameter
     /// exists only to satisfy the <c>Func&lt;string, CancellationToken, Task&gt;</c> seam shape the

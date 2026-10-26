@@ -21,18 +21,18 @@ public sealed class HealthEndpointExtendedTests(ConformanceFixture fixture)
     [Fact]
     public Task Health_endpoint_reports_version_and_per_check_breakdown() => fixture.RunAsync(async () =>
     {
-        using var http = ConformanceHttpClient.Create();
-        using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/health"), TestContext.Current.CancellationToken);
+        using HttpClient http = ConformanceHttpClient.Create();
+        using HttpResponseMessage response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/health"), TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var document = JsonDocument.Parse(
             await response.Content.ReadAsStreamAsync(TestContext.Current.CancellationToken));
-        var root = document.RootElement;
+        JsonElement root = document.RootElement;
         Assert.Equal("healthy", root.GetProperty("status").GetString());
-        var version = root.GetProperty("version").GetString();
+        string? version = root.GetProperty("version").GetString();
         Assert.Matches(@"^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$", version);
 
-        var checks = root.GetProperty("checks");
+        JsonElement checks = root.GetProperty("checks");
         Assert.True(checks.GetProperty("prompts_loaded").GetBoolean());
         Assert.True(checks.GetProperty("config_loaded").GetBoolean());
         Assert.True(checks.GetProperty("env_vars").GetBoolean());

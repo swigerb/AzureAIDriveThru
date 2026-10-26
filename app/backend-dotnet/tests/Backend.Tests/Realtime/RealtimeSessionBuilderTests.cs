@@ -8,7 +8,7 @@ namespace Backend.Tests.Realtime;
 /// app/backend/tests/test_session_bootstrap.py's `ReasoningAndTranscriptionConfigTests` cases.</summary>
 public sealed class RealtimeSessionBuilderTests
 {
-    private static readonly JsonObject UpdateOrderTool = new()
+    private static readonly JsonObject s_updateOrderTool = new()
     {
         ["type"] = "function",
         ["name"] = "update_order",
@@ -32,12 +32,12 @@ public sealed class RealtimeSessionBuilderTests
         };
 
     private static JsonObject Bootstrap(RealtimeSessionConfig config) =>
-        RealtimeSessionBuilder.BuildBootstrapSessionUpdate(config, [UpdateOrderTool])["session"]!.AsObject();
+        RealtimeSessionBuilder.BuildBootstrapSessionUpdate(config, [s_updateOrderTool])["session"]!.AsObject();
 
     [Fact]
     public void Bootstrap_ReasoningNotSentWhenUnconfigured()
     {
-        var session = Bootstrap(Config());
+        JsonObject session = Bootstrap(Config());
 
         Assert.Null(session["reasoning"]);
         Assert.Null(session["parallel_tool_calls"]);
@@ -46,12 +46,12 @@ public sealed class RealtimeSessionBuilderTests
     [Fact]
     public void Bootstrap_ReasoningSentOnAReasoningDeployment()
     {
-        var session = Bootstrap(Config(reasoningEffort: "low", parallelToolCalls: false));
+        JsonObject session = Bootstrap(Config(reasoningEffort: "low", parallelToolCalls: false));
 
         Assert.Equal("low", session["reasoning"]!["effort"]!.GetValue<string>());
         Assert.False(session["parallel_tool_calls"]!.GetValue<bool>());
 
-        var noneEffort = Bootstrap(Config(reasoningEffort: "none"));
+        JsonObject noneEffort = Bootstrap(Config(reasoningEffort: "none"));
         Assert.Equal("none", noneEffort["reasoning"]!["effort"]!.GetValue<string>());
     }
 
@@ -63,9 +63,9 @@ public sealed class RealtimeSessionBuilderTests
     [InlineData("gpt-4o-realtime-preview")]
     public void Bootstrap_RollbackToNonReasoningDeploymentNeverSendsReasoning(string deployment)
     {
-        var config = Config(deployment, reasoningEffort: "high", parallelToolCalls: true);
+        RealtimeSessionConfig config = Config(deployment, reasoningEffort: "high", parallelToolCalls: true);
 
-        var session = Bootstrap(config);
+        JsonObject session = Bootstrap(config);
 
         Assert.Null(session["reasoning"]);
         Assert.Null(session["parallel_tool_calls"]);
@@ -76,14 +76,14 @@ public sealed class RealtimeSessionBuilderTests
     [Fact]
     public void Bootstrap_ClientCannotInjectReasoning()
     {
-        var config = Config("gpt-realtime-1.5");
+        RealtimeSessionConfig config = Config("gpt-realtime-1.5");
         var clientSession = new JsonObject
         {
             ["reasoning"] = new JsonObject { ["effort"] = "high" },
             ["parallel_tool_calls"] = true,
         };
 
-        var session = RealtimeSessionBuilder.BuildSession(config, clientSession, [UpdateOrderTool]);
+        JsonObject session = RealtimeSessionBuilder.BuildSession(config, clientSession, [s_updateOrderTool]);
 
         Assert.Null(session["reasoning"]);
         Assert.Null(session["parallel_tool_calls"]);
@@ -92,7 +92,7 @@ public sealed class RealtimeSessionBuilderTests
     [Fact]
     public void Bootstrap_RuntimeRejectionStopsReasoning()
     {
-        var config = Config(reasoningEffort: "low", reasoningRejected: true);
+        RealtimeSessionConfig config = Config(reasoningEffort: "low", reasoningRejected: true);
         Assert.Null(Bootstrap(config)["reasoning"]);
 
         // A live rejection beats even the explicit switch.
@@ -110,9 +110,9 @@ public sealed class RealtimeSessionBuilderTests
     [InlineData("gpt-4o-carhop", true, true)] // explicit switch wins over the name heuristic
     public void Bootstrap_ExplicitReasoningModelSwitchBeatsTheNameCheck(string deployment, bool? reasoningModel, bool sent)
     {
-        var config = Config(deployment, reasoningEffort: "low", parallelToolCalls: false, reasoningModel: reasoningModel);
+        RealtimeSessionConfig config = Config(deployment, reasoningEffort: "low", parallelToolCalls: false, reasoningModel: reasoningModel);
 
-        var session = Bootstrap(config);
+        JsonObject session = Bootstrap(config);
 
         Assert.Equal(sent, session["reasoning"] is not null);
         Assert.Equal(sent, session["parallel_tool_calls"] is not null);
@@ -126,9 +126,9 @@ public sealed class RealtimeSessionBuilderTests
     [InlineData(null)]
     public void Bootstrap_EffortOffOrEmptyNeverSendsReasoningEvenWhenForced(string? effort)
     {
-        var config = Config(reasoningEffort: effort, reasoningModel: true);
+        RealtimeSessionConfig config = Config(reasoningEffort: effort, reasoningModel: true);
 
-        var session = Bootstrap(config);
+        JsonObject session = Bootstrap(config);
 
         Assert.Null(session["reasoning"]);
         Assert.Null(session["parallel_tool_calls"]);
@@ -137,13 +137,13 @@ public sealed class RealtimeSessionBuilderTests
     [Fact]
     public void Bootstrap_ShapeMatchesTheClientSessionDefaultsPlusOverlay()
     {
-        var config = Config();
+        RealtimeSessionConfig config = Config();
 
-        var update = RealtimeSessionBuilder.BuildBootstrapSessionUpdate(config, [UpdateOrderTool]);
+        JsonObject update = RealtimeSessionBuilder.BuildBootstrapSessionUpdate(config, [s_updateOrderTool]);
 
         Assert.Equal("session.update", update["type"]!.GetValue<string>());
         Assert.StartsWith("sonic_bootstrap_", update["event_id"]!.GetValue<string>());
-        var session = update["session"]!.AsObject();
+        JsonObject session = update["session"]!.AsObject();
         Assert.Equal("realtime", session["type"]!.GetValue<string>());
         Assert.Equal("You are a drive-thru assistant.", session["instructions"]!.GetValue<string>());
         Assert.Equal("marin", session["audio"]!["output"]!["voice"]!.GetValue<string>());
@@ -167,11 +167,11 @@ public sealed class RealtimeSessionBuilderTests
     [Fact]
     public void Session_ExplicitSystemMessageOverridesTheDeploymentDefault()
     {
-        var config = Config();
-        var boundPersonaSystemMessage = "You are a different, non-default persona's crew associate.";
+        RealtimeSessionConfig config = Config();
+        string boundPersonaSystemMessage = "You are a different, non-default persona's crew associate.";
 
-        var session = RealtimeSessionBuilder.BuildSession(
-            config, RealtimeSessionBuilder.BootstrapClientSession(), [UpdateOrderTool],
+        JsonObject session = RealtimeSessionBuilder.BuildSession(
+            config, RealtimeSessionBuilder.BootstrapClientSession(), [s_updateOrderTool],
             systemMessage: Overridable.Of<string?>(boundPersonaSystemMessage));
 
         Assert.Equal(boundPersonaSystemMessage, session["instructions"]!.GetValue<string>());
@@ -181,14 +181,14 @@ public sealed class RealtimeSessionBuilderTests
     [Fact]
     public void Fallback_OnlyCarriesTypeInstructionsToolsToolChoice()
     {
-        var config = Config();
+        RealtimeSessionConfig config = Config();
 
-        var update = RealtimeSessionBuilder.BuildFallbackSessionUpdate(config, [UpdateOrderTool]);
+        JsonObject update = RealtimeSessionBuilder.BuildFallbackSessionUpdate(config, [s_updateOrderTool]);
 
         Assert.Equal("session.update", update["type"]!.GetValue<string>());
         Assert.StartsWith("sonic_fallback_", update["event_id"]!.GetValue<string>());
-        var session = update["session"]!.AsObject();
-        var keys = session.Select(kvp => kvp.Key).OrderBy(k => k).ToArray();
+        JsonObject session = update["session"]!.AsObject();
+        string[] keys = [.. session.Select(kvp => kvp.Key).OrderBy(k => k)];
         Assert.Equal(new[] { "instructions", "tool_choice", "tools", "type" }, keys);
         Assert.Null(session["audio"]);
     }
@@ -196,9 +196,9 @@ public sealed class RealtimeSessionBuilderTests
     [Fact]
     public void Fallback_NeverCarriesAVoiceEvenWhenOneIsConfigured()
     {
-        var config = Config();
+        RealtimeSessionConfig config = Config();
 
-        var update = RealtimeSessionBuilder.BuildFallbackSessionUpdate(config, [UpdateOrderTool]);
+        JsonObject update = RealtimeSessionBuilder.BuildFallbackSessionUpdate(config, [s_updateOrderTool]);
 
         Assert.Null(update["session"]!["audio"]);
     }

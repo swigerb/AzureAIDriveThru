@@ -58,7 +58,7 @@ public sealed class FakeRealtimeConnection
                 return [];
             }
 
-            var drained = _handlerFaults.ToArray();
+            Exception[] drained = [.. _handlerFaults];
             _handlerFaults.Clear();
             return drained;
         }

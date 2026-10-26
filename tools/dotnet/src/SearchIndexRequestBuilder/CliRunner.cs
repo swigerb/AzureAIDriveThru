@@ -36,7 +36,7 @@ public static class CliRunner
         string? openAiEndpointFlag = null;
         string? embeddingDeploymentFlag = null;
 
-        for (var i = 0; i < args.Length; i++)
+        for (int i = 0; i < args.Length; i++)
         {
             switch (args[i])
             {
@@ -56,8 +56,8 @@ public static class CliRunner
         IReadOnlyList<EnabledPersonaDiscovery.DiscoveredPersona> personas;
         try
         {
-            var repoRoot = repoRootOverride ?? RepoRoot.Find(AppContext.BaseDirectory);
-            var azdEnvValues = (loadAzdEnvValues ?? (root => AzdEnvLoader.LoadDefaultEnvValues(root)))(repoRoot);
+            string repoRoot = repoRootOverride ?? RepoRoot.Find(AppContext.BaseDirectory);
+            IReadOnlyDictionary<string, string> azdEnvValues = (loadAzdEnvValues ?? (root => AzdEnvLoader.LoadDefaultEnvValues(root)))(repoRoot);
             settings = OpenAiSettingsResolver.Resolve(openAiEndpointFlag, embeddingDeploymentFlag, getEnvironmentVariable, azdEnvValues);
             personas = EnabledPersonaDiscovery.DiscoverAll(repoRoot);
         }
@@ -78,9 +78,9 @@ public static class CliRunner
             "ever made, so no document's \"embedding\" field is computed (see docs/dotnet_tooling.md).");
 
         var writerOptions = new JsonWriterOptions { Indented = true };
-        foreach (var persona in personas)
+        foreach (EnabledPersonaDiscovery.DiscoveredPersona persona in personas)
         {
-            var plan = SearchIndexRequestPlanner.BuildPlan(persona, settings.OpenAiEndpoint, settings.EmbeddingDeployment);
+            SearchIndexRequestPlanner.PersonaRequestPlan plan = SearchIndexRequestPlanner.BuildPlan(persona, settings.OpenAiEndpoint, settings.EmbeddingDeployment);
             stdout.WriteLine(
                 $"[plan] persona '{plan.PersonaId}': index '{plan.IndexName}', " +
                 $"{plan.DocumentCount} document(s) across {plan.DocumentBatches.Count} upload batch(es) -- " +

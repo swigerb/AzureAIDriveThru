@@ -1,7 +1,5 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
 
 namespace Conformance.Fakes;
 
@@ -97,7 +95,7 @@ public sealed class FakeSearchServer : IAsyncDisposable
         // nobody will ever release.
         Interlocked.Exchange(ref _pendingResponseGate, null)?.TrySetResult();
 
-        var pending = Volatile.Read(ref _rejectSelectFieldOnce);
+        string? pending = Volatile.Read(ref _rejectSelectFieldOnce);
         if (pending is not null)
         {
             throw new InvalidOperationException(
@@ -124,10 +122,10 @@ public sealed class FakeSearchServer : IAsyncDisposable
         _documentsByIndex = _indexNameToMenuItemsJsonPath.ToDictionary(
             kv => kv.Key, kv => MenuIndex.Load(kv.Value), StringComparer.Ordinal);
 
-        var builder = WebApplication.CreateBuilder();
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
         builder.WebHost.UseUrls($"http://127.0.0.1:{fixedPort?.ToString() ?? "0"}");
-        var app = builder.Build();
+        WebApplication app = builder.Build();
         app.MapGet("/", () => Results.Ok());
         app.MapPost("/indexes('{indexName}')/docs/search.post.search", HandleSearchAsync);
 
@@ -161,7 +159,7 @@ public sealed class FakeSearchServer : IAsyncDisposable
         // genuinely unknown index) 404s with an Azure-AI-Search-shaped error body, exactly like
         // the real service would for a nonexistent index -- never silently falls back to someone
         // else's documents.
-        if (!_documentsByIndex.TryGetValue(indexName, out var documents))
+        if (!_documentsByIndex.TryGetValue(indexName, out IReadOnlyList<MenuDocument>? documents))
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
             context.Response.ContentType = "application/json;odata.metadata=none";
@@ -177,18 +175,18 @@ public sealed class FakeSearchServer : IAsyncDisposable
             return;
         }
 
-        using var requestDoc = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted)
+        using JsonDocument requestDoc = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted)
             .ConfigureAwait(false);
-        var recorded = ReceivedRequests.Add(requestDoc.RootElement.Clone());
+        RecordedFrame recorded = ReceivedRequests.Add(requestDoc.RootElement.Clone());
 
-        var root = recorded.Json;
-        var searchText = root.TryGetProperty("search", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString() : null;
-        var top = root.TryGetProperty("top", out var t) && t.ValueKind == JsonValueKind.Number ? t.GetInt32() : 50;
-        var selectFields = root.TryGetProperty("select", out var sel) && sel.ValueKind == JsonValueKind.String
+        JsonElement root = recorded.Json;
+        string? searchText = root.TryGetProperty("search", out JsonElement s) && s.ValueKind == JsonValueKind.String ? s.GetString() : null;
+        int top = root.TryGetProperty("top", out JsonElement t) && t.ValueKind == JsonValueKind.Number ? t.GetInt32() : 50;
+        string[]? selectFields = root.TryGetProperty("select", out JsonElement sel) && sel.ValueKind == JsonValueKind.String
             ? sel.GetString()!.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             : null;
 
-        var rejectField = Volatile.Read(ref _rejectSelectFieldOnce);
+        string? rejectField = Volatile.Read(ref _rejectSelectFieldOnce);
         if (rejectField is not null && selectFields is not null &&
             selectFields.Contains(rejectField, StringComparer.OrdinalIgnoreCase) &&
             Interlocked.CompareExchange(ref _rejectSelectFieldOnce, null, rejectField) == rejectField)
@@ -210,7 +208,7 @@ public sealed class FakeSearchServer : IAsyncDisposable
             return;
         }
 
-        var gate = Interlocked.Exchange(ref _pendingResponseGate, null);
+        TaskCompletionSource? gate = Interlocked.Exchange(ref _pendingResponseGate, null);
         if (gate is not null)
         {
             try
@@ -223,10 +221,10 @@ public sealed class FakeSearchServer : IAsyncDisposable
             }
         }
 
-        var matches = Filter(documents, searchText).Take(top);
+        IEnumerable<MenuDocument> matches = Filter(documents, searchText).Take(top);
 
         var values = new JsonArray();
-        foreach (var doc in matches)
+        foreach (MenuDocument? doc in matches)
         {
             values.Add(ProjectDocument(doc, selectFields));
         }
@@ -243,7 +241,7 @@ public sealed class FakeSearchServer : IAsyncDisposable
             return documents;
         }
 
-        var terms = searchText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        string[] terms = searchText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         var matched = documents.Where(d => terms.Any(term =>
             d.Name.Contains(term, StringComparison.OrdinalIgnoreCase) ||
             d.Description.Contains(term, StringComparison.OrdinalIgnoreCase) ||
@@ -273,9 +271,9 @@ public sealed class FakeSearchServer : IAsyncDisposable
         }
 
         var projected = new JsonObject { ["@search.score"] = 1.0 };
-        foreach (var field in selectFields)
+        foreach (string field in selectFields)
         {
-            if (all.TryGetPropertyValue(field, out var value))
+            if (all.TryGetPropertyValue(field, out JsonNode? value))
             {
                 projected[field] = value?.DeepClone();
             }

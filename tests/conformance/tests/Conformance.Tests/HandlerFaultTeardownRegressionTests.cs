@@ -29,12 +29,12 @@ namespace Conformance.Tests;
 [Trait("Dotnet", "n/a-harness")] // Issue #21: backend-agnostic harness self-test, never exercises app/backend or app/backend-dotnet.
 public sealed class HandlerFaultTeardownRegressionTests(ConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
     public async Task Dropping_a_streaming_upstream_connection_mid_response_never_fails_the_next_scenario()
     {
-        for (var iteration = 0; iteration < 20; iteration++)
+        for (int iteration = 0; iteration < 20; iteration++)
         {
             await StreamThenDropMidResponseAsync(iteration);
             await EmptyScenarioAsync();
@@ -49,21 +49,21 @@ public sealed class HandlerFaultTeardownRegressionTests(ConformanceFixture fixtu
     /// </summary>
     private Task StreamThenDropMidResponseAsync(int iteration) => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
         using var socket = new ClientWebSocket();
         socket.Options.SetRequestHeader("api-key", BackendContract.OpenAiApiKey);
         var wsUri = new Uri($"ws://{fixture.Realtime.BaseUri.Host}:{fixture.Realtime.BaseUri.Port}/openai/v1/realtime?model=gpt-realtime-test");
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
         await socket.ConnectAsync(wsUri, ct).ConfigureAwait(false);
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"[iteration {iteration}] No upstream connection was accepted within {FrameTimeout}.");
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"[iteration {iteration}] No upstream connection was accepted within {s_frameTimeout}.");
 
         Assert.NotNull(await WebSocketJson.ReceiveJsonAsync(socket, ct).ConfigureAwait(false)); // session.created
 
         // Paced so there's a real window in which to drop the socket mid-stream, mirroring a
         // slow real browser/backend disconnect rather than an instantaneous one.
-        connection!.Script.Enqueue(new ResponseScript(
+        connection.Script.Enqueue(new ResponseScript(
         [
             new AudioDeltaEvent("Zmlyc3Q=", Pace: TimeSpan.FromMilliseconds(150)),
             new AudioDeltaEvent("c2Vjb25k", Pace: TimeSpan.FromMilliseconds(150)),

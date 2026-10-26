@@ -1,4 +1,3 @@
-using System.Net.WebSockets;
 using System.Text.Json;
 using Conformance.Fakes;
 using Conformance.Harness;
@@ -47,47 +46,47 @@ namespace Conformance.Tests.Scenarios.Security;
 [Collection(ResumeMarginConformanceCollection.Name)]
 public sealed class ResumeRehydrationClientVisibilityTests(ResumeMarginConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Browser_never_receives_the_resume_rehydration_system_item() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
         // ── First connection: start a conversation and let the greeting complete, so the
         // session is marked "conversation started" (session_manager.py's has_sent_greeting) --
         // the precondition for a later resume to rehydrate rather than just re-greet. ──
-        var firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        var first = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var firstConnection = await firstConnectionTask;
+        Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        RealtimeBrowserClient first = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? firstConnection = await firstConnectionTask;
         Assert.True(firstConnection is not null, "No upstream connection was accepted for the first browser socket.");
 
         await first.SendStartSessionAsync(cancellationToken: ct);
 
-        var metadata = await first.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        RecordedFrame? metadata = await first.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_metadata", s_frameTimeout, ct);
         Assert.True(metadata is not null, "Expected extension.session_metadata on the first connection.");
-        var resumeId = metadata!.Json.GetProperty("resumeId").GetString();
+        string? resumeId = metadata!.Json.GetProperty("resumeId").GetString();
         Assert.False(string.IsNullOrEmpty(resumeId), "extension.session_metadata must carry a non-empty resumeId.");
 
-        var greetingDone = await first.ReceivedFrames.WaitForAsync(f => f.Type == "response.done", FrameTimeout, ct);
+        RecordedFrame? greetingDone = await first.ReceivedFrames.WaitForAsync(f => f.Type == "response.done", s_frameTimeout, ct);
         Assert.True(greetingDone is not null, "Expected the greeting's response.done on the first connection.");
 
         // ── Drop the first socket; the session detaches and is held for the (shortened) grace
         // period rather than ending immediately. ──
         await first.CloseAsync(cancellationToken: ct);
-        await first.WaitForCloseAsync(FrameTimeout, ct);
+        await first.WaitForCloseAsync(s_frameTimeout, ct);
         await first.DisposeAsync();
 
         // ── Resume on a fresh socket within the grace hold. ──
-        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var second = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var secondConnection = await secondConnectionTask;
+        Task<FakeRealtimeConnection?> secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient second = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? secondConnection = await secondConnectionTask;
         Assert.True(secondConnection is not null, "No upstream connection was accepted for the resumed browser socket.");
 
         await second.SendExtensionResumeAsync(resumeId!, ct);
 
-        var resumed = await second.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_resumed", FrameTimeout, ct);
+        RecordedFrame? resumed = await second.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_resumed", s_frameTimeout, ct);
         Assert.True(resumed is not null, "Expected extension.session_resumed on the resumed connection.");
 
         // #181: the post-resume silence nudge only arms once THIS socket's own client proves
@@ -99,12 +98,12 @@ public sealed class ResumeRehydrationClientVisibilityTests(ResumeMarginConforman
         // Precondition: the fake upstream really did get sent (and, via its default script,
         // echo back) a role="system" conversation item -- otherwise this scenario would prove
         // nothing about the drop.
-        var upstreamSystemItem = await secondConnection!.ReceivedFrames.WaitForAsync(
+        RecordedFrame? upstreamSystemItem = await secondConnection!.ReceivedFrames.WaitForAsync(
             f => f.Type == "conversation.item.create" &&
-                 f.Json.TryGetProperty("item", out var item) &&
-                 item.TryGetProperty("role", out var role) &&
+                 f.Json.TryGetProperty("item", out JsonElement item) &&
+                 item.TryGetProperty("role", out JsonElement role) &&
                  role.GetString() == "system",
-            FrameTimeout, ct);
+            s_frameTimeout, ct);
         Assert.True(upstreamSystemItem is not null,
             "Precondition failed: the backend never sent the rehydration item upstream on the resumed connection.");
 
@@ -126,21 +125,21 @@ public sealed class ResumeRehydrationClientVisibilityTests(ResumeMarginConforman
         // the shared KeepAlive helper (PR #52 CI follow-up round 5, Rick's review S2) so this
         // scenario and WholeSessionLeakTests can't silently diverge from what the self-test in
         // BrowserClientLifecycleTests actually exercises.
-        await using var keepAlive = KeepAlive.RunAsync(second, TimeSpan.FromMilliseconds(200), ct);
+        await using KeepAliveLoop keepAlive = KeepAlive.RunAsync(second, TimeSpan.FromMilliseconds(200), ct);
 
-        var nudgeResponseCreated = await second.ReceivedFrames.WaitForAsync(
-            f => f.Type == "response.created", FrameTimeout, ct);
+        RecordedFrame? nudgeResponseCreated = await second.ReceivedFrames.WaitForAsync(
+            f => f.Type == "response.created", s_frameTimeout, ct);
 
         await keepAlive.StopAsync();
 
         Assert.True(nudgeResponseCreated is not null,
             "Expected the silence nudge's response.created to reach the browser after the resume.");
 
-        var leaked = second.ReceivedFrames.Snapshot().FirstOrDefault(f =>
+        RecordedFrame? leaked = second.ReceivedFrames.Snapshot().FirstOrDefault(f =>
             (f.Type == "conversation.item.created" || f.Type == "conversation.item.added" ||
              f.Type == "conversation.item.done" || f.Type == "conversation.item.retrieved") &&
-            f.Json.TryGetProperty("item", out var item) &&
-            item.TryGetProperty("role", out var role) &&
+            f.Json.TryGetProperty("item", out JsonElement item) &&
+            item.TryGetProperty("role", out JsonElement role) &&
             role.GetString() == "system");
         Assert.True(leaked is null,
             $"The browser must never receive a server-authored system conversation item, but got: {leaked?.Json.GetRawText()}");

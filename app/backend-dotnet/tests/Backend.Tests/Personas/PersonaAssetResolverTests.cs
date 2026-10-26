@@ -32,13 +32,13 @@ public sealed class PersonaAssetResolverTests : IDisposable
     {
         // A real, readable file one level above the assets root -- if traversal succeeded, Resolve
         // would return this path.
-        var secretPath = Path.Combine(_fixture.PersonasDir, "sonic", "persona.json");
+        string secretPath = Path.Combine(_fixture.PersonasDir, "sonic", "persona.json");
         Assert.True(File.Exists(secretPath), "fixture setup: persona.json should exist one level above assets/");
 
         var catalog = PersonaCatalog.Load(personasDir: _fixture.PersonasDir);
-        var persona = catalog.Get("sonic");
+        Persona persona = catalog.Get("sonic");
 
-        var resolved = PersonaAssetResolver.Resolve(persona, "../persona.json");
+        string? resolved = PersonaAssetResolver.Resolve(persona, "../persona.json");
 
         Assert.Null(resolved);
     }
@@ -47,9 +47,9 @@ public sealed class PersonaAssetResolverTests : IDisposable
     public void Deeper_traversal_with_backslashes_is_also_rejected()
     {
         var catalog = PersonaCatalog.Load(personasDir: _fixture.PersonasDir);
-        var persona = catalog.Get("sonic");
+        Persona persona = catalog.Get("sonic");
 
-        var resolved = PersonaAssetResolver.Resolve(persona, "..\\..\\sonic\\persona.json");
+        string? resolved = PersonaAssetResolver.Resolve(persona, "..\\..\\sonic\\persona.json");
 
         Assert.Null(resolved);
     }
@@ -58,9 +58,9 @@ public sealed class PersonaAssetResolverTests : IDisposable
     public void A_real_asset_under_the_assets_root_still_resolves()
     {
         var catalog = PersonaCatalog.Load(personasDir: _fixture.PersonasDir);
-        var persona = catalog.Get("sonic");
+        Persona persona = catalog.Get("sonic");
 
-        var resolved = PersonaAssetResolver.Resolve(persona, "logo.svg");
+        string? resolved = PersonaAssetResolver.Resolve(persona, "logo.svg");
 
         Assert.NotNull(resolved);
         Assert.True(File.Exists(resolved));
@@ -82,14 +82,14 @@ public sealed class PersonaAssetResolverTests : IDisposable
     public void Symlinked_directory_inside_assets_cannot_escape_the_pack_root()
     {
         var catalog = PersonaCatalog.Load(personasDir: _fixture.PersonasDir);
-        var persona = catalog.Get("sonic");
+        Persona persona = catalog.Get("sonic");
 
-        var outsideDir = Path.Combine(Path.GetTempPath(), "beth-persona-symlink-outside-" + Guid.NewGuid().ToString("n"));
+        string outsideDir = Path.Combine(Path.GetTempPath(), "beth-persona-symlink-outside-" + Guid.NewGuid().ToString("n"));
         Directory.CreateDirectory(outsideDir);
-        var secretPath = Path.Combine(outsideDir, "secret.txt");
+        string secretPath = Path.Combine(outsideDir, "secret.txt");
         File.WriteAllText(secretPath, "must never be reachable through /personas/sonic/assets/*");
 
-        var symlinkPath = Path.Combine(persona.AssetsDir, "escape");
+        string symlinkPath = Path.Combine(persona.AssetsDir, "escape");
         try
         {
             Directory.CreateSymbolicLink(symlinkPath, outsideDir);
@@ -105,7 +105,7 @@ public sealed class PersonaAssetResolverTests : IDisposable
 
         try
         {
-            var resolved = PersonaAssetResolver.Resolve(persona, "escape/secret.txt");
+            string? resolved = PersonaAssetResolver.Resolve(persona, "escape/secret.txt");
 
             Assert.Null(resolved);
         }

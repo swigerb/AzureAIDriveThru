@@ -46,7 +46,7 @@ internal static class WebSocketFrameReader
         CancellationToken cancellationToken,
         int maxMessageBytes = DefaultMaxMessageBytes)
     {
-        var chunk = new byte[ChunkSize];
+        byte[] chunk = new byte[ChunkSize];
         WebSocketReceiveResult result;
         // ArrayBufferWriter, not a fixed buffer: an individual message can be arbitrarily larger
         // than one chunk (unlike the byte[4096] this replaces, which silently dropped the excess).

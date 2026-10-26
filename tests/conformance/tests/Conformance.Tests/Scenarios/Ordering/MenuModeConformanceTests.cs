@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 
@@ -26,17 +27,17 @@ public sealed class MenuModeConformanceTests(MenuModeConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Breakfast_meal_can_be_added_when_connected_in_breakfast_mode() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
             fixture, ct, persona: MenuModeConformanceFixture.DaypartsPersona, mode: "breakfast");
-        await using var _ = browser;
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", "Delta Breakfast Meal", "regular", 1, 4.99m)],
             roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(4.99m, OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
             "A session bound to breakfast mode must accept the breakfast-only meal at its own menu price.");
@@ -46,17 +47,17 @@ public sealed class MenuModeConformanceTests(MenuModeConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Lunch_meal_can_be_added_when_connected_in_lunch_mode() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
             fixture, ct, persona: MenuModeConformanceFixture.DaypartsPersona, mode: "lunch");
-        await using var _ = browser;
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", "Delta Lunch Meal", "regular", 1, 6.49m)],
             roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(6.49m, OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
             "A session bound to lunch mode must accept the lunch-only meal at its own menu price, " +
@@ -74,12 +75,12 @@ public sealed class MenuModeConformanceTests(MenuModeConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Breakfast_item_is_rejected_as_out_of_mode_when_connected_in_lunch_mode() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
             fixture, ct, persona: MenuModeConformanceFixture.DaypartsPersona, mode: "lunch");
-        await using var _ = browser;
+        await using RealtimeBrowserClient _ = browser;
 
-        var rejected = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult rejected = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
             JsonSerializer.Serialize(new
             {
@@ -93,7 +94,7 @@ public sealed class MenuModeConformanceTests(MenuModeConformanceFixture fixture)
         OrderScenarioHelpers.AssertRejectionShape(
             rejected.FunctionCallOutputText, expectedReason: "item_out_of_mode", expectedItemName: "Delta Breakfast Meal");
 
-        var result = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult result = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "get_order", "{}", "call_get_after_out_of_mode", rejected.RoundTripIndex, ct);
         Assert.Equal(0, OrderScenarioHelpers.GetOrderItemCount(result.ToolResultJson!));
         OrderScenarioHelpers.AssertMoneyEqual(0m, OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
@@ -115,20 +116,20 @@ public sealed class MenuModeConformanceTests(MenuModeConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Search_request_filter_reflects_the_bound_session_menu_mode() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
             fixture, ct, persona: MenuModeConformanceFixture.DaypartsPersona, mode: "breakfast");
-        await using var _ = browser;
+        await using RealtimeBrowserClient _ = browser;
 
-        const string query = "issue165 menu mode search filter breakfast";
+        const string Query = "issue165 menu mode search filter breakfast";
         await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "search",
-            $$"""{"query":"{{query}}"}""",
+            $$"""{"query":"{{Query}}"}""",
             "call_search_menu_mode", roundTripIndex, ct, toClient: false);
 
-        var matchingRequest = fixture.Search.ReceivedRequests.Snapshot()
-            .Single(f => f.Json.TryGetProperty("search", out var s) && s.GetString() == query);
-        var filter = matchingRequest.Json.GetProperty("filter").GetString();
+        RecordedFrame matchingRequest = fixture.Search.ReceivedRequests.Snapshot()
+            .Single(f => f.Json.TryGetProperty("search", out JsonElement s) && s.GetString() == Query);
+        string? filter = matchingRequest.Json.GetProperty("filter").GetString();
         Assert.Equal("menuPeriod eq 'breakfast' or menuPeriod eq 'allDay' or menuPeriod eq ''", filter);
     });
 
@@ -147,17 +148,17 @@ public sealed class MenuModeConformanceTests(MenuModeConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Periodless_item_can_be_added_in_either_mode_a_dayparts_pack_supports(string mode) => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
             fixture, ct, persona: MenuModeConformanceFixture.DaypartsPersona, mode: mode);
-        await using var _ = browser;
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", "Delta Burger", "regular", 1, 3.99m)],
             roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(3.99m, OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
             $"A period-less item must be addable in {mode} mode exactly like every other mode a dayparts pack supports.");
@@ -174,27 +175,27 @@ public sealed class MenuModeConformanceTests(MenuModeConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task A_pack_without_dayparts_ignores_a_stray_mode_query_param() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
             fixture, ct, persona: MenuModeConformanceFixture.NoDaypartsPersona, mode: "breakfast");
-        await using var _ = browser;
+        await using RealtimeBrowserClient _ = browser;
 
-        var addResult = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult addResult = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", "Alpha Burger", "small", 1, 3.99m)],
             roundTripIndex, ct);
-        var order = JsonDocument.Parse(addResult.ToolResultJson!).RootElement;
+        JsonElement order = JsonDocument.Parse(addResult.ToolResultJson!).RootElement;
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
 
-        const string query = "issue165 menu mode unaffected pack search";
+        const string Query = "issue165 menu mode unaffected pack search";
         await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "search",
-            $$"""{"query":"{{query}}"}""",
+            $$"""{"query":"{{Query}}"}""",
             "call_search_no_dayparts", addResult.RoundTripIndex, ct, toClient: false);
 
-        var matchingRequest = fixture.Search.ReceivedRequests.Snapshot()
-            .Single(f => f.Json.TryGetProperty("search", out var s) && s.GetString() == query);
-        Assert.False(matchingRequest.Json.TryGetProperty("filter", out var unexpectedFilter),
+        RecordedFrame matchingRequest = fixture.Search.ReceivedRequests.Snapshot()
+            .Single(f => f.Json.TryGetProperty("search", out JsonElement s) && s.GetString() == Query);
+        Assert.False(matchingRequest.Json.TryGetProperty("filter", out JsonElement unexpectedFilter),
             "A persona with no dayparts feature must never bind a menu mode, so search must " +
             "send no filter field at all -- not even an empty one.");
     });

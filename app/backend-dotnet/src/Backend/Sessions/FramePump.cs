@@ -2,7 +2,6 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json.Nodes;
 using Backend.Realtime;
-using Microsoft.Extensions.Logging;
 
 namespace Backend.Sessions;
 
@@ -39,7 +38,7 @@ internal static class FramePump
     /// room than a merely-busy CI runner should ever need, and still reclaims a truly
     /// never-draining peer (Rick's actual repro) in bounded time rather than Python's
     /// forever.</summary>
-    internal static readonly TimeSpan SupersededCloseTimeout = TimeSpan.FromSeconds(10);
+    internal static readonly TimeSpan s_supersededCloseTimeout = TimeSpan.FromSeconds(10);
 
     /// <summary>Rick's #244 round-2 re-review: the poll interval
     /// <see cref="CloseSupersededStaleConnectionAsync"/> uses while waiting for the stale socket to
@@ -47,8 +46,8 @@ internal static class FramePump
     /// before it cancels <c>staleCts</c>. Short enough that a healthy peer's near-instant answering
     /// close is noticed within a few polls (no perceptible delay added to the common case), long
     /// enough not to busy-spin the thread pool while waiting out a genuinely stuck peer for the
-    /// rest of <see cref="SupersededCloseTimeout"/>.</summary>
-    private static readonly TimeSpan SupersededSettlePollInterval = TimeSpan.FromMilliseconds(10);
+    /// rest of <see cref="s_supersededCloseTimeout"/>.</summary>
+    private static readonly TimeSpan s_supersededSettlePollInterval = TimeSpan.FromMilliseconds(10);
 
     internal static async Task SwallowAsync(Task task, ILogger logger)
     {
@@ -75,7 +74,7 @@ internal static class FramePump
 
     internal static async Task CloseIfOpenAsync(WebSocket socket, WebSocketCloseStatus status, string? description)
     {
-        if (socket.State != WebSocketState.Open && socket.State != WebSocketState.CloseReceived)
+        if (socket.State is not WebSocketState.Open and not WebSocketState.CloseReceived)
         {
             return;
         }
@@ -105,7 +104,7 @@ internal static class FramePump
     internal static async Task CloseOutputIfOpenAsync(
         WebSocket socket, WebSocketCloseStatus status, string? description, CancellationToken cancellationToken)
     {
-        if (socket.State != WebSocketState.Open && socket.State != WebSocketState.CloseReceived)
+        if (socket.State is not WebSocketState.Open and not WebSocketState.CloseReceived)
         {
             return;
         }
@@ -186,7 +185,7 @@ internal static class FramePump
     /// <see cref="WebSocketState.CloseSent"/> -- i.e. for the stale connection's own already-pending
     /// <c>ReceiveAsync</c> to observe the peer's answering close frame (a healthy peer) and
     /// complete on its own, so the caller's subsequent <c>staleCts.Cancel()</c> never has to abort
-    /// that receive mid-flight. Polls on <see cref="SupersededSettlePollInterval"/> rather than
+    /// that receive mid-flight. Polls on <see cref="s_supersededSettlePollInterval"/> rather than
     /// reacting to an event because <see cref="WebSocket"/> exposes no "state changed" signal; the
     /// socket is typically a <c>FakeWebSocket</c> or <c>ManagedWebSocket</c>, neither cheap nor
     /// meaningful to wrap further for this. Bounded by <paramref name="cancellationToken"/> (the
@@ -200,7 +199,7 @@ internal static class FramePump
         {
             while (staleWs.State is WebSocketState.Open or WebSocketState.CloseSent)
             {
-                await Task.Delay(SupersededSettlePollInterval, cancellationToken).ConfigureAwait(false);
+                await Task.Delay(s_supersededSettlePollInterval, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)
@@ -217,7 +216,7 @@ internal static class FramePump
         {
             return;
         }
-        var bytes = Encoding.UTF8.GetBytes(payload);
+        byte[] bytes = Encoding.UTF8.GetBytes(payload);
         await socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, ct).ConfigureAwait(false);
     }
 
@@ -334,26 +333,26 @@ internal static class FramePump
     /// base64 alphabet anywhere in the audio value, a trailing byte) falls through to the full
     /// parse + allow-list path below, which still accepts a genuine append frame in any other
     /// shape, just without the fast path's saved JSON-parse/rebuild/re-serialize work.</summary>
-    private static readonly byte[] AppendFastPathPrefix =
+    private static readonly byte[] s_appendFastPathPrefix =
         Encoding.ASCII.GetBytes("{\"type\":\"input_audio_buffer.append\",\"audio\":\"");
-    private static readonly byte[] AppendFastPathSuffix = Encoding.ASCII.GetBytes("\"}");
+    private static readonly byte[] s_appendFastPathSuffix = Encoding.ASCII.GetBytes("\"}");
 
     internal static bool TryMatchAppendFastPath(byte[] payload)
     {
-        if (payload.Length < AppendFastPathPrefix.Length + AppendFastPathSuffix.Length)
+        if (payload.Length < s_appendFastPathPrefix.Length + s_appendFastPathSuffix.Length)
         {
             return false;
         }
-        if (!payload.AsSpan(0, AppendFastPathPrefix.Length).SequenceEqual(AppendFastPathPrefix))
+        if (!payload.AsSpan(0, s_appendFastPathPrefix.Length).SequenceEqual(s_appendFastPathPrefix))
         {
             return false;
         }
-        var suffixStart = payload.Length - AppendFastPathSuffix.Length;
-        if (!payload.AsSpan(suffixStart).SequenceEqual(AppendFastPathSuffix))
+        int suffixStart = payload.Length - s_appendFastPathSuffix.Length;
+        if (!payload.AsSpan(suffixStart).SequenceEqual(s_appendFastPathSuffix))
         {
             return false;
         }
-        foreach (var b in payload.AsSpan(AppendFastPathPrefix.Length, suffixStart - AppendFastPathPrefix.Length))
+        foreach (byte b in payload.AsSpan(s_appendFastPathPrefix.Length, suffixStart - s_appendFastPathPrefix.Length))
         {
             if (!IsFastPathAudioAlphabetByte(b))
             {
@@ -376,10 +375,7 @@ internal static class FramePump
     /// fast path so the C# port's forwarding behaviour matches byte-for-byte, per this port's
     /// "match Python's handling exactly" requirement (issue #13).</summary>
     private static bool IsFastPathAudioAlphabetByte(byte b) =>
-        (b >= (byte)'A' && b <= (byte)'Z')
-        || (b >= (byte)'a' && b <= (byte)'z')
-        || (b >= (byte)'0' && b <= (byte)'9')
-        || b == (byte)'+' || b == (byte)'/' || b == (byte)'=';
+b is >= ((byte)'A') and <= ((byte)'Z') or >= ((byte)'a') and <= ((byte)'z') or >= ((byte)'0') and <= ((byte)'9') or ((byte)'+') or ((byte)'/') or ((byte)'=');
 
     /// <summary>Monotonic "loop time" in seconds, mirroring Python's
     /// <c>asyncio.AbstractEventLoop.time()</c> -- immune to system clock adjustments. Issue #13

@@ -30,10 +30,10 @@ internal sealed class FakeHttpMessageHandler : HttpMessageHandler
     /// request gets the N-th response (or the last one, once the queue is exhausted).</summary>
     public static FakeHttpMessageHandler Sequenced(params Func<CapturedRequest, HttpResponseMessage>[] responders)
     {
-        var index = 0;
+        int index = 0;
         return new FakeHttpMessageHandler(request =>
         {
-            var responder = responders[Math.Min(index, responders.Length - 1)];
+            Func<CapturedRequest, HttpResponseMessage> responder = responders[Math.Min(index, responders.Length - 1)];
             index++;
             return responder(request);
         });
@@ -41,7 +41,7 @@ internal sealed class FakeHttpMessageHandler : HttpMessageHandler
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        var body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
+        string? body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
         var headers = request.Headers
             .Concat(request.Content?.Headers ?? Enumerable.Empty<KeyValuePair<string, IEnumerable<string>>>())
             .ToDictionary(h => h.Key, h => string.Join(", ", h.Value), StringComparer.OrdinalIgnoreCase);

@@ -32,7 +32,7 @@ internal sealed class PythonJsonEncoder : JavaScriptEncoder
 
     public override unsafe int FindFirstCharacterToEncode(char* text, int textLength)
     {
-        for (var i = 0; i < textLength; i++)
+        for (int i = 0; i < textLength; i++)
         {
             if (RequiresEscape(text[i]))
             {
@@ -47,7 +47,7 @@ internal sealed class PythonJsonEncoder : JavaScriptEncoder
     public override unsafe bool TryEncodeUnicodeScalar(
         int unicodeScalar, char* buffer, int bufferLength, out int numberOfCharactersWritten)
     {
-        var shortForm = unicodeScalar switch
+        char shortForm = unicodeScalar switch
         {
             '"' => '"',
             '\\' => '\\',
@@ -81,7 +81,7 @@ internal sealed class PythonJsonEncoder : JavaScriptEncoder
             }
             buffer[0] = '\\';
             buffer[1] = 'u';
-            var hex = unicodeScalar.ToString("x4", CultureInfo.InvariantCulture);
+            string hex = unicodeScalar.ToString("x4", CultureInfo.InvariantCulture);
             buffer[2] = hex[0];
             buffer[3] = hex[1];
             buffer[4] = hex[2];
@@ -95,5 +95,5 @@ internal sealed class PythonJsonEncoder : JavaScriptEncoder
     }
 
     private static bool RequiresEscape(int unicodeScalar) =>
-        unicodeScalar == '"' || unicodeScalar == '\\' || unicodeScalar is >= 0x00 and <= 0x1F;
+        unicodeScalar is '"' or '\\' or >= 0x00 and <= 0x1F;
 }

@@ -32,23 +32,30 @@ internal sealed class DiagnosticWebSocket(WebSocket inner, CascadeDiagnosticCapt
     {
         await inner.SendAsync(buffer, messageType, endOfMessage, cancellationToken).ConfigureAwait(false);
         if (upstream)
+        {
             Observe(_sent, ref _sentOverflow, buffer.AsSpan(), messageType, endOfMessage, true);
+        }
     }
     public override async Task<WebSocketReceiveResult> ReceiveAsync(ArraySegment<byte> buffer, CancellationToken cancellationToken)
     {
-        var result = await inner.ReceiveAsync(buffer, cancellationToken).ConfigureAwait(false);
+        WebSocketReceiveResult result = await inner.ReceiveAsync(buffer, cancellationToken).ConfigureAwait(false);
         Observe(_received, ref _receivedOverflow, buffer.AsSpan(0, result.Count), result.MessageType, result.EndOfMessage, false);
         return result;
     }
     private void Observe(MemoryStream pending, ref bool overflow, ReadOnlySpan<byte> bytes, WebSocketMessageType type, bool end, bool outbound)
     {
         lock (pending)
+        {
             ObserveLocked(pending, ref overflow, bytes, type, end, outbound);
+        }
     }
     private void ObserveLocked(MemoryStream pending, ref bool overflow, ReadOnlySpan<byte> bytes, WebSocketMessageType type, bool end, bool outbound)
     {
         if (type != WebSocketMessageType.Text)
+        {
             return;
+        }
+
         if (!overflow && pending.Length + bytes.Length > 131072)
         {
             overflow = true;
@@ -56,9 +63,15 @@ internal sealed class DiagnosticWebSocket(WebSocket inner, CascadeDiagnosticCapt
             capture.StopForFrameLimit();
         }
         if (!overflow)
+        {
             pending.Write(bytes);
+        }
+
         if (!end)
+        {
             return;
+        }
+
         try
         {
             if (!overflow && JsonNode.Parse(Encoding.UTF8.GetString(pending.GetBuffer(), 0, (int)pending.Length)) is JsonObject frame)
@@ -66,10 +79,14 @@ internal sealed class DiagnosticWebSocket(WebSocket inner, CascadeDiagnosticCapt
                 if (!upstream)
                 {
                     if (frame["type"]?.GetValue<string>() == "extension.resume")
+                    {
                         capture.Stop();
+                    }
                 }
                 else
+                {
                     capture.RealtimeFrame(frame, outbound);
+                }
             }
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException)

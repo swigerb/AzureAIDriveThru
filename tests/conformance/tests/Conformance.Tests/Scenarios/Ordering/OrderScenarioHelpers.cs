@@ -1,4 +1,3 @@
-using System.Linq;
 using System.Text.Json;
 using Conformance.Fakes;
 using Conformance.Harness;
@@ -19,28 +18,30 @@ public static class OrderScenarioHelpers
 
     public static string GreetingInstructions(FakeRealtimeConnection connection)
     {
-        foreach (var frame in connection.ReceivedFrames.Snapshot())
+        foreach (RecordedFrame frame in connection.ReceivedFrames.Snapshot())
         {
             if (frame.Type == "response.create"
-                && frame.Json.TryGetProperty("response", out var response)
-                && response.TryGetProperty("instructions", out var instructions))
+                && frame.Json.TryGetProperty("response", out JsonElement response)
+                && response.TryGetProperty("instructions", out JsonElement instructions))
             {
                 Assert.Empty(response.GetProperty("input").EnumerateArray());
                 Assert.Empty(response.GetProperty("tools").EnumerateArray());
                 Assert.Equal("none", response.GetProperty("tool_choice").GetString());
-                var bootstrap = connection.ReceivedFrames.Snapshot().First(candidate => candidate.Type == "session.update");
+                RecordedFrame bootstrap = connection.ReceivedFrames.Snapshot().First(candidate => candidate.Type == "session.update");
                 Assert.StartsWith(bootstrap.Json.GetProperty("session").GetProperty("instructions").GetString() + "\n\n",
                     instructions.GetString());
                 Assert.DoesNotContain(connection.ReceivedFrames.Snapshot(), candidate =>
                     candidate.Type == "conversation.item.create"
-                    && candidate.Json.TryGetProperty("item", out var message)
-                    && message.TryGetProperty("role", out var role) && role.GetString() == "user");
+                    && candidate.Json.TryGetProperty("item", out JsonElement message)
+                    && message.TryGetProperty("role", out JsonElement role) && role.GetString() == "user");
                 return instructions.GetString()!;
             }
             if (frame.Type == "conversation.item.create"
-                && frame.Json.TryGetProperty("item", out var item)
-                && item.TryGetProperty("type", out var type) && type.GetString() == "message")
+                && frame.Json.TryGetProperty("item", out JsonElement item)
+                && item.TryGetProperty("type", out JsonElement type) && type.GetString() == "message")
+            {
                 return item.GetProperty("content")[0].GetProperty("text").GetString()!;
+            }
         }
         throw new Xunit.Sdk.XunitException("No configured greeting frame reached the upstream.");
     }
@@ -68,7 +69,7 @@ public static class OrderScenarioHelpers
     public static async Task<(RealtimeBrowserClient Browser, FakeRealtimeConnection Connection, int RoundTripIndex)> ConnectAndGreetAsync(
         ConformanceFixture fixture, CancellationToken ct, string? persona = null, string? mode = null)
     {
-        var noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
+        bool noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
         Assert.True(noneOpen, $"Expected no open upstream connections at test start, but " +
             $"{fixture.Realtime.OpenConnectionCount} are still open — a previous test leaked a connection.");
 
@@ -76,17 +77,17 @@ public static class OrderScenarioHelpers
         // ever sees output this scenario's own connection produced, never an identically-worded
         // line an earlier scenario sharing this collection's backend process already logged (and
         // that earlier scenario's own assertions would have already failed on).
-        var watermark = fixture.Backend!.DiagnosticsWatermark;
+        int watermark = fixture.Backend!.DiagnosticsWatermark;
 
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, persona: persona, mode: mode, cancellationToken: ct);
-        var connection = await connectionTask;
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, persona: persona, mode: mode, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
         Assert.True(connection is not null,
             $"No upstream connection was accepted within {FrameTimeout}" +
             (persona is null ? "." : $" for persona={persona}."));
 
         await browser.SendStartSessionAsync(cancellationToken: ct);
-        var greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+        RecordedFrame? greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
             f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
         Assert.True(greetingRoundTrip is not null,
             "Greeting round trip never completed" + (persona is null ? "." : $" for persona={persona}."));
@@ -95,10 +96,10 @@ public static class OrderScenarioHelpers
         // rejection-recovery path can still let the greeting above complete (it resends a minimal
         // fallback), which would otherwise hide exactly the regression #314 shipped with (every
         // session running with no tools and no instructions) behind an apparently-green scenario.
-        var sinceConnect = fixture.Backend!.DumpSince(watermark);
+        string sinceConnect = fixture.Backend!.DumpSince(watermark);
         Assert.DoesNotContain("Upstream REJECTED session.update", sinceConnect, StringComparison.Ordinal);
 
-        var roundTripIndex = greetingRoundTrip!.Json.GetProperty("roundTripIndex").GetInt32();
+        int roundTripIndex = greetingRoundTrip!.Json.GetProperty("roundTripIndex").GetInt32();
         return (browser, connection!, roundTripIndex);
     }
 
@@ -116,16 +117,16 @@ public static class OrderScenarioHelpers
 
     private static string? MenuPeriodForItem(string repoRoot, string itemName)
     {
-        foreach (var menuPath in Directory.EnumerateFiles(Path.Combine(repoRoot, "personas"), "menuItems.json", SearchOption.AllDirectories))
+        foreach (string menuPath in Directory.EnumerateFiles(Path.Combine(repoRoot, "personas"), "menuItems.json", SearchOption.AllDirectories))
         {
             using var doc = JsonDocument.Parse(File.ReadAllText(menuPath));
-            foreach (var category in doc.RootElement.GetProperty("menuItems").EnumerateArray())
+            foreach (JsonElement category in doc.RootElement.GetProperty("menuItems").EnumerateArray())
             {
-                foreach (var item in category.GetProperty("items").EnumerateArray())
+                foreach (JsonElement item in category.GetProperty("items").EnumerateArray())
                 {
                     if (item.GetProperty("name").GetString() == itemName)
                     {
-                        return item.TryGetProperty("menuPeriod", out var period)
+                        return item.TryGetProperty("menuPeriod", out JsonElement period)
                             ? period.GetString()
                             : null;
                     }
@@ -158,7 +159,7 @@ public static class OrderScenarioHelpers
         // otherwise re-match the first call's stale frame. Recording the browser log's length
         // before scripting this call and requiring Sequence >= that watermark scopes the wait to
         // frames this call could actually have produced.
-        var browserWatermark = browser.ReceivedFrames.Count;
+        int browserWatermark = browser.ReceivedFrames.Count;
 
         connection.Script.Enqueue(new ResponseScript([
             new FunctionCallEvent(Name: toolName, ArgumentsJson: argumentsJson, CallId: callId),
@@ -170,31 +171,31 @@ public static class OrderScenarioHelpers
         // would, without needing to simulate real audio timing.
         await browser.SendResponseCreateAsync(ct);
 
-        var functionCallOutput = await connection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? functionCallOutput = await connection.ReceivedFrames.WaitForAsync(
             f => f.Type == "conversation.item.create" &&
-                 f.Json.TryGetProperty("item", out var item) &&
-                 item.TryGetProperty("type", out var itemType) &&
+                 f.Json.TryGetProperty("item", out JsonElement item) &&
+                 item.TryGetProperty("type", out JsonElement itemType) &&
                  itemType.GetString() == "function_call_output" &&
-                 item.TryGetProperty("call_id", out var respondedCallId) &&
+                 item.TryGetProperty("call_id", out JsonElement respondedCallId) &&
                  respondedCallId.GetString() == callId,
             FrameTimeout, ct);
         Assert.True(functionCallOutput is not null,
             $"Expected a conversation.item.create(function_call_output) for call_id={callId} upstream within {FrameTimeout}.");
 
-        var outputText = functionCallOutput!.Json.GetProperty("item").GetProperty("output").GetString() ?? "";
+        string outputText = functionCallOutput.Json.GetProperty("item").GetProperty("output").GetString() ?? "";
 
         string? toolResultJson = null;
         if (toClient)
         {
-            var toolResponse = await browser.ReceivedFrames.WaitForAsync(
+            RecordedFrame? toolResponse = await browser.ReceivedFrames.WaitForAsync(
                 f => f.Sequence >= browserWatermark &&
                      f.Type == "extension.middle_tier_tool_response" &&
-                     f.Json.TryGetProperty("tool_name", out var toolNameProp) &&
+                     f.Json.TryGetProperty("tool_name", out JsonElement toolNameProp) &&
                      toolNameProp.GetString() == toolName,
                 FrameTimeout, ct);
             Assert.True(toolResponse is not null,
                 $"Expected extension.middle_tier_tool_response for {toolName} (call_id={callId}) on the browser within {FrameTimeout}.");
-            toolResultJson = toolResponse!.Json.GetProperty("tool_result").GetString();
+            toolResultJson = toolResponse.Json.GetProperty("tool_result").GetString();
         }
 
         // After a tool call, rtmt.py auto-issues a bare follow-up response.create upstream to get
@@ -202,7 +203,7 @@ public static class OrderScenarioHelpers
         // it advance/emit the round trip token. Waiting for an index strictly greater than the
         // caller's last-seen one (rather than just "the next round trip frame") means a second
         // scripted tool call in the same test can never race an already-observed-but-stale frame.
-        var nextRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+        RecordedFrame? nextRoundTrip = await browser.ReceivedFrames.WaitForAsync(
             f => f.Type == "extension.round_trip_token" &&
                  f.Json.GetProperty("roundTripIndex").GetInt32() > previousRoundTripIndex,
             FrameTimeout, ct);
@@ -224,10 +225,10 @@ public static class OrderScenarioHelpers
             // which it could still show up. See ToolErrorSessionSurvivesTests's N1 mutation-testing
             // note for why this ordering guarantee is what makes the check deterministic instead of
             // racy (previously observed to catch Rick's mutation on only ~2 of 3 runs).
-            var strayToolResponse = browser.ReceivedFrames.Snapshot().Any(f =>
+            bool strayToolResponse = browser.ReceivedFrames.Snapshot().Any(f =>
                 f.Sequence >= browserWatermark &&
                 f.Type == "extension.middle_tier_tool_response" &&
-                f.Json.TryGetProperty("tool_name", out var strayToolNameProp) &&
+                f.Json.TryGetProperty("tool_name", out JsonElement strayToolNameProp) &&
                 strayToolNameProp.GetString() == toolName);
             Assert.False(strayToolResponse,
                 $"Expected no extension.middle_tier_tool_response for {toolName} (call_id={callId}) " +
@@ -246,7 +247,7 @@ public static class OrderScenarioHelpers
         return new ToolCallResult(
             outputText,
             toolResultJson,
-            nextRoundTrip!.Json.GetProperty("roundTripIndex").GetInt32());
+            nextRoundTrip.Json.GetProperty("roundTripIndex").GetInt32());
     }
 
     /// <summary>Runs a sequence of `update_order` "add"/"remove" steps (as scripted by
@@ -264,8 +265,8 @@ public static class OrderScenarioHelpers
         string callIdPrefix = "call_step")
     {
         ToolCallResult? last = null;
-        var i = 0;
-        foreach (var step in steps)
+        int i = 0;
+        foreach ((string Action, string Item, string Size, int Quantity, decimal Price) step in steps)
         {
             if (step.Action == "reset")
             {
@@ -274,7 +275,7 @@ public static class OrderScenarioHelpers
             }
             else
             {
-                var argsJson = JsonSerializer.Serialize(new
+                string argsJson = JsonSerializer.Serialize(new
                 {
                     action = step.Action,
                     item_name = step.Item,
@@ -290,7 +291,7 @@ public static class OrderScenarioHelpers
         }
 
         Assert.True(last is not null, "RunOrderStepsAsync requires at least one step.");
-        return last!;
+        return last;
     }
 
     /// <summary>
@@ -321,7 +322,7 @@ public static class OrderScenarioHelpers
     /// </summary>
     public static void AssertMoneyEqual(decimal expected, decimal actual, string? because = null)
     {
-        var diff = Math.Abs(expected - actual);
+        decimal diff = Math.Abs(expected - actual);
         Assert.True(diff <= MoneyTolerance,
             because ?? $"Expected {expected} but got {actual} (difference {diff} exceeds tolerance {MoneyTolerance}).");
     }
@@ -377,7 +378,7 @@ public static class OrderScenarioHelpers
         IReadOnlyList<string>? expectedAvailableSizes = null)
     {
         using var doc = JsonDocument.Parse(functionCallOutputText);
-        var root = doc.RootElement;
+        JsonElement root = doc.RootElement;
         Assert.Equal("rejected", root.GetProperty("status").GetString());
         Assert.False(root.GetProperty("item_added").GetBoolean());
         Assert.Equal(expectedReason, root.GetProperty("reason").GetString());
@@ -389,10 +390,9 @@ public static class OrderScenarioHelpers
             "Rejection message must be non-empty guest-facing text.");
         if (expectedAvailableSizes is not null)
         {
-            var actualSizes = root.GetProperty("available_sizes")
+            string[] actualSizes = [.. root.GetProperty("available_sizes")
                 .EnumerateArray()
-                .Select(e => e.GetString()!)
-                .ToArray();
+                .Select(e => e.GetString()!)];
             Assert.Equal(expectedAvailableSizes, actualSizes);
         }
 
@@ -400,11 +400,11 @@ public static class OrderScenarioHelpers
         // the C# port only needs to mirror "the same keys, types and values, compared parsed"
         // -- not a byte-for-byte string -- but that still means no *extra* keys the Python
         // side never emits. available_sizes only belongs on a size_not_available rejection.
-        var allowedKeys = expectedReason == "size_not_available"
-            ? new[] { "status", "item_added", "reason", "item_name", "message", "available_sizes" }
-            : new[] { "status", "item_added", "reason", "item_name", "message" };
-        var actualKeys = root.EnumerateObject().Select(p => p.Name).ToArray();
-        var unexpectedKeys = actualKeys.Except(allowedKeys).ToArray();
+        string[] allowedKeys = expectedReason == "size_not_available"
+            ? ["status", "item_added", "reason", "item_name", "message", "available_sizes"]
+            : ["status", "item_added", "reason", "item_name", "message"];
+        string[] actualKeys = [.. root.EnumerateObject().Select(p => p.Name)];
+        string[] unexpectedKeys = [.. actualKeys.Except(allowedKeys)];
         Assert.True(unexpectedKeys.Length == 0,
             $"Rejection object has unexpected extra key(s) not in the documented contract: " +
             $"{string.Join(", ", unexpectedKeys)} (full keys: {string.Join(", ", actualKeys)})");

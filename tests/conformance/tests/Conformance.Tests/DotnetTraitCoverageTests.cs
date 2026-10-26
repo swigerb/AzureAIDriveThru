@@ -1,6 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Reflection;
 using Conformance.Harness;
 using Xunit;
@@ -623,34 +620,32 @@ public sealed class DotnetTraitCoverageTests
     [Fact]
     public void Every_test_class_in_the_assembly_carries_an_explicit_dotnet_classification()
     {
-        var assembly = typeof(DotnetTraitCoverageTests).Assembly;
+        Assembly assembly = typeof(DotnetTraitCoverageTests).Assembly;
         var violations = new List<string>();
 
-        foreach (var type in assembly.GetTypes())
+        foreach (Type type in assembly.GetTypes())
         {
             if (type.IsAbstract)
             {
                 continue;
             }
 
-            var classValues = type.GetCustomAttributes<TraitAttribute>(inherit: true)
+            string[] classValues = [.. type.GetCustomAttributes<TraitAttribute>(inherit: true)
                 .Where(t => t.Name == TraitName)
-                .Select(t => t.Value)
-                .ToArray();
+                .Select(t => t.Value)];
 
-            foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static))
+            foreach (MethodInfo method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static))
             {
                 if (!method.IsDefined(typeof(FactAttribute), inherit: true))
                 {
                     continue;
                 }
 
-                var methodValues = method.GetCustomAttributes<TraitAttribute>(inherit: true)
+                string[] methodValues = [.. method.GetCustomAttributes<TraitAttribute>(inherit: true)
                     .Where(t => t.Name == TraitName)
-                    .Select(t => t.Value)
-                    .ToArray();
+                    .Select(t => t.Value)];
 
-                var effective = classValues.Concat(methodValues).Distinct().ToArray();
+                string[] effective = [.. classValues.Concat(methodValues).Distinct()];
 
                 if (effective.Length == 0)
                 {
@@ -662,7 +657,7 @@ public sealed class DotnetTraitCoverageTests
                     continue;
                 }
 
-                var invalid = effective.Where(v => v != "ready" && !v.StartsWith("n/a-", StringComparison.Ordinal)).ToArray();
+                string[] invalid = [.. effective.Where(v => v != "ready" && !v.StartsWith("n/a-", StringComparison.Ordinal))];
                 if (invalid.Length > 0)
                 {
                     violations.Add($"{type.FullName}.{method.Name}: unrecognized Dotnet trait value(s) " +
@@ -689,7 +684,7 @@ public sealed class DotnetTraitCoverageTests
             "AuthRowCapabilityGated classes whenever Enforces(\"dotnet\") is false) could still " +
             "clear its lower bound from unrelated growth elsewhere, hiding the regression.");
 
-        var count = CountFloorEligibleDotnetReadyTestMethods();
+        int count = CountFloorEligibleDotnetReadyTestMethods();
 
         Assert.True(count >= 373,
             $"Expected at least 373 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")], " +
@@ -740,13 +735,13 @@ public sealed class DotnetTraitCoverageTests
     /// </summary>
     private static bool TheoryYieldsZeroRowsWhenSkipGated(MethodInfo method)
     {
-        var theoryAttribute = method.GetCustomAttribute<TheoryAttribute>(inherit: true);
+        TheoryAttribute? theoryAttribute = method.GetCustomAttribute<TheoryAttribute>(inherit: true);
         if (theoryAttribute is null || !theoryAttribute.SkipTestWithoutData)
         {
             return false;
         }
 
-        var memberDataAttributes = method.GetCustomAttributes<MemberDataAttribute>(inherit: true).ToArray();
+        MemberDataAttribute[] memberDataAttributes = [.. method.GetCustomAttributes<MemberDataAttribute>(inherit: true)];
         if (memberDataAttributes.Length == 0)
         {
             // No MemberData source to resolve (e.g. ClassData/InlineData) -- can't determine a
@@ -754,10 +749,10 @@ public sealed class DotnetTraitCoverageTests
             return false;
         }
 
-        foreach (var memberData in memberDataAttributes)
+        foreach (MemberDataAttribute? memberData in memberDataAttributes)
         {
-            var declaringType = memberData.MemberType ?? method.DeclaringType!;
-            if (!TryResolveMemberDataRows(declaringType, memberData, out var rows))
+            Type declaringType = memberData.MemberType ?? method.DeclaringType!;
+            if (!TryResolveMemberDataRows(declaringType, memberData, out IEnumerable<object?>? rows))
             {
                 // Can't resolve this source as a method, property, or field -- fail CLOSED:
                 // exclude it from the floor rather than risk silently counting a SKIPPED row.
@@ -790,24 +785,24 @@ public sealed class DotnetTraitCoverageTests
     private static bool TryResolveMemberDataRows(
         Type declaringType, MemberDataAttribute memberData, out IEnumerable<object?>? rows)
     {
-        const BindingFlags flags = BindingFlags.Public | BindingFlags.Static | BindingFlags.NonPublic;
-        var arguments = memberData.Arguments is { Length: > 0 } args ? args : null;
+        const BindingFlags Flags = BindingFlags.Public | BindingFlags.Static | BindingFlags.NonPublic;
+        object?[]? arguments = memberData.Arguments is { Length: > 0 } args ? args : null;
 
-        var methodSource = declaringType.GetMethod(memberData.MemberName, flags);
+        MethodInfo? methodSource = declaringType.GetMethod(memberData.MemberName, Flags);
         if (methodSource is not null)
         {
             rows = (methodSource.Invoke(null, arguments) as System.Collections.IEnumerable)?.Cast<object?>();
             return true;
         }
 
-        var propertySource = declaringType.GetProperty(memberData.MemberName, flags);
+        PropertyInfo? propertySource = declaringType.GetProperty(memberData.MemberName, Flags);
         if (propertySource is not null)
         {
             rows = (propertySource.GetValue(null) as System.Collections.IEnumerable)?.Cast<object?>();
             return true;
         }
 
-        var fieldSource = declaringType.GetField(memberData.MemberName, flags);
+        FieldInfo? fieldSource = declaringType.GetField(memberData.MemberName, Flags);
         if (fieldSource is not null)
         {
             rows = (fieldSource.GetValue(null) as System.Collections.IEnumerable)?.Cast<object?>();
@@ -830,28 +825,28 @@ public sealed class DotnetTraitCoverageTests
     [Fact]
     public void SkipTestWithoutData_MemberData_sources_are_all_resolvable()
     {
-        var assembly = typeof(DotnetTraitCoverageTests).Assembly;
+        Assembly assembly = typeof(DotnetTraitCoverageTests).Assembly;
         var violations = new List<string>();
 
-        foreach (var type in assembly.GetTypes())
+        foreach (Type type in assembly.GetTypes())
         {
             if (type.IsAbstract)
             {
                 continue;
             }
 
-            foreach (var method in type.GetMethods(
+            foreach (MethodInfo method in type.GetMethods(
                 BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static))
             {
-                var theoryAttribute = method.GetCustomAttribute<TheoryAttribute>(inherit: true);
+                TheoryAttribute? theoryAttribute = method.GetCustomAttribute<TheoryAttribute>(inherit: true);
                 if (theoryAttribute is null || !theoryAttribute.SkipTestWithoutData)
                 {
                     continue;
                 }
 
-                foreach (var memberData in method.GetCustomAttributes<MemberDataAttribute>(inherit: true))
+                foreach (MemberDataAttribute memberData in method.GetCustomAttributes<MemberDataAttribute>(inherit: true))
                 {
-                    var declaringType = memberData.MemberType ?? method.DeclaringType!;
+                    Type declaringType = memberData.MemberType ?? method.DeclaringType!;
                     if (!TryResolveMemberDataRows(declaringType, memberData, out _))
                     {
                         violations.Add($"{type.FullName}.{method.Name}: [MemberData(\"{memberData.MemberName}\")] " +
@@ -894,11 +889,11 @@ public sealed class DotnetTraitCoverageTests
 #pragma warning disable xUnit1015 // MemberData must reference an existing member -- that's the point of UnresolvableSource
     private abstract class ZeroRowGuardFixtures
     {
-        public static IEnumerable<object[]> EmptyProperty => Array.Empty<object[]>();
+        public static IEnumerable<object[]> EmptyProperty => [];
 
-        public static readonly IEnumerable<object[]> EmptyField = Array.Empty<object[]>();
+        public static readonly IEnumerable<object[]> EmptyField = [];
 
-        public static IEnumerable<object[]> NonEmptyProperty => new[] { new object[] { 1 } };
+        public static IEnumerable<object[]> NonEmptyProperty => [[1]];
 
         [Theory(SkipTestWithoutData = true)]
         [MemberData(nameof(EmptyProperty))]
@@ -934,10 +929,10 @@ public sealed class DotnetTraitCoverageTests
     [Fact]
     public void TryResolveMemberDataRows_resolves_empty_property_backed_source()
     {
-        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.EmptyPropertySource));
-        var memberData = method.GetCustomAttribute<MemberDataAttribute>(inherit: true)!;
+        MethodInfo method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.EmptyPropertySource));
+        MemberDataAttribute memberData = method.GetCustomAttribute<MemberDataAttribute>(inherit: true)!;
 
-        var resolved = TryResolveMemberDataRows(typeof(ZeroRowGuardFixtures), memberData, out var rows);
+        bool resolved = TryResolveMemberDataRows(typeof(ZeroRowGuardFixtures), memberData, out IEnumerable<object?>? rows);
 
         Assert.True(resolved, "A static property-backed [MemberData] source must resolve.");
         Assert.NotNull(rows);
@@ -952,10 +947,10 @@ public sealed class DotnetTraitCoverageTests
     [Fact]
     public void TryResolveMemberDataRows_resolves_empty_field_backed_source()
     {
-        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.EmptyFieldSource));
-        var memberData = method.GetCustomAttribute<MemberDataAttribute>(inherit: true)!;
+        MethodInfo method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.EmptyFieldSource));
+        MemberDataAttribute memberData = method.GetCustomAttribute<MemberDataAttribute>(inherit: true)!;
 
-        var resolved = TryResolveMemberDataRows(typeof(ZeroRowGuardFixtures), memberData, out var rows);
+        bool resolved = TryResolveMemberDataRows(typeof(ZeroRowGuardFixtures), memberData, out IEnumerable<object?>? rows);
 
         Assert.True(resolved, "A static field-backed [MemberData] source must resolve.");
         Assert.NotNull(rows);
@@ -970,10 +965,10 @@ public sealed class DotnetTraitCoverageTests
     [Fact]
     public void TryResolveMemberDataRows_resolves_non_empty_property_backed_source_with_rows()
     {
-        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.NonEmptyPropertySource));
-        var memberData = method.GetCustomAttribute<MemberDataAttribute>(inherit: true)!;
+        MethodInfo method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.NonEmptyPropertySource));
+        MemberDataAttribute memberData = method.GetCustomAttribute<MemberDataAttribute>(inherit: true)!;
 
-        var resolved = TryResolveMemberDataRows(typeof(ZeroRowGuardFixtures), memberData, out var rows);
+        bool resolved = TryResolveMemberDataRows(typeof(ZeroRowGuardFixtures), memberData, out IEnumerable<object?>? rows);
 
         Assert.True(resolved);
         Assert.NotNull(rows);
@@ -988,10 +983,10 @@ public sealed class DotnetTraitCoverageTests
     [Fact]
     public void TryResolveMemberDataRows_fails_for_unresolvable_source()
     {
-        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.UnresolvableSource));
-        var memberData = method.GetCustomAttribute<MemberDataAttribute>(inherit: true)!;
+        MethodInfo method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.UnresolvableSource));
+        MemberDataAttribute memberData = method.GetCustomAttribute<MemberDataAttribute>(inherit: true)!;
 
-        var resolved = TryResolveMemberDataRows(typeof(ZeroRowGuardFixtures), memberData, out var rows);
+        bool resolved = TryResolveMemberDataRows(typeof(ZeroRowGuardFixtures), memberData, out IEnumerable<object?>? rows);
 
         Assert.False(resolved);
         Assert.Null(rows);
@@ -1008,7 +1003,7 @@ public sealed class DotnetTraitCoverageTests
     [Fact]
     public void TheoryYieldsZeroRowsWhenSkipGated_excludes_empty_property_backed_MemberData()
     {
-        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.EmptyPropertySource));
+        MethodInfo method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.EmptyPropertySource));
 
         Assert.True(TheoryYieldsZeroRowsWhenSkipGated(method),
             "An empty static property-backed [MemberData] source must be excluded (treated as " +
@@ -1021,7 +1016,7 @@ public sealed class DotnetTraitCoverageTests
     [Fact]
     public void TheoryYieldsZeroRowsWhenSkipGated_excludes_empty_field_backed_MemberData()
     {
-        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.EmptyFieldSource));
+        MethodInfo method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.EmptyFieldSource));
 
         Assert.True(TheoryYieldsZeroRowsWhenSkipGated(method),
             "An empty static field-backed [MemberData] source must be excluded (treated as zero " +
@@ -1035,7 +1030,7 @@ public sealed class DotnetTraitCoverageTests
     [Fact]
     public void TheoryYieldsZeroRowsWhenSkipGated_counts_non_empty_property_backed_MemberData()
     {
-        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.NonEmptyPropertySource));
+        MethodInfo method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.NonEmptyPropertySource));
 
         Assert.False(TheoryYieldsZeroRowsWhenSkipGated(method),
             "A non-empty static property-backed [MemberData] source must still count toward the " +
@@ -1051,7 +1046,7 @@ public sealed class DotnetTraitCoverageTests
     [Fact]
     public void TheoryYieldsZeroRowsWhenSkipGated_fails_closed_for_unresolvable_MemberData()
     {
-        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.UnresolvableSource));
+        MethodInfo method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.UnresolvableSource));
 
         Assert.True(TheoryYieldsZeroRowsWhenSkipGated(method),
             "A [MemberData] source that resolves as neither a method, property, nor field must " +
@@ -1087,10 +1082,10 @@ public sealed class DotnetTraitCoverageTests
     /// </summary>
     private static int CountFloorEligibleDotnetReadyTestMethods()
     {
-        var assembly = typeof(DotnetTraitCoverageTests).Assembly;
-        var count = 0;
+        Assembly assembly = typeof(DotnetTraitCoverageTests).Assembly;
+        int count = 0;
 
-        foreach (var type in assembly.GetTypes())
+        foreach (Type type in assembly.GetTypes())
         {
             if (type.IsAbstract)
             {
@@ -1103,9 +1098,9 @@ public sealed class DotnetTraitCoverageTests
                 continue;
             }
 
-            var classHasTrait = HasDotnetReadyTrait(type.GetCustomAttributes<TraitAttribute>(inherit: true));
+            bool classHasTrait = HasDotnetReadyTrait(type.GetCustomAttributes<TraitAttribute>(inherit: true));
 
-            foreach (var method in type.GetMethods(
+            foreach (MethodInfo method in type.GetMethods(
                 BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static))
             {
                 if (!method.IsDefined(typeof(FactAttribute), inherit: true))
@@ -1113,7 +1108,7 @@ public sealed class DotnetTraitCoverageTests
                     continue;
                 }
 
-                var methodHasTrait = HasDotnetReadyTrait(method.GetCustomAttributes<TraitAttribute>(inherit: true));
+                bool methodHasTrait = HasDotnetReadyTrait(method.GetCustomAttributes<TraitAttribute>(inherit: true));
                 if (!classHasTrait && !methodHasTrait)
                 {
                     continue;

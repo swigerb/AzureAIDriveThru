@@ -1,6 +1,4 @@
-using System.Linq;
 using System.Text.Json;
-using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 
@@ -52,17 +50,17 @@ public sealed class CustomisedItemMenuLookupTests
         int expectedItemCountAfter,
         CancellationToken ct)
     {
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
         if (precedingSteps.Length > 0)
         {
-            var setup = await OrderScenarioHelpers.RunOrderStepsAsync(
+            ToolCallResult setup = await OrderScenarioHelpers.RunOrderStepsAsync(
                 connection, browser, precedingSteps, roundTripIndex, ct, callIdPrefix: "call_setup");
             roundTripIndex = setup.RoundTripIndex;
         }
 
-        var rejected = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult rejected = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
             JsonSerializer.Serialize(new
             {
@@ -77,7 +75,7 @@ public sealed class CustomisedItemMenuLookupTests
         OrderScenarioHelpers.AssertRejectionShape(
             rejected.FunctionCallOutputText, expectedReason: "not_on_menu", expectedItemName: offMenuItemName);
 
-        var result = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult result = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "get_order", "{}", "call_get_after_reject", rejected.RoundTripIndex, ct);
         OrderScenarioHelpers.AssertMoneyEqual(
             expectedTotalAfter,
@@ -94,22 +92,22 @@ public sealed class CustomisedItemMenuLookupTests
         public Task Customised_chili_cheese_tots_is_charged_in_full_alongside_a_combo_not_absorbed() =>
             fixture.RunAsync(async () =>
             {
-                var ct = TestContext.Current.CancellationToken;
-                const string item = "Chili Cheese Tots (Extra Cheese)";
-                const decimal unitPrice = 3.79m; // app/frontend/src/data/menuItems.json, "Chili Cheese Tots" Medium
+                CancellationToken ct = TestContext.Current.CancellationToken;
+                const string Item = "Chili Cheese Tots (Extra Cheese)";
+                const decimal UnitPrice = 3.79m; // app/frontend/src/data/menuItems.json, "Chili Cheese Tots" Medium
 
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-                await using var _ = browser;
+                (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+                await using RealtimeBrowserClient _ = browser;
 
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+                ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
                     connection, browser,
                     [
                         ("add", BaseComboName, BaseComboSize, 1, BaseComboPrice),
-                        ("add", item, "medium", 1, unitPrice),
+                        ("add", Item, "medium", 1, UnitPrice),
                     ],
                     roundTripIndex, ct);
 
-                OrderScenarioHelpers.AssertMoneyEqual(BaseComboPrice + unitPrice, OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!));
+                OrderScenarioHelpers.AssertMoneyEqual(BaseComboPrice + UnitPrice, OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!));
                 Assert.Equal(2, OrderScenarioHelpers.GetOrderItemCount(result.ToolResultJson!));
             });
 
@@ -118,22 +116,22 @@ public sealed class CustomisedItemMenuLookupTests
         public Task Customised_chili_cheese_groovy_fries_is_charged_in_full_alongside_a_combo_not_absorbed() =>
             fixture.RunAsync(async () =>
             {
-                var ct = TestContext.Current.CancellationToken;
-                const string item = "Chili Cheese Groovy Fries (No Chili)";
-                const decimal unitPrice = 3.79m; // app/frontend/src/data/menuItems.json, "Chili Cheese Groovy Fries" Medium
+                CancellationToken ct = TestContext.Current.CancellationToken;
+                const string Item = "Chili Cheese Groovy Fries (No Chili)";
+                const decimal UnitPrice = 3.79m; // app/frontend/src/data/menuItems.json, "Chili Cheese Groovy Fries" Medium
 
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-                await using var _ = browser;
+                (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+                await using RealtimeBrowserClient _ = browser;
 
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+                ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
                     connection, browser,
                     [
                         ("add", BaseComboName, BaseComboSize, 1, BaseComboPrice),
-                        ("add", item, "medium", 1, unitPrice),
+                        ("add", Item, "medium", 1, UnitPrice),
                     ],
                     roundTripIndex, ct);
 
-                OrderScenarioHelpers.AssertMoneyEqual(BaseComboPrice + unitPrice, OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!));
+                OrderScenarioHelpers.AssertMoneyEqual(BaseComboPrice + UnitPrice, OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!));
                 Assert.Equal(2, OrderScenarioHelpers.GetOrderItemCount(result.ToolResultJson!));
             });
 
@@ -142,18 +140,18 @@ public sealed class CustomisedItemMenuLookupTests
         public Task Customised_plain_tots_still_absorbs_into_the_combo_side_slot() =>
             fixture.RunAsync(async () =>
             {
-                var ct = TestContext.Current.CancellationToken;
-                const string item = "Tots (Extra Crispy)";
-                const decimal unitPrice = 2.79m; // app/frontend/src/data/menuItems.json, "Tots" Medium
+                CancellationToken ct = TestContext.Current.CancellationToken;
+                const string Item = "Tots (Extra Crispy)";
+                const decimal UnitPrice = 2.79m; // app/frontend/src/data/menuItems.json, "Tots" Medium
 
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-                await using var _ = browser;
+                (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+                await using RealtimeBrowserClient _ = browser;
 
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+                ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
                     connection, browser,
                     [
                         ("add", BaseComboName, BaseComboSize, 1, BaseComboPrice),
-                        ("add", item, "medium", 1, unitPrice),
+                        ("add", Item, "medium", 1, UnitPrice),
                     ],
                     roundTripIndex, ct);
 
@@ -179,19 +177,19 @@ public sealed class CustomisedItemMenuLookupTests
         public Task Plain_tots_alias_absorbs_into_the_combo_side_slot(string item) =>
             fixture.RunAsync(async () =>
             {
-                var ct = TestContext.Current.CancellationToken;
-                const decimal unitPrice = 2.79m; // arbitrary -- update_order's price is caller-supplied
-                                                  // and never menu-validated for an alias name; only
-                                                  // comboSlot behaviour is under test.
+                CancellationToken ct = TestContext.Current.CancellationToken;
+                const decimal UnitPrice = 2.79m; // arbitrary -- update_order's price is caller-supplied
+                                                 // and never menu-validated for an alias name; only
+                                                 // comboSlot behaviour is under test.
 
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-                await using var _ = browser;
+                (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+                await using RealtimeBrowserClient _ = browser;
 
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+                ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
                     connection, browser,
                     [
                         ("add", BaseComboName, BaseComboSize, 1, BaseComboPrice),
-                        ("add", item, "medium", 1, unitPrice),
+                        ("add", item, "medium", 1, UnitPrice),
                     ],
                     roundTripIndex, ct);
 
@@ -221,19 +219,19 @@ public sealed class CustomisedItemMenuLookupTests
         public Task One_word_and_hyphenated_tots_alias_forms_absorb_into_the_combo_side_slot(string item) =>
             fixture.RunAsync(async () =>
             {
-                var ct = TestContext.Current.CancellationToken;
-                const decimal unitPrice = 2.79m; // arbitrary -- update_order's price is caller-supplied
-                                                  // and never menu-validated for an alias name; only
-                                                  // comboSlot behaviour is under test.
+                CancellationToken ct = TestContext.Current.CancellationToken;
+                const decimal UnitPrice = 2.79m; // arbitrary -- update_order's price is caller-supplied
+                                                 // and never menu-validated for an alias name; only
+                                                 // comboSlot behaviour is under test.
 
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-                await using var _ = browser;
+                (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+                await using RealtimeBrowserClient _ = browser;
 
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+                ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
                     connection, browser,
                     [
                         ("add", BaseComboName, BaseComboSize, 1, BaseComboPrice),
-                        ("add", item, "medium", 1, unitPrice),
+                        ("add", item, "medium", 1, UnitPrice),
                     ],
                     roundTripIndex, ct);
 
@@ -257,7 +255,7 @@ public sealed class CustomisedItemMenuLookupTests
         public Task Near_miss_tots_spellings_are_rejected_as_not_on_menu(string item) =>
             fixture.RunAsync(async () =>
             {
-                var ct = TestContext.Current.CancellationToken;
+                CancellationToken ct = TestContext.Current.CancellationToken;
                 await AssertOffMenuAddIsRejectedAsync(
                     fixture,
                     [("add", BaseComboName, BaseComboSize, 1, BaseComboPrice)],
@@ -279,7 +277,7 @@ public sealed class CustomisedItemMenuLookupTests
         public Task Size_word_in_the_name_is_rejected_as_not_on_menu() =>
             fixture.RunAsync(async () =>
             {
-                var ct = TestContext.Current.CancellationToken;
+                CancellationToken ct = TestContext.Current.CancellationToken;
                 await AssertOffMenuAddIsRejectedAsync(
                     fixture,
                     [("add", BaseComboName, BaseComboSize, 1, BaseComboPrice)],
@@ -294,17 +292,17 @@ public sealed class CustomisedItemMenuLookupTests
         public Task Size_word_as_a_bracketed_modifier_still_absorbs() =>
             fixture.RunAsync(async () =>
             {
-                var ct = TestContext.Current.CancellationToken;
-                const decimal unitPrice = 2.79m;
+                CancellationToken ct = TestContext.Current.CancellationToken;
+                const decimal UnitPrice = 2.79m;
 
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-                await using var _ = browser;
+                (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+                await using RealtimeBrowserClient _ = browser;
 
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+                ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
                     connection, browser,
                     [
                         ("add", BaseComboName, BaseComboSize, 1, BaseComboPrice),
-                        ("add", "Tater Tots (Large)", "large", 1, unitPrice),
+                        ("add", "Tater Tots (Large)", "large", 1, UnitPrice),
                     ],
                     roundTripIndex, ct);
 
@@ -328,7 +326,7 @@ public sealed class CustomisedItemMenuLookupTests
         public Task Off_menu_side_like_item_is_rejected_as_not_on_menu(string item) =>
             fixture.RunAsync(async () =>
             {
-                var ct = TestContext.Current.CancellationToken;
+                CancellationToken ct = TestContext.Current.CancellationToken;
                 await AssertOffMenuAddIsRejectedAsync(
                     fixture,
                     [("add", BaseComboName, BaseComboSize, 1, BaseComboPrice)],
@@ -346,7 +344,7 @@ public sealed class CustomisedItemMenuLookupTests
         public Task Off_menu_fountain_drink_is_rejected_as_not_on_menu() =>
             fixture.RunAsync(async () =>
             {
-                var ct = TestContext.Current.CancellationToken;
+                CancellationToken ct = TestContext.Current.CancellationToken;
                 await AssertOffMenuAddIsRejectedAsync(
                     fixture,
                     [("add", BaseComboName, BaseComboSize, 1, BaseComboPrice)],
@@ -367,7 +365,7 @@ public sealed class CustomisedItemMenuLookupTests
         public Task Off_menu_spoken_shake_and_slush_variants_are_rejected_as_not_on_menu(string item) =>
             fixture.RunAsync(async () =>
             {
-                var ct = TestContext.Current.CancellationToken;
+                CancellationToken ct = TestContext.Current.CancellationToken;
                 await AssertOffMenuAddIsRejectedAsync(
                     fixture,
                     [("add", BaseComboName, BaseComboSize, 1, BaseComboPrice)],
@@ -391,7 +389,7 @@ public sealed class CustomisedItemMenuLookupTests
         public Task Off_menu_shake_or_blast_containing_a_fountain_keyword_is_rejected_as_not_on_menu(string item) =>
             fixture.RunAsync(async () =>
             {
-                var ct = TestContext.Current.CancellationToken;
+                CancellationToken ct = TestContext.Current.CancellationToken;
                 await AssertOffMenuAddIsRejectedAsync(
                     fixture,
                     [("add", BaseComboName, BaseComboSize, 1, BaseComboPrice)],
@@ -410,7 +408,7 @@ public sealed class CustomisedItemMenuLookupTests
         public Task Off_menu_steak_item_is_rejected_as_not_on_menu() =>
             fixture.RunAsync(async () =>
             {
-                var ct = TestContext.Current.CancellationToken;
+                CancellationToken ct = TestContext.Current.CancellationToken;
                 await AssertOffMenuAddIsRejectedAsync(
                     fixture,
                     [("add", BaseComboName, BaseComboSize, 1, BaseComboPrice)],
@@ -440,26 +438,26 @@ public sealed class CustomisedItemMenuLookupTests
         public Task Customised_sundae_is_charged_in_full_alongside_a_combo_not_absorbed_into_the_drink_slot() =>
             fixture.RunAsync(async () =>
             {
-                var ct = TestContext.Current.CancellationToken;
-                const string item = "Hot Fudge Sundae (Extra Fudge)";
-                const decimal unitPrice = 3.19m; // app/frontend/src/data/menuItems.json, "Hot Fudge Sundae"
+                CancellationToken ct = TestContext.Current.CancellationToken;
+                const string Item = "Hot Fudge Sundae (Extra Fudge)";
+                const decimal UnitPrice = 3.19m; // app/frontend/src/data/menuItems.json, "Hot Fudge Sundae"
 
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-                await using var _ = browser;
+                (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+                await using RealtimeBrowserClient _ = browser;
 
-                var setup = await OrderScenarioHelpers.RunOrderStepsAsync(
+                ToolCallResult setup = await OrderScenarioHelpers.RunOrderStepsAsync(
                     connection, browser,
                     [("add", BaseComboName, BaseComboSize, 1, BaseComboPrice)],
                     roundTripIndex, ct, callIdPrefix: "call_setup");
 
-                var rejected = await OrderScenarioHelpers.CallToolAsync(
+                ToolCallResult rejected = await OrderScenarioHelpers.CallToolAsync(
                     connection, browser, "update_order",
-                    JsonSerializer.Serialize(new { action = "add", item_name = item, size = "standard", quantity = 1, price = unitPrice }),
+                    JsonSerializer.Serialize(new { action = "add", item_name = Item, size = "standard", quantity = 1, price = UnitPrice }),
                     "call_reject", setup.RoundTripIndex, ct, toClient: false);
                 OrderScenarioHelpers.AssertRejectionShape(
-                    rejected.FunctionCallOutputText, expectedReason: "machine_unavailable", expectedItemName: item);
+                    rejected.FunctionCallOutputText, expectedReason: "machine_unavailable", expectedItemName: Item);
 
-                var afterReject = await OrderScenarioHelpers.CallToolAsync(
+                ToolCallResult afterReject = await OrderScenarioHelpers.CallToolAsync(
                     connection, browser, "get_order", "{}", "call_get_after_reject", rejected.RoundTripIndex, ct);
                 OrderScenarioHelpers.AssertMoneyEqual(
                     BaseComboPrice,
@@ -479,20 +477,20 @@ public sealed class CustomisedItemMenuLookupTests
             {
                 // Rick's Y4: a customised drink must not silently lose its happy-hour discount by
                 // falling through to a keyword fallback that disagrees with its base item.
-                var ct = TestContext.Current.CancellationToken;
-                const string item = "Cherry Limeade (Extra Cherries)";
-                const decimal unitPrice = 2.89m; // app/frontend/src/data/menuItems.json, "Cherry Limeade" Medium
+                CancellationToken ct = TestContext.Current.CancellationToken;
+                const string Item = "Cherry Limeade (Extra Cherries)";
+                const decimal UnitPrice = 2.89m; // app/frontend/src/data/menuItems.json, "Cherry Limeade" Medium
 
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-                await using var _ = browser;
+                (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+                await using RealtimeBrowserClient _ = browser;
 
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+                ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
                     connection, browser,
-                    [("add", item, "medium", 1, unitPrice)],
+                    [("add", Item, "medium", 1, UnitPrice)],
                     roundTripIndex, ct);
 
-                var rules = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot()).BusinessRules;
-                var expectedTotal = unitPrice * rules.HappyHourDiscount * (1 + rules.TaxRate);
+                BusinessRules rules = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot()).BusinessRules;
+                decimal expectedTotal = UnitPrice * rules.HappyHourDiscount * (1 + rules.TaxRate);
                 OrderScenarioHelpers.AssertMoneyEqual(expectedTotal, OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!));
             });
 
@@ -513,22 +511,22 @@ public sealed class CustomisedItemMenuLookupTests
                 // to pin is still covered directly, with no machine gate in the way, at the unit
                 // level (app/backend/tests/test_menu_utils.py) and by the golden dataset
                 // (GoldenMenuCategoryHappyHourTests's sanity assertion below).
-                var ct = TestContext.Current.CancellationToken;
-                const string item = "Vanilla Classic Shake (No Whip)";
-                const decimal unitPrice = 4.69m; // app/frontend/src/data/menuItems.json, "Vanilla Classic Shake" Medium
+                CancellationToken ct = TestContext.Current.CancellationToken;
+                const string Item = "Vanilla Classic Shake (No Whip)";
+                const decimal UnitPrice = 4.69m; // app/frontend/src/data/menuItems.json, "Vanilla Classic Shake" Medium
 
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-                await using var _ = browser;
+                (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+                await using RealtimeBrowserClient _ = browser;
 
-                var rejected = await OrderScenarioHelpers.CallToolAsync(
+                ToolCallResult rejected = await OrderScenarioHelpers.CallToolAsync(
                     connection, browser, "update_order",
-                    JsonSerializer.Serialize(new { action = "add", item_name = item, size = "medium", quantity = 1, price = unitPrice }),
+                    JsonSerializer.Serialize(new { action = "add", item_name = Item, size = "medium", quantity = 1, price = UnitPrice }),
                     "call_reject", roundTripIndex, ct, toClient: false);
                 OrderScenarioHelpers.AssertRejectionShape(
-                    rejected.FunctionCallOutputText, expectedReason: "machine_unavailable", expectedItemName: item);
+                    rejected.FunctionCallOutputText, expectedReason: "machine_unavailable", expectedItemName: Item);
 
                 var golden = GoldenMenuCategoryData.Load(RepoPaths.FindRepoRoot());
-                var baseItemCase = golden.Items.Single(c => c.Item == "Vanilla Classic Shake");
+                MenuCategoryCase baseItemCase = golden.Items.Single(c => c.Item == "Vanilla Classic Shake");
                 Assert.False(baseItemCase.HappyHourDiscounted, "Sanity check: base item golden row must now be full price.");
             });
 
@@ -548,19 +546,19 @@ public sealed class CustomisedItemMenuLookupTests
         public Task Customised_sundae_is_not_happy_hour_discounted() =>
             fixture.RunAsync(async () =>
             {
-                var ct = TestContext.Current.CancellationToken;
-                const string item = "Hot Fudge Sundae (Extra Fudge)";
-                const decimal unitPrice = 3.19m; // app/frontend/src/data/menuItems.json, "Hot Fudge Sundae"
+                CancellationToken ct = TestContext.Current.CancellationToken;
+                const string Item = "Hot Fudge Sundae (Extra Fudge)";
+                const decimal UnitPrice = 3.19m; // app/frontend/src/data/menuItems.json, "Hot Fudge Sundae"
 
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-                await using var _ = browser;
+                (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+                await using RealtimeBrowserClient _ = browser;
 
-                var rejected = await OrderScenarioHelpers.CallToolAsync(
+                ToolCallResult rejected = await OrderScenarioHelpers.CallToolAsync(
                     connection, browser, "update_order",
-                    JsonSerializer.Serialize(new { action = "add", item_name = item, size = "standard", quantity = 1, price = unitPrice }),
+                    JsonSerializer.Serialize(new { action = "add", item_name = Item, size = "standard", quantity = 1, price = UnitPrice }),
                     "call_reject", roundTripIndex, ct, toClient: false);
                 OrderScenarioHelpers.AssertRejectionShape(
-                    rejected.FunctionCallOutputText, expectedReason: "machine_unavailable", expectedItemName: item);
+                    rejected.FunctionCallOutputText, expectedReason: "machine_unavailable", expectedItemName: Item);
             });
 
         /// <summary>#73: a genuinely off-menu fountain drink is now rejected outright, regardless
@@ -572,7 +570,7 @@ public sealed class CustomisedItemMenuLookupTests
         public Task Off_menu_fountain_drink_is_rejected_as_not_on_menu_regardless_of_happy_hour() =>
             fixture.RunAsync(async () =>
             {
-                var ct = TestContext.Current.CancellationToken;
+                CancellationToken ct = TestContext.Current.CancellationToken;
                 await AssertOffMenuAddIsRejectedAsync(
                     fixture,
                     [],
@@ -592,7 +590,7 @@ public sealed class CustomisedItemMenuLookupTests
         public Task Off_menu_spoken_shake_and_slush_variants_are_rejected_as_not_on_menu_during_happy_hour(string item) =>
             fixture.RunAsync(async () =>
             {
-                var ct = TestContext.Current.CancellationToken;
+                CancellationToken ct = TestContext.Current.CancellationToken;
                 await AssertOffMenuAddIsRejectedAsync(fixture, [], item, expectedTotalAfter: 0m, expectedItemCountAfter: 0, ct);
             });
 
@@ -605,7 +603,7 @@ public sealed class CustomisedItemMenuLookupTests
         public Task Off_menu_spoken_shake_variant_is_rejected_as_not_on_menu_during_happy_hour() =>
             fixture.RunAsync(async () =>
             {
-                var ct = TestContext.Current.CancellationToken;
+                CancellationToken ct = TestContext.Current.CancellationToken;
                 await AssertOffMenuAddIsRejectedAsync(
                     fixture,
                     [],
@@ -629,7 +627,7 @@ public sealed class CustomisedItemMenuLookupTests
         public Task Off_menu_shake_or_blast_containing_a_fountain_keyword_is_rejected_as_not_on_menu_during_happy_hour(string item) =>
             fixture.RunAsync(async () =>
             {
-                var ct = TestContext.Current.CancellationToken;
+                CancellationToken ct = TestContext.Current.CancellationToken;
                 await AssertOffMenuAddIsRejectedAsync(fixture, [], item, expectedTotalAfter: 0m, expectedItemCountAfter: 0, ct);
             });
     }
@@ -649,18 +647,18 @@ public sealed class CustomisedItemMenuLookupTests
             {
                 // "Tots (Extra Crispy) (No Salt)" -- two separate `(...)` groups -- must strip to
                 // the bare allow-listed key "tots" exactly like a single group would.
-                var ct = TestContext.Current.CancellationToken;
-                const string item = "Tots (Extra Crispy) (No Salt)";
-                const decimal unitPrice = 2.79m; // app/frontend/src/data/menuItems.json, "Tots" Medium
+                CancellationToken ct = TestContext.Current.CancellationToken;
+                const string Item = "Tots (Extra Crispy) (No Salt)";
+                const decimal UnitPrice = 2.79m; // app/frontend/src/data/menuItems.json, "Tots" Medium
 
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-                await using var _ = browser;
+                (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+                await using RealtimeBrowserClient _ = browser;
 
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+                ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
                     connection, browser,
                     [
                         ("add", BaseComboName, BaseComboSize, 1, BaseComboPrice),
-                        ("add", item, "medium", 1, unitPrice),
+                        ("add", Item, "medium", 1, UnitPrice),
                     ],
                     roundTripIndex, ct);
 
@@ -680,23 +678,23 @@ public sealed class CustomisedItemMenuLookupTests
                 // name, not at the end -- must still strip to "Chili Cheese Tots", a real
                 // menuItems.json item that is NOT one of the two allow-listed sides, so it charges
                 // in full exactly like its unparenthesized, differently-worded sibling would.
-                var ct = TestContext.Current.CancellationToken;
-                const string item = "Chili Cheese (Extra Cheese) Tots";
-                const decimal unitPrice = 3.79m; // app/frontend/src/data/menuItems.json, "Chili Cheese Tots" Medium
+                CancellationToken ct = TestContext.Current.CancellationToken;
+                const string Item = "Chili Cheese (Extra Cheese) Tots";
+                const decimal UnitPrice = 3.79m; // app/frontend/src/data/menuItems.json, "Chili Cheese Tots" Medium
 
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-                await using var _ = browser;
+                (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+                await using RealtimeBrowserClient _ = browser;
 
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+                ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
                     connection, browser,
                     [
                         ("add", BaseComboName, BaseComboSize, 1, BaseComboPrice),
-                        ("add", item, "medium", 1, unitPrice),
+                        ("add", Item, "medium", 1, UnitPrice),
                     ],
                     roundTripIndex, ct);
 
                 OrderScenarioHelpers.AssertMoneyEqual(
-                    BaseComboPrice + unitPrice,
+                    BaseComboPrice + UnitPrice,
                     OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
                     "A mid-string parenthesized group must still strip correctly to a real, non-side menu item.");
                 Assert.Equal(2, OrderScenarioHelpers.GetOrderItemCount(result.ToolResultJson!));
@@ -713,7 +711,7 @@ public sealed class CustomisedItemMenuLookupTests
                 // and #73 means "matches no menu key" now means rejected outright as not_on_menu
                 // -- a deliberate fail-safe, never a silent free side (nor, pre-#73, a silently
                 // charged-in-full off-menu line).
-                var ct = TestContext.Current.CancellationToken;
+                CancellationToken ct = TestContext.Current.CancellationToken;
                 await AssertOffMenuAddIsRejectedAsync(
                     fixture,
                     [("add", BaseComboName, BaseComboSize, 1, BaseComboPrice)],
@@ -748,31 +746,31 @@ public sealed class CustomisedItemMenuLookupTests
         public Task Smasher_spoken_without_its_trademark_symbol_still_resolves_and_allows_an_extra() =>
             fixture.RunAsync(async () =>
             {
-                var ct = TestContext.Current.CancellationToken;
+                CancellationToken ct = TestContext.Current.CancellationToken;
                 // menuItems.json's real name is "All-American SONIC Smasher™" -- spoken/transcribed
                 // without the unspeakable "™" symbol, exactly as a guest's speech-to-text would.
-                const string smasher = "All-American SONIC Smasher";
-                const decimal smasherPrice = 5.79m; // app/frontend/src/data/menuItems.json
-                const string extra = "Add Bacon"; // tools.py EXTRAS_KEYWORDS
+                const string Smasher = "All-American SONIC Smasher";
+                const decimal SmasherPrice = 5.79m; // app/frontend/src/data/menuItems.json
+                const string Extra = "Add Bacon"; // tools.py EXTRAS_KEYWORDS
                 // #104: update_order now prices from the resolved menu record, not the
                 // caller-supplied tool price, so this must be the real menu price
                 // (personas/sonic/menu/menuItems.json, "Add Bacon" standard) rather than an
                 // arbitrary tool-call constant.
-                const decimal extraPrice = 1.00m;
+                const decimal ExtraPrice = 1.00m;
 
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-                await using var _ = browser;
+                (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+                await using RealtimeBrowserClient _ = browser;
 
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+                ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
                     connection, browser,
                     [
-                        ("add", smasher, "standard", 1, smasherPrice),
-                        ("add", extra, "standard", 1, extraPrice),
+                        ("add", Smasher, "standard", 1, SmasherPrice),
+                        ("add", Extra, "standard", 1, ExtraPrice),
                     ],
                     roundTripIndex, ct);
 
                 OrderScenarioHelpers.AssertMoneyEqual(
-                    smasherPrice + extraPrice,
+                    SmasherPrice + ExtraPrice,
                     OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
                     "A Smasher spoken without its '™' must still resolve to 'burgers & sandwiches' via " +
                     "the map, so an extra ('Add Bacon') is allowed instead of wrongly rejected.");

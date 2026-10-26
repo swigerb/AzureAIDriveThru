@@ -19,14 +19,14 @@ public sealed class ComponentUpchargeBundleTests
     [Fact]
     public void MediumComponentsAreIncludedAndLargerComponentsAddPositiveDeltas()
     {
-        var order = NewOrder();
+        OrderState order = NewOrder();
 
         order.HandleOrderUpdate("add", Bundle, "standard", 1, 10.19m);
         order.HandleOrderUpdate("add", Side, "medium", 1, 2.79m);
         order.HandleOrderUpdate("add", Drink, "medium", 1, 2.89m);
         Assert.Equal(10.19m, order.Summary.Total);
 
-        var result = order.HandleOrderUpdate("modify", Drink, "large", 1, 3.39m);
+        OrderUpdateResult result = order.HandleOrderUpdate("modify", Drink, "large", 1, 3.39m);
         Assert.Equal(0.50m, result.ComboComponentUpcharge);
         Assert.Equal("fifty cents", result.ComboComponentUpchargeDisplay);
         Assert.Equal(10.69m, order.Summary.Total);
@@ -40,12 +40,12 @@ public sealed class ComponentUpchargeBundleTests
     [Fact]
     public void OrderingLargeUpFrontMatchesResizingLaterAndBackToMediumRemovesUpcharge()
     {
-        var upfront = NewOrder();
+        OrderState upfront = NewOrder();
         upfront.HandleOrderUpdate("add", Bundle, "standard", 1, 10.19m);
         upfront.HandleOrderUpdate("add", Side, "medium", 1, 2.79m);
         upfront.HandleOrderUpdate("add", Drink, "large", 1, 3.39m);
 
-        var resized = NewOrder();
+        OrderState resized = NewOrder();
         resized.HandleOrderUpdate("add", Bundle, "standard", 1, 10.19m);
         resized.HandleOrderUpdate("add", Side, "medium", 1, 2.79m);
         resized.HandleOrderUpdate("add", Drink, "medium", 1, 2.89m);
@@ -61,20 +61,20 @@ public sealed class ComponentUpchargeBundleTests
     [Fact]
     public void QuantityTwoComponentUpchargesSplitAndRepeatedResizeTargetsRemainingUnit()
     {
-        var order = NewOrder();
+        OrderState order = NewOrder();
 
         order.HandleOrderUpdate("add", Bundle, "standard", 2, 10.19m);
         order.HandleOrderUpdate("add", Side, "medium", 2, 2.79m);
         order.HandleOrderUpdate("add", Drink, "medium", 2, 2.89m);
 
-        var first = order.HandleOrderUpdate("modify", Drink, "large", 1, 3.39m);
+        OrderUpdateResult first = order.HandleOrderUpdate("modify", Drink, "large", 1, 3.39m);
         Assert.Equal("fifty cents", first.ComboComponentUpchargeDisplay);
         Assert.Equal(2, order.Items.Count);
         Assert.Contains(order.Items, item => item.Quantity == 1 && item.Price == 10.19m && item.ComponentUpcharges.SequenceEqual([0m, 0m]));
         Assert.Contains(order.Items, item => item.Quantity == 1 && item.Price == 10.69m && item.ComponentUpcharges.SequenceEqual([0m, 0.50m]));
         Assert.Equal(20.88m, order.Summary.Total);
 
-        var second = order.HandleOrderUpdate("modify", Drink, "large", 1, 3.39m);
+        OrderUpdateResult second = order.HandleOrderUpdate("modify", Drink, "large", 1, 3.39m);
         Assert.Equal("medium", second.ComboComponentResizedFromSize);
         Assert.Equal(2, order.Items.Count);
         Assert.All(order.Items, item =>
@@ -86,7 +86,7 @@ public sealed class ComponentUpchargeBundleTests
         Assert.Equal(21.38m, order.Summary.Total);
         // #313 (Rick's review, item 1/2): the read-back spells the quantity out as a word and
         // speaks the upcharge in words, never as "$0.50" digit money.
-        var readback = order.GetGroupedOrderForReadback();
+        string readback = order.GetGroupedOrderForReadback();
         Assert.Contains("two SuperSONIC", readback);
         Assert.Contains($"{Money.FormatMoneySpoken(0.50m)} upcharge", readback);
     }
@@ -95,9 +95,9 @@ public sealed class ComponentUpchargeBundleTests
     [MemberData(nameof(PathIndependentLargeSideAndDrinkSteps))]
     public void ComponentUpchargeTotalIsPathIndependentAcrossFillAndResizeOrders((string Action, string Item, string Size, int Quantity, decimal Price)[] steps)
     {
-        var order = NewOrder();
+        OrderState order = NewOrder();
 
-        foreach (var (action, item, size, quantity, price) in steps)
+        foreach ((string? action, string? item, string? size, int quantity, decimal price) in steps)
         {
             order.HandleOrderUpdate(action, item, size, quantity, price);
         }
@@ -106,8 +106,8 @@ public sealed class ComponentUpchargeBundleTests
         Assert.Equal(new[] { 0.70m, 0.50m }, order.Items[0].ComponentUpcharges);
     }
 
-    public static TheoryData<(string Action, string Item, string Size, int Quantity, decimal Price)[]> PathIndependentLargeSideAndDrinkSteps => new()
-    {
+    public static TheoryData<(string Action, string Item, string Size, int Quantity, decimal Price)[]> PathIndependentLargeSideAndDrinkSteps =>
+    [
         new[]
         {
             ("add", Bundle, "standard", 1, 10.19m),
@@ -136,12 +136,12 @@ public sealed class ComponentUpchargeBundleTests
             ("modify", Drink, "large", 1, 3.39m),
             ("modify", Side, "large", 1, 3.49m),
         },
-    };
+    ];
 
     [Fact]
     public void SmallerComponentsGiveNoCreditAndRoute44AddsOnlyAboveMediumDelta()
     {
-        var order = NewOrder();
+        OrderState order = NewOrder();
         order.HandleOrderUpdate("add", Bundle, "standard", 1, 10.19m);
         order.HandleOrderUpdate("add", Side, "small", 1, 2.19m);
         order.HandleOrderUpdate("add", Drink, "rt44", 1, 3.79m);

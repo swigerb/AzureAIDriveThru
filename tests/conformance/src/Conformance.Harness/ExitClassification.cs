@@ -46,15 +46,15 @@ internal static class ExitClassification
         Process process, CapturedProcessOutput output, DateTimeOffset startedAt, DateTimeOffset deadline,
         string backendName)
     {
-        var remaining = deadline - DateTimeOffset.UtcNow;
+        TimeSpan remaining = deadline - DateTimeOffset.UtcNow;
         if (remaining > TimeSpan.Zero)
         {
             var drain = Task.Run(process.WaitForExit);
             await Task.WhenAny(drain, Task.Delay(remaining)).ConfigureAwait(false);
         }
 
-        var elapsed = DateTimeOffset.UtcNow - startedAt;
-        var dump = output.Dump();
+        TimeSpan elapsed = DateTimeOffset.UtcNow - startedAt;
+        string dump = output.Dump();
 
         if (PortRaceDetection.ShouldRetry(elapsed, dump))
         {

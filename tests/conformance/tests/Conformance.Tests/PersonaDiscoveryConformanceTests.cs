@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.WebSockets;
 using System.Text.Json;
+using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 
@@ -26,25 +27,25 @@ namespace Conformance.Tests;
 [Collection(ConformanceCollection.Name)]
 public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Api_personas_returns_the_designed_shape() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        using var http = ConformanceHttpClient.Create();
-        using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/api/personas"), ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        using HttpClient http = ConformanceHttpClient.Create();
+        using HttpResponseMessage response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/api/personas"), ct);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var document = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(ct));
-        var root = document.RootElement;
+        JsonElement root = document.RootElement;
 
         Assert.Equal("sonic", root.GetProperty("default").GetString());
 
-        var personas = root.GetProperty("personas");
+        JsonElement personas = root.GetProperty("personas");
         Assert.True(personas.GetArrayLength() > 0, "Expected at least one persona summary.");
-        var sonic = personas.EnumerateArray().First(p => p.GetProperty("id").GetString() == "sonic");
+        JsonElement sonic = personas.EnumerateArray().First(p => p.GetProperty("id").GetString() == "sonic");
         Assert.False(string.IsNullOrWhiteSpace(sonic.GetProperty("displayName").GetString()));
         Assert.False(string.IsNullOrWhiteSpace(sonic.GetProperty("logoUrl").GetString()));
         Assert.Equal(JsonValueKind.Object, sonic.GetProperty("theme").ValueKind);
@@ -53,10 +54,10 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
         // "/realtime"), built from BACKEND_URI/BACKEND_DOTNET_URI (#93). Whether either backend
         // entry is present at all depends on the harness's own env, so this only asserts the
         // shape of whichever entries do exist, never their count.
-        var backends = root.GetProperty("backends");
-        foreach (var backend in backends.EnumerateArray())
+        JsonElement backends = root.GetProperty("backends");
+        foreach (JsonElement backend in backends.EnumerateArray())
         {
-            var url = backend.GetProperty("url").GetString() ?? "";
+            string url = backend.GetProperty("url").GetString() ?? "";
             Assert.DoesNotContain("/realtime", url, StringComparison.Ordinal);
         }
     });
@@ -65,9 +66,9 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Api_persona_detail_returns_200_for_the_default_persona() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        using var http = ConformanceHttpClient.Create();
-        using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/api/personas/sonic"), ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        using HttpClient http = ConformanceHttpClient.Create();
+        using HttpResponseMessage response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/api/personas/sonic"), ct);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var document = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(ct));
@@ -77,9 +78,9 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
         // Rick's #120 review round 2, required item 4: `roleName` is a new field on the pinned
         // wire contract (design doc section 5.2) -- read the expected value from Sonic's OWN
         // persona.json (never a literal) so this row can't silently drift from the pack it proves.
-        var personaJsonPath = Path.Combine(fixture.PersonasDirectory, "sonic", "persona.json");
+        string personaJsonPath = Path.Combine(fixture.PersonasDirectory, "sonic", "persona.json");
         using var personaDocument = JsonDocument.Parse(await File.ReadAllTextAsync(personaJsonPath, ct));
-        var expectedRoleName = personaDocument.RootElement.GetProperty("roleName").GetString();
+        string? expectedRoleName = personaDocument.RootElement.GetProperty("roleName").GetString();
         Assert.Equal(expectedRoleName, document.RootElement.GetProperty("roleName").GetString());
     });
 
@@ -87,9 +88,9 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Api_persona_detail_returns_404_for_an_unknown_id() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        using var http = ConformanceHttpClient.Create();
-        using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/api/personas/nope"), ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        using HttpClient http = ConformanceHttpClient.Create();
+        using HttpResponseMessage response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/api/personas/nope"), ct);
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     });
@@ -98,8 +99,8 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Realtime_with_an_unknown_persona_is_rejected_with_404_before_the_websocket_opens() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var backend = fixture.Backend!.BaseUri;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Uri backend = fixture.Backend!.BaseUri;
 
         // rtmt.py's _websocket_handler resolves and validates ?persona= BEFORE `ws.prepare()`
         // (the WebSocket upgrade) runs -- a plain HTTP 404 response, never a WS-level close code.
@@ -107,9 +108,9 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
         // for asserting a pre-upgrade HTTP rejection.
         using var socket = new ClientWebSocket();
         socket.Options.CollectHttpResponseDetails = true;
-        var wsUri = await RealtimeUris.WithDefaultCredentialsAsync(backend, "persona=nope", ct);
+        Uri wsUri = await RealtimeUris.WithDefaultCredentialsAsync(backend, "persona=nope", ct);
 
-        var ex = await Assert.ThrowsAsync<WebSocketException>(() => socket.ConnectAsync(wsUri, ct));
+        WebSocketException ex = await Assert.ThrowsAsync<WebSocketException>(() => socket.ConnectAsync(wsUri, ct));
         Assert.Equal(HttpStatusCode.NotFound, socket.HttpStatusCode);
         Assert.NotEqual(WebSocketState.Open, socket.State);
         Assert.NotNull(ex);
@@ -119,14 +120,14 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Omitted_persona_binds_to_the_default_persona_visible_in_session_metadata() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
         // No `persona:` argument at all -- exactly the omitted-`?persona=` case (design doc 5.2 /
         // Rick's PR #102 review item 4: session metadata must carry the bound persona id).
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
         await browser.SendStartSessionAsync(cancellationToken: ct);
-        var metadata = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        RecordedFrame? metadata = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata", s_frameTimeout, ct);
 
         Assert.True(metadata is not null, "Expected extension.session_metadata for a fresh session.");
         Assert.Equal("sonic", metadata!.Json.GetProperty("persona").GetString());
@@ -145,8 +146,8 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
         // Issue 164 R11 (PR 167 round 2 review): also pins textRoles and theme.light.accents
         // (primaryDeep/secondaryLight) for the same reason -- both are served through the same
         // generic `ui` spread but neither was asserted here yet.
-        var ct = TestContext.Current.CancellationToken;
-        using var http = ConformanceHttpClient.Create();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        using HttpClient http = ConformanceHttpClient.Create();
 
         var personaIds = Directory.GetDirectories(fixture.PersonasDirectory)
             .Where(dir => File.Exists(Path.Combine(dir, "persona.json")))
@@ -156,18 +157,18 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
             .ToList();
         Assert.True(personaIds.Count > 0, "Expected at least one persona pack on disk.");
 
-        foreach (var personaId in personaIds)
+        foreach (string? personaId in personaIds)
         {
-            var personaJsonPath = Path.Combine(fixture.PersonasDirectory, personaId, "persona.json");
+            string personaJsonPath = Path.Combine(fixture.PersonasDirectory, personaId, "persona.json");
             using var expectedDocument = JsonDocument.Parse(await File.ReadAllTextAsync(personaJsonPath, ct));
-            var expectedRoot = expectedDocument.RootElement;
-            var expectedUi = expectedRoot.GetProperty("ui");
-            var expectedTaxRate = expectedRoot.GetProperty("pricing").GetProperty("taxRate").GetString();
+            JsonElement expectedRoot = expectedDocument.RootElement;
+            JsonElement expectedUi = expectedRoot.GetProperty("ui");
+            string? expectedTaxRate = expectedRoot.GetProperty("pricing").GetProperty("taxRate").GetString();
 
-            using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, $"/api/personas/{personaId}"), ct);
+            using HttpResponseMessage response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, $"/api/personas/{personaId}"), ct);
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             using var actualDocument = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(ct));
-            var actualRoot = actualDocument.RootElement;
+            JsonElement actualRoot = actualDocument.RootElement;
 
             Assert.Equal(expectedTaxRate, actualRoot.GetProperty("taxRate").GetString());
             AssertJsonDeepEqual(expectedUi.GetProperty("hero"), actualRoot.GetProperty("hero"), $"{personaId}.hero");
@@ -177,11 +178,11 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
             // don't declare them), so only assert presence/shape when the pack's own source
             // declares the block -- "assets.logoTile" similarly lives inside the assets
             // comparison above, not as its own separate optional check.
-            if (expectedUi.TryGetProperty("sessionBar", out var expectedSessionBar))
+            if (expectedUi.TryGetProperty("sessionBar", out JsonElement expectedSessionBar))
             {
                 AssertJsonDeepEqual(expectedSessionBar, actualRoot.GetProperty("sessionBar"), $"{personaId}.sessionBar");
             }
-            if (expectedUi.TryGetProperty("categoryIcons", out var expectedCategoryIcons))
+            if (expectedUi.TryGetProperty("categoryIcons", out JsonElement expectedCategoryIcons))
             {
                 AssertJsonDeepEqual(expectedCategoryIcons, actualRoot.GetProperty("categoryIcons"), $"{personaId}.categoryIcons");
             }
@@ -191,13 +192,13 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
             // served through the same generic `ui` spread as hero/assets above, but neither was
             // pinned against disk truth yet. `textRoles` is optional (a pack may declare none);
             // `theme.light.accents` is asserted whenever the pack declares one.
-            if (expectedUi.TryGetProperty("textRoles", out var expectedTextRoles))
+            if (expectedUi.TryGetProperty("textRoles", out JsonElement expectedTextRoles))
             {
                 AssertJsonDeepEqual(expectedTextRoles, actualRoot.GetProperty("textRoles"), $"{personaId}.textRoles");
             }
-            if (expectedUi.GetProperty("theme").GetProperty("light").TryGetProperty("accents", out var expectedAccents))
+            if (expectedUi.GetProperty("theme").GetProperty("light").TryGetProperty("accents", out JsonElement expectedAccents))
             {
-                var actualAccents = actualRoot.GetProperty("theme").GetProperty("light").GetProperty("accents");
+                JsonElement actualAccents = actualRoot.GetProperty("theme").GetProperty("light").GetProperty("accents");
                 AssertJsonDeepEqual(expectedAccents, actualAccents, $"{personaId}.theme.light.accents");
             }
         }
@@ -221,7 +222,7 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
                 Assert.True(
                     expectedProps.Keys.OrderBy(k => k, StringComparer.Ordinal).SequenceEqual(actualProps.Keys.OrderBy(k => k, StringComparer.Ordinal)),
                     $"{path}: key set mismatch (expected [{string.Join(",", expectedProps.Keys)}], actual [{string.Join(",", actualProps.Keys)}])");
-                foreach (var (key, expectedValue) in expectedProps)
+                foreach ((string? key, JsonElement expectedValue) in expectedProps)
                 {
                     AssertJsonDeepEqual(expectedValue, actualProps[key], $"{path}.{key}");
                 }
@@ -230,7 +231,7 @@ public sealed class PersonaDiscoveryConformanceTests(ConformanceFixture fixture)
                 var expectedItems = expected.EnumerateArray().ToList();
                 var actualItems = actual.EnumerateArray().ToList();
                 Assert.True(expectedItems.Count == actualItems.Count, $"{path}: array length mismatch ({expectedItems.Count} vs {actualItems.Count})");
-                for (var i = 0; i < expectedItems.Count; i++)
+                for (int i = 0; i < expectedItems.Count; i++)
                 {
                     AssertJsonDeepEqual(expectedItems[i], actualItems[i], $"{path}[{i}]");
                 }

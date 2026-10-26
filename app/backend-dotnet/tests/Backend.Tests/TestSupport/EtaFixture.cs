@@ -21,7 +21,7 @@ internal static class EtaFixture
 
     internal static Persona Load()
     {
-        var fixturesDir = Path.Combine(RepoRootLocator.Find(), "app", "backend", "tests", "fixtures", "personas");
+        string fixturesDir = Path.Combine(RepoRootLocator.Find(), "app", "backend", "tests", "fixtures", "personas");
         var catalog = PersonaCatalog.Load(personasDir: fixturesDir, personasEnv: PersonaId, defaultPersonaEnv: PersonaId);
         return catalog.Get(PersonaId);
     }

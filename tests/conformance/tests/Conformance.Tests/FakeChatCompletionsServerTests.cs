@@ -40,13 +40,13 @@ public sealed class FakeChatCompletionsServerTests
         await using var fake = new FakeChatCompletionsServer();
         fake.EnqueueMessage(FinalMessage("Never consumed by any request."));
 
-        var ex = Assert.Throws<InvalidOperationException>(fake.AssertNoPendingScriptedResponses);
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(fake.AssertNoPendingScriptedResponses);
         Assert.Contains("1 scripted", ex.Message);
 
         // The queue is already empty by the time the exception above was thrown -- a second,
         // later call (standing in for the NEXT scenario sharing this same fake instance via
         // IClassFixture) must not re-discover the same leftover and must not throw at all.
-        var exception = Record.Exception(fake.AssertNoPendingScriptedResponses);
+        Exception? exception = Record.Exception(fake.AssertNoPendingScriptedResponses);
         Assert.Null(exception);
     }
 
@@ -76,7 +76,7 @@ public sealed class FakeChatCompletionsServerTests
         // The next scenario's own check (run, per the real fixture, immediately after ITS OWN
         // body returns) must see a clean queue -- the earlier scenario's throw must not have
         // leaked state into it.
-        var exception = Record.Exception(fake.AssertNoPendingScriptedResponses);
+        Exception? exception = Record.Exception(fake.AssertNoPendingScriptedResponses);
         Assert.Null(exception);
     }
 
@@ -86,7 +86,7 @@ public sealed class FakeChatCompletionsServerTests
     {
         await using var fake = new FakeChatCompletionsServer();
 
-        var exception = Record.Exception(fake.AssertNoPendingScriptedResponses);
+        Exception? exception = Record.Exception(fake.AssertNoPendingScriptedResponses);
 
         Assert.Null(exception);
     }
@@ -111,13 +111,13 @@ public sealed class FakeChatCompletionsServerTests
         await using var fake = new FakeChatCompletionsServer();
         fake.HoldNextResponse();
 
-        var ex = Assert.Throws<InvalidOperationException>(fake.AssertNoPendingScriptedResponses);
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(fake.AssertNoPendingScriptedResponses);
         Assert.Contains("An armed HoldNextResponse() gate was", ex.Message);
 
         // Mirrors the FIFO-leak test's own "a later call is clean" assertion above: the gate (like
         // the queue) is already cleared by the time the exception was thrown, so a second, later
         // call must not re-discover it and must not throw at all.
-        var exception = Record.Exception(fake.AssertNoPendingScriptedResponses);
+        Exception? exception = Record.Exception(fake.AssertNoPendingScriptedResponses);
         Assert.Null(exception);
     }
 
@@ -139,7 +139,7 @@ public sealed class FakeChatCompletionsServerTests
     [Fact]
     public async Task Drain_releases_an_armed_but_never_claimed_HoldNextResponse_gate_so_the_next_request_does_not_hang()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         await using var fake = new FakeChatCompletionsServer();
         await fake.StartAsync(ct);
 
@@ -161,7 +161,7 @@ public sealed class FakeChatCompletionsServerTests
         using var client = new HttpClient { BaseAddress = fake.BaseUri, Timeout = TimeSpan.FromSeconds(10) };
         using var content = new StringContent(
             """{"messages":[],"model":"whatever"}""", Encoding.UTF8, "application/json");
-        using var response = await client.PostAsync("/chat/completions?api-version=2024-05-01-preview", content, ct);
+        using HttpResponseMessage response = await client.PostAsync("/chat/completions?api-version=2024-05-01-preview", content, ct);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }

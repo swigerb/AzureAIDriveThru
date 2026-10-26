@@ -1,8 +1,11 @@
 using System.Net;
+using System.Text.Json;
 using Backend.Configuration;
 using Backend.Ordering;
+using Backend.Personas;
 using Backend.Search;
 using Backend.Tests.TestSupport;
+using Backend.Tools;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -62,8 +65,8 @@ public sealed class SearchAuthHeaderTests
         string apiKey, ISearchBearerTokenProvider? bearerTokenProvider,
         HttpMessageHandler? handler = null, ILogger<SearchTool>? logger = null)
     {
-        var persona = DeltaFixture.Load();
-        var menu = PersonaOrderFactory.GetMenuCatalog(persona);
+        Persona persona = DeltaFixture.Load();
+        MenuCatalog menu = PersonaOrderFactory.GetMenuCatalog(persona);
         var searchConfig = SearchConfig.FromAppConfig(AppConfig.Load());
         var endpointConfig = new SearchEndpointConfig(
             endpoint: "https://fake-search.example.com",
@@ -74,7 +77,7 @@ public sealed class SearchAuthHeaderTests
             embeddingField: "embedding",
             useVectorQuery: true,
             useSemanticRanker: false);
-        var httpClient = handler is null ? new HttpClient() : new HttpClient(handler);
+        HttpClient httpClient = handler is null ? new HttpClient() : new HttpClient(handler);
         return new SearchTool(
             httpClient,
             menu,
@@ -92,9 +95,9 @@ public sealed class SearchAuthHeaderTests
     public async Task ApiKeyConfigured_UsesApiKeyHeader_AndNeverCallsTheTokenProvider()
     {
         var provider = new FakeSearchBearerTokenProvider("should-not-be-used");
-        var tool = NewTool(apiKey: "sk-real-search-key", provider);
+        SearchTool tool = NewTool(apiKey: "sk-real-search-key", provider);
 
-        var (name, value) = await tool.ResolveAuthHeaderAsync(CancellationToken.None);
+        (string? name, string? value) = await tool.ResolveAuthHeaderAsync(CancellationToken.None);
 
         Assert.Equal("api-key", name);
         Assert.Equal("sk-real-search-key", value);
@@ -105,9 +108,9 @@ public sealed class SearchAuthHeaderTests
     public async Task NoApiKeyConfigured_FallsBackToTheRealManagedIdentityBearerToken()
     {
         var provider = new FakeSearchBearerTokenProvider("fake-aad-token");
-        var tool = NewTool(apiKey: string.Empty, provider);
+        SearchTool tool = NewTool(apiKey: string.Empty, provider);
 
-        var (name, value) = await tool.ResolveAuthHeaderAsync(CancellationToken.None);
+        (string? name, string? value) = await tool.ResolveAuthHeaderAsync(CancellationToken.None);
 
         Assert.Equal("Authorization", name);
         // The header value is the real bearer token (same as #140's upstream fallback,
@@ -121,7 +124,7 @@ public sealed class SearchAuthHeaderTests
     public async Task NoApiKeyConfigured_RequestsAFreshTokenPerCall()
     {
         var provider = new FakeSearchBearerTokenProvider("fake-aad-token");
-        var tool = NewTool(apiKey: string.Empty, provider);
+        SearchTool tool = NewTool(apiKey: string.Empty, provider);
 
         await tool.ResolveAuthHeaderAsync(CancellationToken.None);
         await tool.ResolveAuthHeaderAsync(CancellationToken.None);
@@ -137,11 +140,11 @@ public sealed class SearchAuthHeaderTests
     public async Task TokenProviderThrows_IsSurfacedAsTheGenericApologyFallback_NotAnUnhandledException()
     {
         var logger = new RecordingLogger();
-        var tool = NewTool(apiKey: string.Empty, new ThrowingSearchBearerTokenProvider(), logger: logger);
-        var args = System.Text.Json.JsonSerializer.SerializeToElement(
+        SearchTool tool = NewTool(apiKey: string.Empty, new ThrowingSearchBearerTokenProvider(), logger: logger);
+        JsonElement args = System.Text.Json.JsonSerializer.SerializeToElement(
             new Dictionary<string, object?> { ["query"] = "anything" });
 
-        var result = await tool.ExecuteAsync(args, CancellationToken.None);
+        ToolResult result = await tool.ExecuteAsync(args, CancellationToken.None);
 
         // Falls into ExecuteAsync's generic catch-all (not the SearchApiException-specific
         // branches, since a credential failure never reaches the HTTP call at all) -- same
@@ -164,20 +167,20 @@ public sealed class SearchAuthHeaderTests
     public async Task WorkingTokenProvider_HttpCallFails_LogsTheFailure_ButNeverTheToken()
     {
         var logger = new RecordingLogger();
-        const string secretToken = "super-secret-managed-identity-token";
-        var handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.InternalServerError, """{"error":{"message":"boom"}}""");
-        var tool = NewTool(apiKey: string.Empty, new FakeSearchBearerTokenProvider(secretToken), handler, logger);
-        var args = System.Text.Json.JsonSerializer.SerializeToElement(
+        const string SecretToken = "super-secret-managed-identity-token";
+        QueuedHttpHandler handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.InternalServerError, """{"error":{"message":"boom"}}""");
+        SearchTool tool = NewTool(apiKey: string.Empty, new FakeSearchBearerTokenProvider(SecretToken), handler, logger);
+        JsonElement args = System.Text.Json.JsonSerializer.SerializeToElement(
             new Dictionary<string, object?> { ["query"] = "anything" });
 
-        var result = await tool.ExecuteAsync(args, CancellationToken.None);
+        ToolResult result = await tool.ExecuteAsync(args, CancellationToken.None);
 
         Assert.Equal("I'm sorry, I can't reach our menu data right now.", result.ToText());
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error);
         Assert.All(logger.Entries, e =>
         {
-            Assert.DoesNotContain(secretToken, e.Message);
-            Assert.DoesNotContain("Bearer " + secretToken, e.Message);
+            Assert.DoesNotContain(SecretToken, e.Message);
+            Assert.DoesNotContain("Bearer " + SecretToken, e.Message);
         });
     }
 }

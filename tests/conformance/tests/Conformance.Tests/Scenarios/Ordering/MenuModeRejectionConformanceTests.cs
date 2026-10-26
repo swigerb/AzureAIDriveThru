@@ -31,15 +31,15 @@ public sealed class MenuModeRejectionConformanceTests(MenuModeConformanceFixture
     public Task Unrecognized_mode_is_rejected_with_400_before_the_ws_upgrade_with_no_upstream_connection() =>
         fixture.RunAsync(async () =>
         {
-            var ct = TestContext.Current.CancellationToken;
-            var watermark = fixture.Realtime.ConnectionWatermark;
-            var query = $"persona={MenuModeConformanceFixture.DaypartsPersona}&mode=brunch";
+            CancellationToken ct = TestContext.Current.CancellationToken;
+            int watermark = fixture.Realtime.ConnectionWatermark;
+            string query = $"persona={MenuModeConformanceFixture.DaypartsPersona}&mode=brunch";
 
             await ModelSelectionConformanceTestHelpers.AssertRealtimeConnectIsRejectedAsync(
                 fixture.Backend!.BaseUri, query, HttpStatusCode.BadRequest, ct);
             Assert.Equal(watermark, fixture.Realtime.ConnectionWatermark);
 
-            var body = await ModelSelectionConformanceTestHelpers.RealtimeConnectBodyAsync(
+            string body = await ModelSelectionConformanceTestHelpers.RealtimeConnectBodyAsync(
                 fixture.Backend!.BaseUri, query, HttpStatusCode.BadRequest, ct);
             // rtmt.py's menu-mode rejection: `web.Response(status=400, text=f"Invalid menu mode:
             // {requested_menu_mode!r} (expected 'breakfast' or 'lunch')")` -- Program.cs's PyRepr
@@ -50,15 +50,15 @@ public sealed class MenuModeRejectionConformanceTests(MenuModeConformanceFixture
     [Fact]
     public Task Empty_mode_is_rejected_with_400() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var watermark = fixture.Realtime.ConnectionWatermark;
-        var query = $"persona={MenuModeConformanceFixture.DaypartsPersona}&mode=";
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        int watermark = fixture.Realtime.ConnectionWatermark;
+        string query = $"persona={MenuModeConformanceFixture.DaypartsPersona}&mode=";
 
         await ModelSelectionConformanceTestHelpers.AssertRealtimeConnectIsRejectedAsync(
             fixture.Backend!.BaseUri, query, HttpStatusCode.BadRequest, ct);
         Assert.Equal(watermark, fixture.Realtime.ConnectionWatermark);
 
-        var body = await ModelSelectionConformanceTestHelpers.RealtimeConnectBodyAsync(
+        string body = await ModelSelectionConformanceTestHelpers.RealtimeConnectBodyAsync(
             fixture.Backend!.BaseUri, query, HttpStatusCode.BadRequest, ct);
         Assert.Equal("Invalid menu mode: '' (expected 'breakfast' or 'lunch')", body);
     });
@@ -74,15 +74,15 @@ public sealed class MenuModeRejectionConformanceTests(MenuModeConformanceFixture
     [Fact]
     public Task Repeated_mode_is_rejected_with_400_identically_to_an_unrecognized_one() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var watermark = fixture.Realtime.ConnectionWatermark;
-        var query = $"persona={MenuModeConformanceFixture.DaypartsPersona}&mode=lunch&mode=breakfast";
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        int watermark = fixture.Realtime.ConnectionWatermark;
+        string query = $"persona={MenuModeConformanceFixture.DaypartsPersona}&mode=lunch&mode=breakfast";
 
         await ModelSelectionConformanceTestHelpers.AssertRealtimeConnectIsRejectedAsync(
             fixture.Backend!.BaseUri, query, HttpStatusCode.BadRequest, ct);
         Assert.Equal(watermark, fixture.Realtime.ConnectionWatermark);
 
-        var body = await ModelSelectionConformanceTestHelpers.RealtimeConnectBodyAsync(
+        string body = await ModelSelectionConformanceTestHelpers.RealtimeConnectBodyAsync(
             fixture.Backend!.BaseUri, query, HttpStatusCode.BadRequest, ct);
         Assert.Equal("Invalid menu mode: 'lunch,breakfast' (expected 'breakfast' or 'lunch')", body);
     });
@@ -96,19 +96,19 @@ public sealed class MenuModeRejectionConformanceTests(MenuModeConformanceFixture
     [Fact]
     public Task Omitted_mode_defaults_to_lunch() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
             fixture, ct, persona: MenuModeConformanceFixture.DaypartsPersona, mode: null);
-        await using var _ = browser;
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", "Delta Lunch Meal", "regular", 1, 6.49m)],
             roundTripIndex, ct);
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
 
-        var rejected = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult rejected = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
             JsonSerializer.Serialize(new
             {
@@ -134,18 +134,18 @@ public sealed class MenuModeRejectionConformanceTests(MenuModeConformanceFixture
     [Fact]
     public Task Rejected_mode_value_is_never_logged_verbatim() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var backend = fixture.Backend!;
-        var watermark = backend.DiagnosticsWatermark;
-        const string needle = "brunch-log-injection-attempt-CRLF";
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        IBackendUnderTest backend = fixture.Backend!;
+        int watermark = backend.DiagnosticsWatermark;
+        const string Needle = "brunch-log-injection-attempt-CRLF";
 
         await ModelSelectionConformanceTestHelpers.AssertRealtimeConnectIsRejectedAsync(
-            backend.BaseUri, $"persona={MenuModeConformanceFixture.DaypartsPersona}&mode={Uri.EscapeDataString(needle)}",
+            backend.BaseUri, $"persona={MenuModeConformanceFixture.DaypartsPersona}&mode={Uri.EscapeDataString(Needle)}",
             HttpStatusCode.BadRequest, ct);
 
         // Positive control: proves the rejection's own log line has actually landed in the
         // capture before the leak check below runs, so a too-early read can't pass vacuously.
-        var rejectionLineLogged = await backend.WaitForDiagnosticsAsync(
+        bool rejectionLineLogged = await backend.WaitForDiagnosticsAsync(
             d => d.Contains("Rejected WebSocket for invalid menu mode", StringComparison.Ordinal),
             TimeSpan.FromSeconds(10), ct, sinceWatermark: watermark);
         Assert.True(rejectionLineLogged,
@@ -153,10 +153,10 @@ public sealed class MenuModeRejectionConformanceTests(MenuModeConformanceFixture
             $"rejection's own log line -- without it, the leak check below would pass vacuously, " +
             $"not because nothing leaked.\n\n--- backend stdout/stderr ---\n{backend.DumpDiagnostics()}");
 
-        var dump = backend.DumpDiagnostics();
-        Assert.DoesNotContain(needle, dump, StringComparison.Ordinal);
+        string dump = backend.DumpDiagnostics();
+        Assert.DoesNotContain(Needle, dump, StringComparison.Ordinal);
         Assert.DoesNotContain("brunch", dump, StringComparison.Ordinal);
         Assert.Contains(MenuModeConformanceFixture.DaypartsPersona, dump, StringComparison.Ordinal);
-        Assert.Contains(needle.Length.ToString(), dump, StringComparison.Ordinal);
+        Assert.Contains(Needle.Length.ToString(), dump, StringComparison.Ordinal);
     });
 }

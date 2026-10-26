@@ -43,7 +43,7 @@ public sealed class WindowsJobObject : IDisposable
     {
         try
         {
-            var jobHandle = NativeMethods.CreateJobObject(nint.Zero, null);
+            nint jobHandle = NativeMethods.CreateJobObject(nint.Zero, null);
             if (jobHandle == nint.Zero)
             {
                 return null;
@@ -55,7 +55,7 @@ public sealed class WindowsJobObject : IDisposable
                 return null;
             }
 
-            var processHandle = NativeMethods.OpenProcess(NativeMethods.ProcessAllAccess, false, processId);
+            nint processHandle = NativeMethods.OpenProcess(NativeMethods.ProcessAllAccess, false, processId);
             if (processHandle == nint.Zero)
             {
                 NativeMethods.CloseHandle(jobHandle);
@@ -96,8 +96,8 @@ public sealed class WindowsJobObject : IDisposable
             },
         };
 
-        var length = Marshal.SizeOf<NativeMethods.JOBOBJECT_EXTENDED_LIMIT_INFORMATION>();
-        var extendedInfoPtr = Marshal.AllocHGlobal(length);
+        int length = Marshal.SizeOf<NativeMethods.JOBOBJECT_EXTENDED_LIMIT_INFORMATION>();
+        nint extendedInfoPtr = Marshal.AllocHGlobal(length);
         try
         {
             Marshal.StructureToPtr(extendedInfo, extendedInfoPtr, fDeleteOld: false);

@@ -40,7 +40,7 @@ public sealed class EchoSuppressorThreadSafetyTests
         // *immediate* best-effort flush runs fully synchronously (no await ever yields) -- no race
         // between this assertion and that call.
         var fakeTime = new FakeTimeProvider();
-        var flushes = 0;
+        int flushes = 0;
         using var echo = new EchoSuppressor(
             cooldownSeconds: 0.05,
             flushSendAsync: _ =>
@@ -65,7 +65,7 @@ public sealed class EchoSuppressorThreadSafetyTests
     public void ConcurrentBargeInAndAudioEvents_NeverThrow()
     {
         using var echo = new EchoSuppressor(cooldownSeconds: 0.0, flushSendAsync: static _ => Task.CompletedTask);
-        const int iterations = 10_000;
+        const int Iterations = 10_000;
         using var barrier = new Barrier(2);
         Exception? browserException = null;
         Exception? upstreamException = null;
@@ -77,7 +77,7 @@ public sealed class EchoSuppressorThreadSafetyTests
             barrier.SignalAndWait();
             try
             {
-                for (var i = 0; i < iterations; i++)
+                for (int i = 0; i < Iterations; i++)
                 {
                     echo.OnBargeIn();
                     _ = echo.ShouldSuppressAudio(i);
@@ -96,7 +96,7 @@ public sealed class EchoSuppressorThreadSafetyTests
             barrier.SignalAndWait();
             try
             {
-                for (var i = 0; i < iterations; i++)
+                for (int i = 0; i < Iterations; i++)
                 {
                     echo.StartGreetingSuppression();
                     echo.OnAudioDelta();
@@ -129,7 +129,7 @@ public sealed class EchoSuppressorThreadSafetyTests
         Exception? audioException = null;
         Exception? closeException = null;
 
-        for (var trial = 0; trial < 200; trial++)
+        for (int trial = 0; trial < 200; trial++)
         {
             var echo = new EchoSuppressor(cooldownSeconds: 0.01, flushSendAsync: static _ => Task.CompletedTask);
             var audioThread = new Thread(() =>
@@ -137,7 +137,7 @@ public sealed class EchoSuppressorThreadSafetyTests
                 barrier.SignalAndWait();
                 try
                 {
-                    for (var i = 0; i < 50; i++)
+                    for (int i = 0; i < 50; i++)
                     {
                         echo.OnAudioDelta();
                         echo.OnAudioDone(i);
@@ -193,7 +193,7 @@ public sealed class EchoSuppressorThreadSafetyTests
     public async Task StaleFlushContinuation_LosesRaceToClose_NeverSends()
     {
         var fakeTime = new FakeTimeProvider();
-        var flushes = 0;
+        int flushes = 0;
         using var echo = new EchoSuppressor(
             cooldownSeconds: 1.5,
             flushSendAsync: _ =>
@@ -207,8 +207,8 @@ public sealed class EchoSuppressorThreadSafetyTests
         echo.OnAudioDone(10.0); // arms the delayed flush; also fires an immediate flush (#1).
         Assert.Equal(1, Volatile.Read(ref flushes));
 
-        var flushCtsField = typeof(EchoSuppressor).GetField("_flushCts", BindingFlags.NonPublic | BindingFlags.Instance)!;
-        var flushIfStillPendingMethod = typeof(EchoSuppressor).GetMethod(
+        FieldInfo flushCtsField = typeof(EchoSuppressor).GetField("_flushCts", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        MethodInfo flushIfStillPendingMethod = typeof(EchoSuppressor).GetMethod(
             "FlushIfStillPendingAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
         var staleCts = (CancellationTokenSource)flushCtsField.GetValue(echo)!;
 
@@ -216,7 +216,7 @@ public sealed class EchoSuppressorThreadSafetyTests
 
         // Invoke the now-stale continuation directly -- exactly what the real Task.Delay
         // continuation would run if it acquired _sync a moment after Close() already committed.
-        await (Task)flushIfStillPendingMethod.Invoke(echo, new object[] { staleCts })!;
+        await (Task)flushIfStillPendingMethod.Invoke(echo, [staleCts])!;
 
         // Mutation check (manual, see PR description): without the CTS identity check in
         // FlushIfStillPendingAsync, this would be 2 -- the stale continuation (already past its

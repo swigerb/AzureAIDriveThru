@@ -17,7 +17,7 @@ public sealed class NeutralPersonaPackFixture : IDisposable
 
     public NeutralPersonaPackFixture()
     {
-        var sourceDir = Path.Combine(RepoRootLocator.Find(), "app", "backend", "tests", "fixtures", "personas");
+        string sourceDir = Path.Combine(RepoRootLocator.Find(), "app", "backend", "tests", "fixtures", "personas");
         PersonasDir = Path.Combine(Path.GetTempPath(), "neutral-persona-tests-" + Guid.NewGuid().ToString("n"));
         CopyDirectory(sourceDir, PersonasDir);
     }
@@ -26,8 +26,8 @@ public sealed class NeutralPersonaPackFixture : IDisposable
     /// and writes it back.</summary>
     public void MutatePersonaJson(string personaId, Action<JsonObject> mutate)
     {
-        var path = Path.Combine(PersonasDir, personaId, "persona.json");
-        var node = JsonNode.Parse(File.ReadAllText(path)) as JsonObject
+        string path = Path.Combine(PersonasDir, personaId, "persona.json");
+        JsonObject node = JsonNode.Parse(File.ReadAllText(path)) as JsonObject
             ?? throw new InvalidOperationException($"{path} did not parse as a JSON object.");
         mutate(node);
         File.WriteAllText(path, node.ToJsonString());
@@ -36,11 +36,11 @@ public sealed class NeutralPersonaPackFixture : IDisposable
     private static void CopyDirectory(string sourceDir, string destDir)
     {
         Directory.CreateDirectory(destDir);
-        foreach (var file in Directory.EnumerateFiles(sourceDir))
+        foreach (string file in Directory.EnumerateFiles(sourceDir))
         {
             File.Copy(file, Path.Combine(destDir, Path.GetFileName(file)));
         }
-        foreach (var dir in Directory.EnumerateDirectories(sourceDir))
+        foreach (string dir in Directory.EnumerateDirectories(sourceDir))
         {
             CopyDirectory(dir, Path.Combine(destDir, Path.GetFileName(dir)));
         }

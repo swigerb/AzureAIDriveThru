@@ -3,7 +3,6 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Backend.Configuration;
 using Backend.Realtime;
-using Backend.Shared;
 
 namespace Backend.Sessions;
 
@@ -14,10 +13,10 @@ internal sealed class RealtimeClientRelay(RealtimeSessionContext context)
 
     public async Task RunAsync()
     {
-        var isFirstFrame = context.SessionManager is not null;
+        bool isFirstFrame = context.SessionManager is not null;
         while (!context.CancellationToken.IsCancellationRequested)
         {
-            var frame = await ReadFrameAsync().ConfigureAwait(false);
+            WebSocketFrame? frame = await ReadFrameAsync().ConfigureAwait(false);
             if (frame is null)
             {
                 break;
@@ -26,9 +25,9 @@ internal sealed class RealtimeClientRelay(RealtimeSessionContext context)
             {
                 continue;
             }
-            var checkingFirstFrame = isFirstFrame;
+            bool checkingFirstFrame = isFirstFrame;
             isFirstFrame = false;
-            if (await ProcessFrameAsync(frame, checkingFirstFrame).ConfigureAwait(false) is false)
+            if (!await ProcessFrameAsync(frame, checkingFirstFrame).ConfigureAwait(false))
             {
                 break;
             }
@@ -39,7 +38,7 @@ internal sealed class RealtimeClientRelay(RealtimeSessionContext context)
     {
         try
         {
-            var frame = await WebSocketFrameReader.ReadMessageAsync(
+            WebSocketFrame? frame = await WebSocketFrameReader.ReadMessageAsync(
                 context.BrowserSocket, context.CancellationToken).ConfigureAwait(false);
             if (frame is null)
             {
@@ -63,7 +62,7 @@ internal sealed class RealtimeClientRelay(RealtimeSessionContext context)
     {
         if (!checkingFirstFrame)
         {
-            var fastPath = context.Processor.TryAppendFastPath(frame.Payload, context.State.Echo);
+            FramePump.AppendFastPathResult fastPath = context.Processor.TryAppendFastPath(frame.Payload, context.State.Echo);
             if (fastPath.IsMatch)
             {
                 await context.Processor.ForwardFastPathAudioAsync(
@@ -168,8 +167,8 @@ internal sealed class RealtimeClientRelay(RealtimeSessionContext context)
 
     private async Task ForwardClientMessageAsync(JsonObject message)
     {
-        var hooksEnabled = BackendEnvironment.Get("CONFORMANCE_TEST_HOOKS") == "1";
-        var (forwarded, sentType) = ProcessClientMessage(message, hooksEnabled);
+        bool hooksEnabled = BackendEnvironment.Get("CONFORMANCE_TEST_HOOKS") == "1";
+        (JsonObject? forwarded, string? sentType) = ProcessClientMessage(message, hooksEnabled);
         if (forwarded is null)
         {
             return;
@@ -194,12 +193,12 @@ internal sealed class RealtimeClientRelay(RealtimeSessionContext context)
 
     private (JsonObject? Forwarded, string? SentType) ProcessClientMessage(JsonObject message, bool hooksEnabled)
     {
-        var filtered = ClientServerFilter.Filter(message, hooksEnabled);
+        JsonObject? filtered = ClientServerFilter.Filter(message, hooksEnabled);
         if (filtered is null)
         {
             return (null, null);
         }
-        var msgType = RealtimeProcessor.GetString(filtered, "type") ?? "";
+        string msgType = RealtimeProcessor.GetString(filtered, "type") ?? "";
         if (msgType != "session.update")
         {
             return (filtered, msgType);
@@ -209,21 +208,21 @@ internal sealed class RealtimeClientRelay(RealtimeSessionContext context)
             return (null, null);
         }
         var sessionIn = new JsonObject();
-        foreach (var key in ClientServerFilter.ClientSessionKeys)
+        foreach (string key in ClientServerFilter.ClientSessionKeys)
         {
-            if (clientSession.TryGetPropertyValue(key, out var value) && value is not null)
+            if (clientSession.TryGetPropertyValue(key, out JsonNode? value) && value is not null)
             {
                 sessionIn[key] = value.DeepClone();
             }
         }
-        if (clientSession.TryGetPropertyValue("turn_detection", out var turnDetectionNode))
+        if (clientSession.TryGetPropertyValue("turn_detection", out JsonNode? turnDetectionNode))
         {
-            var sanitized = ClientServerFilter.SanitizeTurnDetection(turnDetectionNode);
+            JsonObject? sanitized = ClientServerFilter.SanitizeTurnDetection(turnDetectionNode);
             sessionIn["turn_detection"] = sanitized is not null
                 ? sanitized
                 : (JsonObject)RealtimeSessionBuilder.BootstrapClientSession()["turn_detection"]!.DeepClone();
         }
-        var session = RealtimeSessionBuilder.BuildSession(
+        JsonObject session = RealtimeSessionBuilder.BuildSession(
             context.SessionConfig, sessionIn, context.ToolSchemas,
             voiceLocked: context.State.AssistantAudioSeen,
             voice: Overridable.Of<string?>(context.State.Voice),
@@ -237,7 +236,7 @@ internal sealed class RealtimeClientRelay(RealtimeSessionContext context)
 
     private void TrackSessionUpdate(JsonObject session)
     {
-        var monitor = context.SessionManager?.GetContextMonitor(context.State.EffectiveSessionId);
+        ContextMonitor? monitor = context.SessionManager?.GetContextMonitor(context.State.EffectiveSessionId);
         if (monitor is null)
         {
             return;
@@ -245,7 +244,7 @@ internal sealed class RealtimeClientRelay(RealtimeSessionContext context)
         monitor.AddContent(RealtimeProcessor.GetString(session, "instructions"));
         if (session["tools"] is JsonArray injectedTools)
         {
-            foreach (var toolSchema in injectedTools)
+            foreach (JsonNode? toolSchema in injectedTools)
             {
                 monitor.AddContent(toolSchema?.ToJsonString());
             }
@@ -281,8 +280,8 @@ internal sealed class RealtimeClientRelay(RealtimeSessionContext context)
         {
             return;
         }
-        var candidate = RealtimeProcessor.GetString(message, "voice");
-        var newVoice = ClientServerFilter.SanitizeVoice(candidate, context.AllowedVoices);
+        string? candidate = RealtimeProcessor.GetString(message, "voice");
+        string? newVoice = ClientServerFilter.SanitizeVoice(candidate, context.AllowedVoices);
         if (newVoice is null)
         {
             context.Logger.DroppedSetVoice(candidate, context.SessionId);
@@ -295,7 +294,7 @@ internal sealed class RealtimeClientRelay(RealtimeSessionContext context)
             context.Logger.VoiceDeferredToNextConversation(newVoice, context.SessionId);
             return;
         }
-        var voiceUpdate = context.State.Guard.Track(context.BuildVoiceUpdateFrame(newVoice).ToJsonString());
+        string voiceUpdate = context.State.Guard.Track(context.BuildVoiceUpdateFrame(newVoice).ToJsonString());
         await FramePump.SendTextAsync(context.Upstream, voiceUpdate, context.CancellationToken).ConfigureAwait(false);
     }
 }

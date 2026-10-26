@@ -21,7 +21,7 @@ internal sealed class FixtureEmbeddingClient : IEmbeddingClient
     public Task<IReadOnlyList<IReadOnlyList<double>>> GenerateEmbeddingsAsync(
         IReadOnlyList<string> texts, string deployment, CancellationToken cancellationToken)
     {
-        IReadOnlyList<IReadOnlyList<double>> result = texts.Select(For).ToList();
+        IReadOnlyList<IReadOnlyList<double>> result = [.. texts.Select(For)];
         return Task.FromResult(result);
     }
 
@@ -31,11 +31,11 @@ internal sealed class FixtureEmbeddingClient : IEmbeddingClient
     /// same IEEE-754 value.</summary>
     public static IReadOnlyList<double> For(string text)
     {
-        var digest = SHA256.HashData(Encoding.UTF8.GetBytes(text));
-        var values = new double[Dimensions];
-        for (var i = 0; i < Dimensions; i++)
+        byte[] digest = SHA256.HashData(Encoding.UTF8.GetBytes(text));
+        double[] values = new double[Dimensions];
+        for (int i = 0; i < Dimensions; i++)
         {
-            var raw = (digest[i] / 255.0 * 2) - 1;
+            double raw = (digest[i] / 255.0 * 2) - 1;
             values[i] = double.Parse(raw.ToString("F6", CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
         }
         return values;

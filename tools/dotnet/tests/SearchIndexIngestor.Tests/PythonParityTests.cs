@@ -56,35 +56,35 @@ public sealed class PythonParityTests
     [Fact]
     public async Task DotnetPort_MatchesRealPythonTwin_ForIndexCreateOrUpdate_AndUploadBatchLoop()
     {
-        var repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
-        var harnessScript = Path.Combine(
+        string repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
+        string harnessScript = Path.Combine(
             repoRoot, "tools", "dotnet", "tests", "SearchIndexIngestor.Tests", "Fixtures",
             "capture_search_index_ingestion.py");
         Assert.True(File.Exists(harnessScript), $"Capture harness not found: {harnessScript}");
 
-        var interpreter = await PythonInterop.RequireInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
+        string? interpreter = await PythonInterop.RequireInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
         if (interpreter is null)
         {
             return;
         }
 
-        var (exitCode, stdout, stderr) = await PythonInterop.RunAsync(
+        (int exitCode, string? stdout, string? stderr) = await PythonInterop.RunAsync(
             interpreter, [harnessScript], TestContext.Current.CancellationToken);
         Assert.True(exitCode == 0, $"Capture harness exited {exitCode}.\nstdout:\n{stdout}\nstderr:\n{stderr}");
 
         using var captured = JsonDocument.Parse(stdout);
-        var capturedPersonas = captured.RootElement.GetProperty("personas");
+        JsonElement capturedPersonas = captured.RootElement.GetProperty("personas");
 
-        var dotnetPersonas = EnabledPersonaDiscovery.DiscoverAll(repoRoot);
+        IReadOnlyList<EnabledPersonaDiscovery.DiscoveredPersona> dotnetPersonas = EnabledPersonaDiscovery.DiscoverAll(repoRoot);
         var capturedPersonaIds = capturedPersonas.EnumerateObject().Select(p => p.Name).OrderBy(id => id, StringComparer.Ordinal).ToList();
         var dotnetPersonaIds = dotnetPersonas.Select(p => p.PersonaId).OrderBy(id => id, StringComparer.Ordinal).ToList();
         Assert.Equal(capturedPersonaIds, dotnetPersonaIds);
         Assert.True(dotnetPersonaIds.Count > 0, "Expected at least one enabled persona in the real repo.");
 
-        foreach (var persona in dotnetPersonas)
+        foreach (EnabledPersonaDiscovery.DiscoveredPersona persona in dotnetPersonas)
         {
-            var plan = PersonaIngestPlanBuilder.Build(persona);
-            var capturedPersona = capturedPersonas.GetProperty(persona.PersonaId);
+            PersonaIngestPlan plan = PersonaIngestPlanBuilder.Build(persona);
+            JsonElement capturedPersona = capturedPersonas.GetProperty(persona.PersonaId);
             Assert.Equal(capturedPersona.GetProperty("index_name").GetString(), plan.IndexName);
             Assert.Equal(capturedPersona.GetProperty("document_count").GetInt32(), plan.DocumentCount);
 
@@ -100,7 +100,7 @@ public sealed class PythonParityTests
             // concern a captured fixture could usefully pin down), but a real pass through them
             // (one seeded stale id actually gets deleted, the count call actually gets made) is
             // still proven here, against the SAME real persona data Python's own capture used.
-            const string staleDocId = "stale-doc-left-over-from-a-prior-run";
+            const string StaleDocId = "stale-doc-left-over-from-a-prior-run";
             var handler = new FakeHttpMessageHandler(request =>
             {
                 if (request.Method == HttpMethod.Put)
@@ -109,8 +109,8 @@ public sealed class PythonParityTests
                 }
                 if (request.Uri.Contains("search.index"))
                 {
-                    var value = JsonNode.Parse(request.Body!)!["value"]!.AsArray();
-                    var results = value.Select(d => new JsonObject { ["key"] = d!["id"]!.DeepClone(), ["status"] = true });
+                    JsonArray value = JsonNode.Parse(request.Body!)!["value"]!.AsArray();
+                    IEnumerable<JsonObject> results = value.Select(d => new JsonObject { ["key"] = d!["id"]!.DeepClone(), ["status"] = true });
                     return FakeHttpMessageHandler.Json(
                         System.Net.HttpStatusCode.OK,
                         new JsonObject { ["value"] = new JsonArray(results.ToArray()) }.ToJsonString());
@@ -121,7 +121,7 @@ public sealed class PythonParityTests
                     // IngestAsync's delete-stale step really runs (and really would delete it),
                     // not just the index-create/upload steps.
                     var ids = plan.Documents.Select(d => (JsonNode)new JsonObject { ["id"] = d["id"]!.DeepClone() }).ToList();
-                    ids.Add(new JsonObject { ["id"] = staleDocId });
+                    ids.Add(new JsonObject { ["id"] = StaleDocId });
                     return FakeHttpMessageHandler.Json(
                         System.Net.HttpStatusCode.OK, new JsonObject { ["value"] = new JsonArray(ids.ToArray()) }.ToJsonString());
                 }
@@ -134,9 +134,9 @@ public sealed class PythonParityTests
 
             await orchestrator.IngestAsync(plan, CancellationToken.None);
 
-            var capturedIndexRequest = capturedPersona.GetProperty("index_request");
-            var capturedUploadRequests = capturedPersona.GetProperty("upload_batch_requests");
-            var uploadBatchCount = capturedUploadRequests.GetArrayLength();
+            JsonElement capturedIndexRequest = capturedPersona.GetProperty("index_request");
+            JsonElement capturedUploadRequests = capturedPersona.GetProperty("upload_batch_requests");
+            int uploadBatchCount = capturedUploadRequests.GetArrayLength();
             // 1 index-create-or-update request, plus one upload-batch request per 100-document
             // slice (same batch boundary on both sides -- DocumentBatchBuilder.cs's BatchSize),
             // plus the delete-stale listing request, the delete-batch request (one stale id
@@ -144,7 +144,7 @@ public sealed class PythonParityTests
             Assert.Equal(1 + uploadBatchCount + 3, handler.Requests.Count);
 
             AssertRequestMatches(capturedIndexRequest, handler.Requests[0], $"personas.{persona.PersonaId}.index_request");
-            for (var i = 0; i < uploadBatchCount; i++)
+            for (int i = 0; i < uploadBatchCount; i++)
             {
                 AssertRequestMatches(
                     capturedUploadRequests[i], handler.Requests[i + 1], $"personas.{persona.PersonaId}.upload_batch_requests[{i}]");
@@ -152,14 +152,14 @@ public sealed class PythonParityTests
 
             // The three C#-only (not Python-captured) tail requests, in IngestAsync's own order:
             // list existing ids -> delete the one stale id found -> verify the final count.
-            var listRequest = handler.Requests[uploadBatchCount + 1];
-            var deleteRequest = handler.Requests[uploadBatchCount + 2];
-            var countRequest = handler.Requests[uploadBatchCount + 3];
+            CapturedRequest listRequest = handler.Requests[uploadBatchCount + 1];
+            CapturedRequest deleteRequest = handler.Requests[uploadBatchCount + 2];
+            CapturedRequest countRequest = handler.Requests[uploadBatchCount + 3];
             Assert.Contains("search.post.search", listRequest.Uri);
             Assert.Contains("search.index", deleteRequest.Uri);
-            var deleteBody = JsonNode.Parse(deleteRequest.Body!)!.AsObject();
+            JsonObject deleteBody = JsonNode.Parse(deleteRequest.Body!)!.AsObject();
             var deletedIds = deleteBody["value"]!.AsArray().Select(d => d!["id"]!.GetValue<string>()).ToList();
-            Assert.Equal([staleDocId], deletedIds);
+            Assert.Equal([StaleDocId], deletedIds);
             Assert.Equal("delete", deleteBody["value"]!.AsArray()[0]!["@search.action"]!.GetValue<string>());
             Assert.Contains("$count", countRequest.Uri);
         }
@@ -170,10 +170,10 @@ public sealed class PythonParityTests
         Assert.Equal(capturedRequest.GetProperty("method").GetString(), dotnetRequest.Method.Method);
         Assert.Equal(capturedRequest.GetProperty("url").GetString(), dotnetRequest.Uri);
 
-        foreach (var header in capturedRequest.GetProperty("headers").EnumerateObject())
+        foreach (JsonProperty header in capturedRequest.GetProperty("headers").EnumerateObject())
         {
             Assert.True(
-                dotnetRequest.Headers.TryGetValue(header.Name, out var dotnetValue),
+                dotnetRequest.Headers.TryGetValue(header.Name, out string? dotnetValue),
                 $"At {path}: expected a '{header.Name}' header, but the .NET request had none.");
             // Whitespace-normalized comparison: .NET's typed HttpHeaders re-serializes
             // "type;param" as "type; param" (a space after the semicolon) even when the literal
@@ -184,16 +184,16 @@ public sealed class PythonParityTests
                 ignoreCase: true);
         }
 
-        var capturedBody = capturedRequest.TryGetProperty("body", out var bodyElement) && bodyElement.ValueKind != JsonValueKind.Null
+        JsonNode? capturedBody = capturedRequest.TryGetProperty("body", out JsonElement bodyElement) && bodyElement.ValueKind != JsonValueKind.Null
             ? JsonNode.Parse(bodyElement.GetRawText())
             : null;
-        var dotnetBody = dotnetRequest.Body is null ? null : JsonNode.Parse(dotnetRequest.Body);
+        JsonNode? dotnetBody = dotnetRequest.Body is null ? null : JsonNode.Parse(dotnetRequest.Body);
         JsonStructuralAssert.Equal(capturedBody, dotnetBody, $"{path}.body");
     }
 
     private static string Normalize(string? value) => (value ?? "").Replace(" ", "");
 
-    private static readonly System.Text.RegularExpressions.Regex DryRunLine = new(
+    private static readonly System.Text.RegularExpressions.Regex s_dryRunLine = new(
         @"\[dry-run\] persona '([^']+)': index '([^']+)', (\d+) document\(s\) planned");
 
     /// <summary>
@@ -209,17 +209,17 @@ public sealed class PythonParityTests
     [Fact]
     public async Task DryRun_MatchesRealPythonTwin_ForEveryEnabledPersona_AtTheStdoutContentLevel()
     {
-        var repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
-        var scriptPath = Path.Combine(repoRoot, "app", "backend", "setup_search_index.py");
+        string repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
+        string scriptPath = Path.Combine(repoRoot, "app", "backend", "setup_search_index.py");
         Assert.True(File.Exists(scriptPath), $"Python twin not found: {scriptPath}");
 
-        var interpreter = await PythonInterop.RequireInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
+        string? interpreter = await PythonInterop.RequireInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
         if (interpreter is null)
         {
             return;
         }
 
-        var (pyExitCode, pyStdout, pyStderr) = await PythonInterop.RunAsync(
+        (int pyExitCode, string? pyStdout, string? pyStderr) = await PythonInterop.RunAsync(
             interpreter, [scriptPath, "--dry-run"], TestContext.Current.CancellationToken,
             // Rich (setup_search_index.py's RichHandler) word-wraps each log line to the detected
             // console width when stdout isn't a real terminal (narrow by default), splitting a
@@ -231,12 +231,12 @@ public sealed class PythonParityTests
 
         var dotnetStdout = new StringWriter();
         var dotnetStderr = new StringWriter();
-        var dotnetExitCode = await CliRunner.RunAsync(["--dry-run"], dotnetStdout, dotnetStderr, repoRootOverride: repoRoot);
+        int dotnetExitCode = await CliRunner.RunAsync(["--dry-run"], dotnetStdout, dotnetStderr, repoRootOverride: repoRoot);
         Assert.Equal(0, dotnetExitCode);
         Assert.Equal("", dotnetStderr.ToString());
 
-        var pyTriples = ExtractDryRunTriples(pyStdout);
-        var dotnetTriples = ExtractDryRunTriples(dotnetStdout.ToString());
+        List<(string Persona, string Index, string Count)> pyTriples = ExtractDryRunTriples(pyStdout);
+        List<(string Persona, string Index, string Count)> dotnetTriples = ExtractDryRunTriples(dotnetStdout.ToString());
         Assert.True(pyTriples.Count > 0, $"Expected at least one '[dry-run] persona ...' line in Python's stdout, got:\n{pyStdout}");
         Assert.Equal(pyTriples, dotnetTriples);
     }
@@ -254,31 +254,31 @@ public sealed class PythonParityTests
     [Fact]
     public async Task DryRun_MatchesRealPythonTwin_ForASinglePersona_AtTheStdoutContentLevel()
     {
-        var repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
-        var scriptPath = Path.Combine(repoRoot, "app", "backend", "setup_search_index.py");
-        var personaId = EnabledPersonaDiscovery.DiscoverAll(repoRoot)
+        string repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
+        string scriptPath = Path.Combine(repoRoot, "app", "backend", "setup_search_index.py");
+        string personaId = EnabledPersonaDiscovery.DiscoverAll(repoRoot)
             .Select(p => p.PersonaId).OrderBy(id => id, StringComparer.Ordinal).First();
 
-        var interpreter = await PythonInterop.RequireInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
+        string? interpreter = await PythonInterop.RequireInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
         if (interpreter is null)
         {
             return;
         }
 
-        var (pyExitCode, pyStdout, pyStderr) = await PythonInterop.RunAsync(
+        (int pyExitCode, string? pyStdout, string? pyStderr) = await PythonInterop.RunAsync(
             interpreter, [scriptPath, "--dry-run", "--persona", personaId], TestContext.Current.CancellationToken,
             extraEnvironment: new Dictionary<string, string> { ["COLUMNS"] = "1000" });
         Assert.True(pyExitCode == 0, $"Python --dry-run --persona {personaId} exited {pyExitCode}.\nstdout:\n{pyStdout}\nstderr:\n{pyStderr}");
 
         var dotnetStdout = new StringWriter();
         var dotnetStderr = new StringWriter();
-        var dotnetExitCode = await CliRunner.RunAsync(
+        int dotnetExitCode = await CliRunner.RunAsync(
             ["--dry-run", "--persona", personaId], dotnetStdout, dotnetStderr, repoRootOverride: repoRoot);
         Assert.Equal(0, dotnetExitCode);
         Assert.Equal("", dotnetStderr.ToString());
 
-        var pyTriples = ExtractDryRunTriples(pyStdout);
-        var dotnetTriples = ExtractDryRunTriples(dotnetStdout.ToString());
+        List<(string Persona, string Index, string Count)> pyTriples = ExtractDryRunTriples(pyStdout);
+        List<(string Persona, string Index, string Count)> dotnetTriples = ExtractDryRunTriples(dotnetStdout.ToString());
         Assert.Equal([personaId], pyTriples.Select(t => t.Persona));
         Assert.Equal(pyTriples, dotnetTriples);
     }
@@ -297,35 +297,35 @@ public sealed class PythonParityTests
     [Fact]
     public async Task DryRun_MatchesRealPythonTwin_ForPersonasEnvironmentVariable_AtTheStdoutContentLevel()
     {
-        var repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
-        var scriptPath = Path.Combine(repoRoot, "app", "backend", "setup_search_index.py");
+        string repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
+        string scriptPath = Path.Combine(repoRoot, "app", "backend", "setup_search_index.py");
         var allPersonaIds = EnabledPersonaDiscovery.DiscoverAll(repoRoot)
             .Select(p => p.PersonaId).OrderBy(id => id, StringComparer.Ordinal).ToList();
         Assert.True(allPersonaIds.Count >= 2, "Expected at least two enabled personas in the real repo to restrict between.");
         var restrictedIds = allPersonaIds.Take(allPersonaIds.Count - 1).ToList();
-        var personasValue = string.Join(",", restrictedIds);
+        string personasValue = string.Join(",", restrictedIds);
 
-        var interpreter = await PythonInterop.RequireInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
+        string? interpreter = await PythonInterop.RequireInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
         if (interpreter is null)
         {
             return;
         }
 
-        var (pyExitCode, pyStdout, pyStderr) = await PythonInterop.RunAsync(
+        (int pyExitCode, string? pyStdout, string? pyStderr) = await PythonInterop.RunAsync(
             interpreter, [scriptPath, "--dry-run"], TestContext.Current.CancellationToken,
             extraEnvironment: new Dictionary<string, string> { ["COLUMNS"] = "1000", ["PERSONAS"] = personasValue });
         Assert.True(pyExitCode == 0, $"Python --dry-run PERSONAS={personasValue} exited {pyExitCode}.\nstdout:\n{pyStdout}\nstderr:\n{pyStderr}");
 
         var dotnetStdout = new StringWriter();
         var dotnetStderr = new StringWriter();
-        var dotnetExitCode = await CliRunner.RunAsync(
+        int dotnetExitCode = await CliRunner.RunAsync(
             ["--dry-run"], dotnetStdout, dotnetStderr, repoRootOverride: repoRoot,
             getEnvironmentVariable: name => name == "PERSONAS" ? personasValue : null);
         Assert.Equal(0, dotnetExitCode);
         Assert.Equal("", dotnetStderr.ToString());
 
-        var pyTriples = ExtractDryRunTriples(pyStdout);
-        var dotnetTriples = ExtractDryRunTriples(dotnetStdout.ToString());
+        List<(string Persona, string Index, string Count)> pyTriples = ExtractDryRunTriples(pyStdout);
+        List<(string Persona, string Index, string Count)> dotnetTriples = ExtractDryRunTriples(dotnetStdout.ToString());
         Assert.Equal(restrictedIds, pyTriples.Select(t => t.Persona).OrderBy(id => id, StringComparer.Ordinal));
         Assert.Equal(pyTriples, dotnetTriples);
     }
@@ -341,27 +341,27 @@ public sealed class PythonParityTests
     [Fact]
     public async Task DryRun_MatchesRealPythonTwin_ForUnknownPersona_AtTheExitCodeAndStderrContentLevel()
     {
-        const string bogusPersonaId = "totally-bogus-persona-id-zzz";
-        var repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
-        var scriptPath = Path.Combine(repoRoot, "app", "backend", "setup_search_index.py");
+        const string BogusPersonaId = "totally-bogus-persona-id-zzz";
+        string repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
+        string scriptPath = Path.Combine(repoRoot, "app", "backend", "setup_search_index.py");
 
-        var interpreter = await PythonInterop.RequireInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
+        string? interpreter = await PythonInterop.RequireInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
         if (interpreter is null)
         {
             return;
         }
 
-        var (pyExitCode, _, pyStderr) = await PythonInterop.RunAsync(
-            interpreter, [scriptPath, "--dry-run", "--persona", bogusPersonaId], TestContext.Current.CancellationToken);
+        (int pyExitCode, string _, string? pyStderr) = await PythonInterop.RunAsync(
+            interpreter, [scriptPath, "--dry-run", "--persona", BogusPersonaId], TestContext.Current.CancellationToken);
         Assert.NotEqual(0, pyExitCode);
-        Assert.Contains(bogusPersonaId, pyStderr);
+        Assert.Contains(BogusPersonaId, pyStderr);
 
         var dotnetStdout = new StringWriter();
         var dotnetStderr = new StringWriter();
-        var dotnetExitCode = await CliRunner.RunAsync(
-            ["--dry-run", "--persona", bogusPersonaId], dotnetStdout, dotnetStderr, repoRootOverride: repoRoot);
+        int dotnetExitCode = await CliRunner.RunAsync(
+            ["--dry-run", "--persona", BogusPersonaId], dotnetStdout, dotnetStderr, repoRootOverride: repoRoot);
         Assert.NotEqual(0, dotnetExitCode);
-        Assert.Contains(bogusPersonaId, dotnetStderr.ToString());
+        Assert.Contains(BogusPersonaId, dotnetStderr.ToString());
 
         // Same FAMILY of exit code (both "the process failed") -- Python's SystemExit(str) and
         // CliRunner's catch-and-return-1 both always use exactly 1, so this is also an exact match.
@@ -382,21 +382,21 @@ public sealed class PythonParityTests
         // PATH for this one process (CreateStubAzdOnPath below) lets load_azd_env() succeed
         // harmlessly against an azd-environment file that deliberately does NOT set
         // AZURE_SEARCH_ENDPOINT, so Python actually reaches line 471's KeyError.
-        var repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
-        var scriptPath = Path.Combine(repoRoot, "app", "backend", "setup_search_index.py");
+        string repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
+        string scriptPath = Path.Combine(repoRoot, "app", "backend", "setup_search_index.py");
 
-        var interpreter = await PythonInterop.RequireInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
+        string? interpreter = await PythonInterop.RequireInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
         if (interpreter is null)
         {
             return;
         }
 
-        var stubAzdDir = CreateStubAzdOnPath(skipIndexSetup: false, setEndpoints: false);
+        string stubAzdDir = CreateStubAzdOnPath(skipIndexSetup: false, setEndpoints: false);
         var extraEnvironment = new Dictionary<string, string>
         {
             ["PATH"] = stubAzdDir + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH"),
         };
-        var (pyExitCode, _, pyStderr) = await PythonInterop.RunAsync(
+        (int pyExitCode, string _, string? pyStderr) = await PythonInterop.RunAsync(
             interpreter,
             [scriptPath],
             TestContext.Current.CancellationToken,
@@ -406,7 +406,7 @@ public sealed class PythonParityTests
 
         var dotnetStdout = new StringWriter();
         var dotnetStderr = new StringWriter();
-        var dotnetExitCode = await CliRunner.RunAsync(
+        int dotnetExitCode = await CliRunner.RunAsync(
             [],
             dotnetStdout,
             dotnetStderr,
@@ -430,21 +430,21 @@ public sealed class PythonParityTests
         // Same reasoning as the AZURE_SEARCH_ENDPOINT test above, but for run()'s very next line
         // (472: os.environ["AZURE_OPENAI_EASTUS2_ENDPOINT"]) -- AZURE_SEARCH_ENDPOINT must be
         // supplied so both sides get past that first check and actually reach this one.
-        var repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
-        var scriptPath = Path.Combine(repoRoot, "app", "backend", "setup_search_index.py");
+        string repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
+        string scriptPath = Path.Combine(repoRoot, "app", "backend", "setup_search_index.py");
 
-        var interpreter = await PythonInterop.RequireInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
+        string? interpreter = await PythonInterop.RequireInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
         if (interpreter is null)
         {
             return;
         }
 
-        var stubAzdDir = CreateStubAzdOnPath(skipIndexSetup: false, setEndpoints: false, setSearchEndpointOnly: true);
+        string stubAzdDir = CreateStubAzdOnPath(skipIndexSetup: false, setEndpoints: false, setSearchEndpointOnly: true);
         var extraEnvironment = new Dictionary<string, string>
         {
             ["PATH"] = stubAzdDir + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH"),
         };
-        var (pyExitCode, _, pyStderr) = await PythonInterop.RunAsync(
+        (int pyExitCode, string _, string? pyStderr) = await PythonInterop.RunAsync(
             interpreter,
             [scriptPath],
             TestContext.Current.CancellationToken,
@@ -454,7 +454,7 @@ public sealed class PythonParityTests
 
         var dotnetStdout = new StringWriter();
         var dotnetStderr = new StringWriter();
-        var dotnetExitCode = await CliRunner.RunAsync(
+        int dotnetExitCode = await CliRunner.RunAsync(
             ["--search-endpoint", "https://fake.search.windows.net"],
             dotnetStdout,
             dotnetStderr,
@@ -475,9 +475,9 @@ public sealed class PythonParityTests
     private static string CreateStubAzdOnPath(
         bool skipIndexSetup, bool setEndpoints, bool setSearchEndpointOnly = false)
     {
-        var dir = Path.Combine(Path.GetTempPath(), "stub-azd-" + Guid.NewGuid());
+        string dir = Path.Combine(Path.GetTempPath(), "stub-azd-" + Guid.NewGuid());
         Directory.CreateDirectory(dir);
-        var envFile = Path.Combine(dir, "env.env");
+        string envFile = Path.Combine(dir, "env.env");
         var lines = new List<string>();
         if (setEndpoints || setSearchEndpointOnly)
         {
@@ -493,18 +493,18 @@ public sealed class PythonParityTests
         }
         File.WriteAllLines(envFile, lines);
 
-        var environmentJson = JsonSerializer.Serialize(new[]
+        string environmentJson = JsonSerializer.Serialize(new[]
         {
             new { Name = "test", IsDefault = true, DotEnvPath = envFile }
         });
         // setup_search_index.py reads individual settings with `azd env get-value NAME`, which
         // prints the value and exits 0, or exits non-zero when the key is not set.
         var values = lines.Select(line => line.Split('=', 2)).ToDictionary(pair => pair[0], pair => pair[1]);
-        var script = Path.Combine(dir, OperatingSystem.IsWindows() ? "azd.cmd" : "azd");
+        string script = Path.Combine(dir, OperatingSystem.IsWindows() ? "azd.cmd" : "azd");
         string content;
         if (OperatingSystem.IsWindows())
         {
-            var cases = string.Concat(values.Select(pair =>
+            string cases = string.Concat(values.Select(pair =>
                 $"if \"%3\"==\"{pair.Key}\" (echo {pair.Value}& exit /b 0)\r\n"));
             content = "@echo off\r\nif \"%2\"==\"get-value\" goto getvalue\r\n"
                 + $"echo {environmentJson}\r\nexit /b 0\r\n:getvalue\r\n{cases}"
@@ -512,7 +512,7 @@ public sealed class PythonParityTests
         }
         else
         {
-            var cases = string.Concat(values.Select(pair => $"    {pair.Key}) echo '{pair.Value}'; exit 0 ;;\n"));
+            string cases = string.Concat(values.Select(pair => $"    {pair.Key}) echo '{pair.Value}'; exit 0 ;;\n"));
             content = "#!/bin/sh\nif [ \"$2\" = \"get-value\" ]; then\n  case \"$3\" in\n"
                 + cases
                 + "    *) echo \"ERROR: key '$3' not found\" >&2; exit 1 ;;\n  esac\nfi\n"
@@ -531,8 +531,7 @@ public sealed class PythonParityTests
     }
 
     private static List<(string Persona, string Index, string Count)> ExtractDryRunTriples(string stdout) =>
-        DryRunLine.Matches(stdout)
+        [.. s_dryRunLine.Matches(stdout)
             .Select(m => (m.Groups[1].Value, m.Groups[2].Value, m.Groups[3].Value))
-            .OrderBy(t => t.Item1, StringComparer.Ordinal)
-            .ToList();
+            .OrderBy(t => t.Item1, StringComparer.Ordinal)];
 }

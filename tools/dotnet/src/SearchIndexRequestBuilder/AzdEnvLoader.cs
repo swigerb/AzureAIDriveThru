@@ -52,7 +52,7 @@ namespace SearchIndexRequestBuilder;
 /// </summary>
 internal static class AzdEnvLoader
 {
-    private static readonly IReadOnlyDictionary<string, string> EmptyValues =
+    private static readonly IReadOnlyDictionary<string, string> s_emptyValues =
         new Dictionary<string, string>();
 
     /// <param name="repoRoot">The repo root to look for a <c>.azure/</c> folder under.</param>
@@ -66,34 +66,34 @@ internal static class AzdEnvLoader
         Func<string, bool>? fileExists = null,
         Func<string, string>? readAllText = null)
     {
-        var exists = fileExists ?? File.Exists;
-        var readText = readAllText ?? File.ReadAllText;
+        Func<string, bool> exists = fileExists ?? File.Exists;
+        Func<string, string> readText = readAllText ?? File.ReadAllText;
 
         try
         {
-            var configPath = Path.Combine(repoRoot, ".azure", "config.json");
+            string configPath = Path.Combine(repoRoot, ".azure", "config.json");
             if (!exists(configPath))
             {
-                return EmptyValues;
+                return s_emptyValues;
             }
 
             using var configDocument = JsonDocument.Parse(readText(configPath));
-            if (!configDocument.RootElement.TryGetProperty("defaultEnvironment", out var defaultEnvElement) ||
+            if (!configDocument.RootElement.TryGetProperty("defaultEnvironment", out JsonElement defaultEnvElement) ||
                 defaultEnvElement.ValueKind != JsonValueKind.String)
             {
-                return EmptyValues;
+                return s_emptyValues;
             }
 
-            var defaultEnvironment = defaultEnvElement.GetString();
+            string? defaultEnvironment = defaultEnvElement.GetString();
             if (string.IsNullOrEmpty(defaultEnvironment))
             {
-                return EmptyValues;
+                return s_emptyValues;
             }
 
-            var envFilePath = Path.Combine(repoRoot, ".azure", defaultEnvironment, ".env");
+            string envFilePath = Path.Combine(repoRoot, ".azure", defaultEnvironment, ".env");
             if (!exists(envFilePath))
             {
-                return EmptyValues;
+                return s_emptyValues;
             }
 
             return ParseDotEnvFile(readText(envFilePath));
@@ -103,28 +103,28 @@ internal static class AzdEnvLoader
             // Any unexpected failure here (malformed JSON, an I/O error, ...) is treated exactly
             // like "no azd env configured" -- never a crash, and never a special-cased error
             // message; see this class's own doc comment above.
-            return EmptyValues;
+            return s_emptyValues;
         }
     }
 
     private static IReadOnlyDictionary<string, string> ParseDotEnvFile(string contents)
     {
         var values = new Dictionary<string, string>();
-        foreach (var rawLine in contents.Split('\n'))
+        foreach (string rawLine in contents.Split('\n'))
         {
-            var line = rawLine.Trim('\r', ' ', '\t');
+            string line = rawLine.Trim('\r', ' ', '\t');
             if (line.Length == 0 || line.StartsWith('#'))
             {
                 continue;
             }
 
-            var separatorIndex = line.IndexOf('=');
+            int separatorIndex = line.IndexOf('=');
             if (separatorIndex < 0)
             {
                 continue;
             }
 
-            var key = line[..separatorIndex].Trim();
+            string key = line[..separatorIndex].Trim();
             if (key.Length == 0)
             {
                 continue;
@@ -162,9 +162,9 @@ internal static class AzdEnvLoader
             return rawValue;
         }
 
-        var inner = rawValue[1..^1];
+        string inner = rawValue[1..^1];
         var builder = new StringBuilder(inner.Length);
-        for (var i = 0; i < inner.Length; i++)
+        for (int i = 0; i < inner.Length; i++)
         {
             if (inner[i] == '\\' && i + 1 < inner.Length)
             {

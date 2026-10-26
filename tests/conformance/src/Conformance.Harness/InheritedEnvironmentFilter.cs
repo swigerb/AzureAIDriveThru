@@ -22,7 +22,7 @@ public static class InheritedEnvironmentFilter
     /// <summary>Every backend under test only ever needs to reach the fakes and itself, both on loopback.</summary>
     public const string NoProxyValue = "127.0.0.1,localhost";
 
-    private static readonly string[] StripPrefixes = ["CONFORMANCE_", "AZURE_", "VERBOSE_", "PERSONAS", "DEFAULT_PERSONA"];
+    private static readonly string[] s_stripPrefixes = ["CONFORMANCE_", "AZURE_", "VERBOSE_", "PERSONAS", "DEFAULT_PERSONA"];
 
     /// <summary>
     /// Removes any inherited env var matching CONFORMANCE_*, AZURE_*, VERBOSE_*, PERSONAS*
@@ -36,10 +36,10 @@ public static class InheritedEnvironmentFilter
     {
         var keysToRemove = startInfo.Environment.Keys
             .Where(key =>
-                StripPrefixes.Any(prefix => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) ||
+                s_stripPrefixes.Any(prefix => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) ||
                 key.EndsWith("_PROXY", StringComparison.OrdinalIgnoreCase))
             .ToList();
-        foreach (var key in keysToRemove)
+        foreach (string? key in keysToRemove)
         {
             startInfo.Environment.Remove(key);
         }

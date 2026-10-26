@@ -64,9 +64,9 @@ public sealed class UpstreamAuthHeaderTests
     public async Task ApiKeyConfigured_UsesApiKeyHeader_AndNeverCallsTheTokenProvider()
     {
         var provider = new FakeBearerTokenProvider("should-not-be-used");
-        var processor = CreateProcessor(upstreamApiKey: "sk-real-key", provider);
+        RealtimeProcessor processor = CreateProcessor(upstreamApiKey: "sk-real-key", provider);
 
-        var (name, value) = await processor.ResolveUpstreamAuthHeaderAsync(CancellationToken.None);
+        (string? name, string? value) = await processor.ResolveUpstreamAuthHeaderAsync(CancellationToken.None);
 
         Assert.Equal("api-key", name);
         Assert.Equal("sk-real-key", value);
@@ -77,9 +77,9 @@ public sealed class UpstreamAuthHeaderTests
     public async Task NoApiKeyConfigured_FallsBackToManagedIdentityBearerToken()
     {
         var provider = new FakeBearerTokenProvider("fake-aad-token");
-        var processor = CreateProcessor(upstreamApiKey: string.Empty, provider);
+        RealtimeProcessor processor = CreateProcessor(upstreamApiKey: string.Empty, provider);
 
-        var (name, value) = await processor.ResolveUpstreamAuthHeaderAsync(CancellationToken.None);
+        (string? name, string? value) = await processor.ResolveUpstreamAuthHeaderAsync(CancellationToken.None);
 
         Assert.Equal("Authorization", name);
         Assert.Equal("Bearer fake-aad-token", value);
@@ -90,7 +90,7 @@ public sealed class UpstreamAuthHeaderTests
     public async Task NoApiKeyConfigured_RequestsAFreshTokenPerConnection()
     {
         var provider = new FakeBearerTokenProvider("fake-aad-token");
-        var processor = CreateProcessor(upstreamApiKey: string.Empty, provider);
+        RealtimeProcessor processor = CreateProcessor(upstreamApiKey: string.Empty, provider);
 
         await processor.ResolveUpstreamAuthHeaderAsync(CancellationToken.None);
         await processor.ResolveUpstreamAuthHeaderAsync(CancellationToken.None);
@@ -106,8 +106,8 @@ public sealed class UpstreamAuthHeaderTests
     [Fact]
     public async Task TokenProviderThrows_ClosesWith1011InsteadOfEscaping()
     {
-        var processor = CreateProcessor(string.Empty, new ThrowingBearerTokenProvider());
-        var socket = new FakeWebSocket(Array.Empty<(byte[], bool, WebSocketMessageType)>());
+        RealtimeProcessor processor = CreateProcessor(string.Empty, new ThrowingBearerTokenProvider());
+        var socket = new FakeWebSocket([]);
 
         await processor.RunSessionAsync(
             socket,

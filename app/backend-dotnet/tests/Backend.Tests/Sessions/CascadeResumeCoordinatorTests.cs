@@ -1,7 +1,7 @@
 using System.Net.WebSockets;
 using System.Text.Json.Nodes;
-using Backend.Configuration;
 using Backend.Cascade;
+using Backend.Configuration;
 using Backend.Models;
 using Backend.Personas;
 using Backend.Realtime;
@@ -15,12 +15,12 @@ namespace Backend.Tests.Sessions;
 
 public sealed class CascadeResumeCoordinatorTests
 {
-    private static readonly Lazy<Persona> TestPersona = new(() => DeltaFixture.Load("test-alpha"));
+    private static readonly Lazy<Persona> s_testPersona = new(() => DeltaFixture.Load("test-alpha"));
 
     [Fact]
     public async Task NegotiateAsync_resumeAdoptsSessionIdentityAndExecutorBeforeAnnouncing()
     {
-        var persona = TestPersona.Value;
+        Persona persona = s_testPersona.Value;
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
         var sessionManager = new SessionManager(
             new SessionsConfig(),
@@ -34,10 +34,10 @@ public sealed class CascadeResumeCoordinatorTests
             "prior-session", priorSocket, persona.Id, resolvedModel.Id, null,
             resumedExecutor, "echo", identifiers: resumedIdentifiers);
         sessionManager.MarkConversationStarted("prior-session");
-        var resumeId = sessionManager.IssueResumeId("prior-session")!;
+        string resumeId = sessionManager.IssueResumeId("prior-session")!;
         sessionManager.Detach(priorSocket, "prior-session", "test setup");
 
-        var resumeFrame = System.Text.Encoding.UTF8.GetBytes(new JsonObject
+        byte[] resumeFrame = System.Text.Encoding.UTF8.GetBytes(new JsonObject
         {
             ["type"] = "extension.resume",
             ["resume_id"] = resumeId,
@@ -77,14 +77,14 @@ public sealed class CascadeResumeCoordinatorTests
         };
         context.TurnCoordinator = new CascadeTurnCoordinator(context);
 
-        var leftover = await new CascadeResumeCoordinator(context).NegotiateAsync();
+        JsonObject? leftover = await new CascadeResumeCoordinator(context).NegotiateAsync();
 
         Assert.Null(leftover);
         Assert.Equal("prior-session", context.SessionId);
         Assert.Same(resumedExecutor, context.ToolExecutor);
         Assert.Same(resumedIdentifiers, context.Identifiers);
         Assert.Equal("echo", state.Voice);
-        var frame = JsonNode.Parse(System.Text.Encoding.UTF8.GetString(
+        JsonObject frame = JsonNode.Parse(System.Text.Encoding.UTF8.GetString(
             Assert.Single(browser.SentMessages).Data))!.AsObject();
         Assert.Equal("extension.session_resumed", (string?)frame["type"]);
     }
@@ -93,7 +93,7 @@ public sealed class CascadeResumeCoordinatorTests
     public async Task NegotiateAsync_withoutFirstFrameTimeout_announcesFreshSessionAndOwnsGreetingTask()
     {
         var browser = new FakeWebSocket([]);
-        var persona = TestPersona.Value;
+        Persona persona = s_testPersona.Value;
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
         var sessionManager = new SessionManager(
             new SessionsConfig(firstFrameTimeoutSeconds: 0),
@@ -129,11 +129,11 @@ public sealed class CascadeResumeCoordinatorTests
         };
         context.TurnCoordinator = new CascadeTurnCoordinator(context);
 
-        var leftover = await new CascadeResumeCoordinator(context).NegotiateAsync();
+        JsonObject? leftover = await new CascadeResumeCoordinator(context).NegotiateAsync();
 
         Assert.Null(leftover);
         Assert.NotNull(state.CurrentTurnTask);
-        var frame = JsonNode.Parse(System.Text.Encoding.UTF8.GetString(
+        JsonObject frame = JsonNode.Parse(System.Text.Encoding.UTF8.GetString(
             Assert.Single(browser.SentMessages).Data))!.AsObject();
         Assert.Equal("extension.session_metadata", (string?)frame["type"]);
     }

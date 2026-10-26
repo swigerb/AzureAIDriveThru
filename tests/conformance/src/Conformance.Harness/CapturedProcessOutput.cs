@@ -78,7 +78,7 @@ public sealed class CapturedProcessOutput
     /// instant, a literal <c>Z</c>, then a single space. One shared regex for both backends
     /// since they deliberately emit byte-identical prefixes.
     /// </summary>
-    private static readonly Regex BackendTimestampPrefix = new(
+    private static readonly Regex s_backendTimestampPrefix = new(
         @"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z) ", RegexOptions.Compiled);
 
     /// <summary>
@@ -93,14 +93,14 @@ public sealed class CapturedProcessOutput
     /// </summary>
     private static (DateTimeOffset? Timestamp, string Content) StripBackendTimestamp(string line)
     {
-        var match = BackendTimestampPrefix.Match(line);
+        Match match = s_backendTimestampPrefix.Match(line);
         if (!match.Success)
         {
             return (null, line);
         }
         if (!DateTimeOffset.TryParseExact(
                 match.Groups[1].Value, "yyyy-MM-ddTHH:mm:ss.ffffff'Z'",
-                CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed))
+                CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out DateTimeOffset parsed))
         {
             return (null, line);
         }
@@ -129,8 +129,8 @@ public sealed class CapturedProcessOutput
         // real read-time regardless: it drives WaitForOutputQuiescenceAsync's silence detection,
         // which is inherently about when *this harness* last saw output, not when the backend
         // wrote it.
-        var (embeddedTimestamp, content) = StripBackendTimestamp(line);
-        var displayTimestamp = embeddedTimestamp ?? DateTimeOffset.UtcNow;
+        (DateTimeOffset? embeddedTimestamp, string? content) = StripBackendTimestamp(line);
+        DateTimeOffset displayTimestamp = embeddedTimestamp ?? DateTimeOffset.UtcNow;
 
         _lines.Enqueue($"[{displayTimestamp:HH:mm:ss.fff} {stream}] {content}");
         if (Interlocked.Increment(ref _count) > MaxLines)
@@ -174,10 +174,10 @@ public sealed class CapturedProcessOutput
     /// </summary>
     public string DumpSince(int watermark)
     {
-        var snapshot = _lines.ToArray();
-        var totalEverAppended = Volatile.Read(ref _count);
-        var evictedBeforeSnapshot = Math.Max(0, totalEverAppended - snapshot.Length);
-        var skip = Math.Max(0, watermark - evictedBeforeSnapshot);
+        string[] snapshot = [.. _lines];
+        int totalEverAppended = Volatile.Read(ref _count);
+        int evictedBeforeSnapshot = Math.Max(0, totalEverAppended - snapshot.Length);
+        int skip = Math.Max(0, watermark - evictedBeforeSnapshot);
         return string.Join(Environment.NewLine, snapshot.Skip(skip));
     }
 
@@ -216,7 +216,7 @@ public sealed class CapturedProcessOutput
                 signalTask = _signal.Task;
             }
 
-            var completed = await Task.WhenAny(signalTask, timeoutTask).ConfigureAwait(false);
+            Task completed = await Task.WhenAny(signalTask, timeoutTask).ConfigureAwait(false);
             if (completed == timeoutTask)
             {
                 // Rethrows only if cancellationToken (not the plain timeout) is what completed
@@ -286,7 +286,7 @@ public sealed class CapturedProcessOutput
         TimeSpan maxWait,
         CancellationToken cancellationToken = default)
     {
-        var deadline = DateTimeOffset.UtcNow + maxWait;
+        DateTimeOffset deadline = DateTimeOffset.UtcNow + maxWait;
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -299,7 +299,7 @@ public sealed class CapturedProcessOutput
                 // #103: re-derived fresh on EVERY iteration (not gated to the first) -- see this
                 // method's own doc comment above for why a completed idle timer alone can't be
                 // trusted as proof that a full idleWindow has really elapsed.
-                var quietFor = DateTimeOffset.UtcNow - _lastAppendUtc;
+                TimeSpan quietFor = DateTimeOffset.UtcNow - _lastAppendUtc;
                 idleNeeded = quietFor >= idleWindow ? TimeSpan.Zero : idleWindow - quietFor;
             }
 
@@ -311,16 +311,16 @@ public sealed class CapturedProcessOutput
                 return true;
             }
 
-            var remaining = deadline - DateTimeOffset.UtcNow;
+            TimeSpan remaining = deadline - DateTimeOffset.UtcNow;
             if (remaining <= TimeSpan.Zero)
             {
                 return false;
             }
 
-            var cappedByDeadline = remaining < idleNeeded;
-            var waitFor = cappedByDeadline ? remaining : idleNeeded;
+            bool cappedByDeadline = remaining < idleNeeded;
+            TimeSpan waitFor = cappedByDeadline ? remaining : idleNeeded;
             var idleTask = Task.Delay(waitFor, cancellationToken);
-            var completed = await Task.WhenAny(signalTask, idleTask).ConfigureAwait(false);
+            Task completed = await Task.WhenAny(signalTask, idleTask).ConfigureAwait(false);
             if (completed == idleTask)
             {
                 await idleTask.ConfigureAwait(false); // rethrows only for a genuine cancellation.
@@ -386,9 +386,9 @@ public sealed class CapturedProcessOutput
                 return;
             }
 
-            var isIndented = content.Length > 0 && char.IsWhiteSpace(content[0]);
-            var isTracebackHeader = content is "Traceback (most recent call last):";
-            var isErrorHeader = content.StartsWith("ERROR:", StringComparison.Ordinal);
+            bool isIndented = content.Length > 0 && char.IsWhiteSpace(content[0]);
+            bool isTracebackHeader = content is "Traceback (most recent call last):";
+            bool isErrorHeader = content.StartsWith("ERROR:", StringComparison.Ordinal);
 
             switch (_scanState)
             {
@@ -469,8 +469,8 @@ public sealed class CapturedProcessOutput
     /// </summary>
     public int CountUnhandledErrors(Func<IReadOnlyList<string>, bool> isBenignIncident)
     {
-        var count = 0;
-        var state = ErrorScanState.Idle;
+        int count = 0;
+        ErrorScanState state = ErrorScanState.Idle;
         var incident = new List<string>();
 
         void FinishIncident()
@@ -482,18 +482,18 @@ public sealed class CapturedProcessOutput
             incident.Clear();
         }
 
-        foreach (var line in _lines)
+        foreach (string line in _lines)
         {
-            if (!TryGetStderrContent(line, out var content))
+            if (!TryGetStderrContent(line, out string? content))
             {
                 FinishIncident();
                 state = ErrorScanState.Idle;
                 continue;
             }
 
-            var isIndented = content.Length > 0 && char.IsWhiteSpace(content[0]);
-            var isTracebackHeader = content is "Traceback (most recent call last):";
-            var isErrorHeader = content.StartsWith("ERROR:", StringComparison.Ordinal);
+            bool isIndented = content.Length > 0 && char.IsWhiteSpace(content[0]);
+            bool isTracebackHeader = content is "Traceback (most recent call last):";
+            bool isErrorHeader = content.StartsWith("ERROR:", StringComparison.Ordinal);
 
             switch (state)
             {
@@ -578,7 +578,7 @@ public sealed class CapturedProcessOutput
         // Lines are "[HH:mm:ss.fff ERR] <original>" / "[HH:mm:ss.fff OUT] <original>" — the
         // timestamp format is fixed-width, but searching for the "] " delimiter rather than
         // hard-coding offsets keeps this robust to that formatting ever changing.
-        var closeBracket = capturedLine.IndexOf("] ", StringComparison.Ordinal);
+        int closeBracket = capturedLine.IndexOf("] ", StringComparison.Ordinal);
         if (closeBracket < 0 || !capturedLine.Contains(" ERR]", StringComparison.Ordinal))
         {
             content = "";

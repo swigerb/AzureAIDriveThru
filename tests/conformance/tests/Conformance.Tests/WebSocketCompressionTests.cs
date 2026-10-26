@@ -20,7 +20,7 @@ public sealed class WebSocketCompressionTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Deflate_is_not_negotiated_on_the_browser_socket() => fixture.RunAsync(async () =>
     {
-        await using var client = await RealtimeBrowserClient.ConnectAsync(
+        await using RealtimeBrowserClient client = await RealtimeBrowserClient.ConnectAsync(
             fixture.Backend!.BaseUri, offerDeflate: true, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Null(client.NegotiatedExtensions);

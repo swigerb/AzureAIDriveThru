@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
@@ -13,14 +12,14 @@ namespace Conformance.Tests;
 [Collection(ShortTimersConformanceCollection.Name)]
 public sealed class GreetingTimeoutFallbackTests(ShortTimersConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Greeting_still_fires_via_the_shortened_session_configured_timeout() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        bool noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(s_frameTimeout, ct);
         Assert.True(noneOpen, $"Expected no open upstream connections at test start, but " +
             $"{fixture.Realtime.OpenConnectionCount} are still open — a previous test leaked a connection.");
 
@@ -35,12 +34,12 @@ public sealed class GreetingTimeoutFallbackTests(ShortTimersConformanceFixture f
         // many session.update frames this connection's lifecycle will actually send.
         fixture.Realtime.SuppressSessionUpdatedOnNextConnection();
 
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
-        var bootstrap = await connection!.ReceivedFrames.WaitForAsync(f => f.Sequence == 0, FrameTimeout, ct);
+        RecordedFrame? bootstrap = await connection!.ReceivedFrames.WaitForAsync(f => f.Sequence == 0, s_frameTimeout, ct);
         Assert.True(bootstrap is not null, "Bootstrap session.update never arrived.");
 
         // #66 S2: taken before the frame that triggers rtmt.py's fallback-timeout log line, so
@@ -49,7 +48,7 @@ public sealed class GreetingTimeoutFallbackTests(ShortTimersConformanceFixture f
         // ShortTimers scenario that also hit the 1s fallback under load would log the exact same
         // warning and satisfy the check vacuously, without this scenario's own fallback having
         // fired at all.
-        var diagnosticsWatermark = fixture.Backend!.DiagnosticsWatermark;
+        int diagnosticsWatermark = fixture.Backend!.DiagnosticsWatermark;
 
         await browser.SendStartSessionAsync(cancellationToken: ct);
 
@@ -57,7 +56,7 @@ public sealed class GreetingTimeoutFallbackTests(ShortTimersConformanceFixture f
         // production default -- this scenario can only pass if CONFORMANCE_GREETING_TIMEOUT_SECONDS
         // actually took effect for this backend process.
         var shortTimeout = TimeSpan.FromSeconds(3);
-        var greeting = await connection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? greeting = await connection.ReceivedFrames.WaitForAsync(
             f => f.Sequence > bootstrap!.Sequence && f.Type == "response.create", shortTimeout, ct);
         Assert.True(greeting is not null,
             $"Expected the greeting response.create within {shortTimeout} despite session.updated " +
@@ -65,8 +64,8 @@ public sealed class GreetingTimeoutFallbackTests(ShortTimersConformanceFixture f
             "fallback wait for this backend process. If this backend used the 5s production " +
             "default instead, this would time out.");
 
-        var diagnostics = await fixture.Backend!.WaitForDiagnosticsAsync(
-            d => d.Contains("No session.updated within", StringComparison.Ordinal), FrameTimeout, ct,
+        bool diagnostics = await fixture.Backend!.WaitForDiagnosticsAsync(
+            d => d.Contains("No session.updated within", StringComparison.Ordinal), s_frameTimeout, ct,
             sinceWatermark: diagnosticsWatermark);
         Assert.True(diagnostics,
             "Expected the backend's captured stderr to eventually contain \"No session.updated " +

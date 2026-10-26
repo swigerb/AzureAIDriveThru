@@ -1,10 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
-using System.Linq;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
 using Microsoft.IdentityModel.Tokens;
 
 namespace Conformance.Fakes;
@@ -151,7 +148,7 @@ public sealed class FakeEntraIssuer : IAsyncDisposable
     // Deliberately fixed, not random: row 7's HS256 sub-case only needs "some algorithm the
     // RS256-only JWKS can never satisfy", not a secret worth protecting -- this is a fake test
     // issuer, never reachable outside this machine's loopback interface.
-    private static readonly byte[] Hs256Secret =
+    private static readonly byte[] s_hs256Secret =
         Encoding.UTF8.GetBytes("conformance-fake-entra-issuer-hs256-secret-never-published-not-a-real-secret");
 
     private WebApplication? _app;
@@ -191,14 +188,14 @@ public sealed class FakeEntraIssuer : IAsyncDisposable
         _publishedKey = RSA.Create(2048);
         _unpublishedKey = RSA.Create(2048);
 
-        var builder = WebApplication.CreateBuilder();
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
         builder.WebHost.UseUrls($"http://127.0.0.1:{fixedPort?.ToString() ?? "0"}");
-        var app = builder.Build();
+        WebApplication app = builder.Build();
 
         app.MapGet("/{tenant}/v2.0/.well-known/openid-configuration", (string tenant) =>
         {
-            var issuer = IssuerFor(tenant);
+            string issuer = IssuerFor(tenant);
             return Results.Json(new
             {
                 issuer,
@@ -232,7 +229,7 @@ public sealed class FakeEntraIssuer : IAsyncDisposable
 
     private object BuildJwks()
     {
-        var publishedJwk = JsonWebKeyConverter.ConvertFromRSASecurityKey(new RsaSecurityKey(_publishedKey!.ExportParameters(false))
+        JsonWebKey publishedJwk = JsonWebKeyConverter.ConvertFromRSASecurityKey(new RsaSecurityKey(_publishedKey!.ExportParameters(false))
         {
             KeyId = PublishedKid,
         });
@@ -268,13 +265,13 @@ public sealed class FakeEntraIssuer : IAsyncDisposable
     {
         overrides ??= new FakeEntraTokenOverrides();
 
-        var tenant = overrides.Tenant ?? Tenant;
-        var issuer = overrides.Issuer ?? IssuerFor(tenant);
-        var audience = overrides.Audience ?? DefaultClientId;
-        var now = DateTimeOffset.UtcNow;
-        var exp = overrides.Exp ?? now.AddMinutes(15);
-        var nbf = overrides.Nbf ?? now.AddMinutes(-5);
-        var roles = overrides.Roles ?? new[] { DefaultRole };
+        string tenant = overrides.Tenant ?? Tenant;
+        string issuer = overrides.Issuer ?? IssuerFor(tenant);
+        string audience = overrides.Audience ?? DefaultClientId;
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset exp = overrides.Exp ?? now.AddMinutes(15);
+        DateTimeOffset nbf = overrides.Nbf ?? now.AddMinutes(-5);
+        IReadOnlyList<string> roles = overrides.Roles ?? [DefaultRole];
 
         var claims = new List<Claim>
         {
@@ -283,21 +280,21 @@ public sealed class FakeEntraIssuer : IAsyncDisposable
             new("name", "Conformance Test User"),
             new("preferred_username", "conformance-test-user@example.test"),
         };
-        foreach (var role in roles)
+        foreach (string role in roles)
         {
             claims.Add(new Claim("roles", role));
         }
         if (!overrides.OmitScope)
         {
-            var scope = overrides.Scope ?? DefaultScope;
+            string scope = overrides.Scope ?? DefaultScope;
             claims.Add(new Claim("scp", scope));
         }
 
-        var alg = overrides.Alg ?? "RS256";
-        var signingCredentials = alg switch
+        string alg = overrides.Alg ?? "RS256";
+        SigningCredentials? signingCredentials = alg switch
         {
             "RS256" => BuildRsaSigningCredentials(overrides.Key, overrides.Kid),
-            "HS256" => new SigningCredentials(new SymmetricSecurityKey(Hs256Secret), SecurityAlgorithms.HmacSha256),
+            "HS256" => new SigningCredentials(new SymmetricSecurityKey(s_hs256Secret), SecurityAlgorithms.HmacSha256),
             "none" => null,
             _ => throw new ArgumentOutOfRangeException(
                 nameof(overrides), alg, "FakeEntraTokenOverrides.Alg must be \"RS256\", \"HS256\", or \"none\"."),
@@ -356,10 +353,10 @@ public sealed class FakeEntraIssuer : IAsyncDisposable
 
     private SigningCredentials BuildRsaSigningCredentials(FakeEntraSigningKey key, string? kidOverride)
     {
-        var (rsa, kid) = key switch
+        (RSA? rsa, string? kid) = key switch
         {
-            FakeEntraSigningKey.Published => (_publishedKey!, PublishedKid),
-            FakeEntraSigningKey.Unpublished => (_unpublishedKey!, UnpublishedKid),
+            FakeEntraSigningKey.Published => (_publishedKey, PublishedKid),
+            FakeEntraSigningKey.Unpublished => (_unpublishedKey, UnpublishedKid),
             _ => throw new ArgumentOutOfRangeException(nameof(key), key, null),
         };
         var securityKey = new RsaSecurityKey(rsa) { KeyId = kidOverride ?? kid };

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json.Nodes;
 using Backend.Cascade;
 using Backend.Realtime;
 
@@ -17,14 +18,14 @@ public sealed class FoundryAudioClientTests
     [Fact]
     public async Task TranscribeAsync_PostsMultipartWavToTranscriptionsEndpointAndReturnsText()
     {
-        var handler = new QueuedFoundryHttpHandler().Enqueue(HttpStatusCode.OK, """{"text":"two burgers please"}""");
-        var client = NewClient(handler, token: "my-token");
-        var pcm = new byte[] { 0x01, 0x00, 0x02, 0x00 };
+        QueuedFoundryHttpHandler handler = new QueuedFoundryHttpHandler().Enqueue(HttpStatusCode.OK, """{"text":"two burgers please"}""");
+        FoundryAudioClient client = NewClient(handler, token: "my-token");
+        byte[] pcm = [0x01, 0x00, 0x02, 0x00];
 
-        var transcript = await client.TranscribeAsync(pcm, deployment: "gpt-4o-transcribe", sampleRate: 24000, CancellationToken.None);
+        string transcript = await client.TranscribeAsync(pcm, deployment: "gpt-4o-transcribe", sampleRate: 24000, CancellationToken.None);
 
         Assert.Equal("two burgers please", transcript);
-        var request = Assert.Single(handler.Requests);
+        HttpRequestMessage request = Assert.Single(handler.Requests);
         // Endpoint trailing slash is trimmed, same as FoundryChatClient.
         Assert.Equal("https://fake-foundry.example.com/openai/deployments/gpt-4o-transcribe/audio/transcriptions?api-version=2024-10-21", request.RequestUri!.ToString());
         Assert.Equal("Bearer", request.Headers.Authorization!.Scheme);
@@ -35,10 +36,10 @@ public sealed class FoundryAudioClientTests
     [Fact]
     public async Task TranscribeAsync_MissingTextField_ReturnsEmptyStringRatherThanThrowing()
     {
-        var handler = new QueuedFoundryHttpHandler().Enqueue(HttpStatusCode.OK, "{}");
-        var client = NewClient(handler);
+        QueuedFoundryHttpHandler handler = new QueuedFoundryHttpHandler().Enqueue(HttpStatusCode.OK, "{}");
+        FoundryAudioClient client = NewClient(handler);
 
-        var transcript = await client.TranscribeAsync([0x00, 0x00], "gpt-4o-transcribe", 24000, CancellationToken.None);
+        string transcript = await client.TranscribeAsync([0x00, 0x00], "gpt-4o-transcribe", 24000, CancellationToken.None);
 
         Assert.Equal("", transcript);
     }
@@ -46,10 +47,10 @@ public sealed class FoundryAudioClientTests
     [Fact]
     public async Task TranscribeAsync_NonSuccessStatus_ThrowsFoundryHttpException()
     {
-        var handler = new QueuedFoundryHttpHandler().Enqueue(HttpStatusCode.ServiceUnavailable, """{"error":"upstream down"}""");
-        var client = NewClient(handler);
+        QueuedFoundryHttpHandler handler = new QueuedFoundryHttpHandler().Enqueue(HttpStatusCode.ServiceUnavailable, """{"error":"upstream down"}""");
+        FoundryAudioClient client = NewClient(handler);
 
-        var exc = await Assert.ThrowsAsync<FoundryHttpException>(() =>
+        FoundryHttpException exc = await Assert.ThrowsAsync<FoundryHttpException>(() =>
             client.TranscribeAsync([0x00, 0x00], "gpt-4o-transcribe", 24000, CancellationToken.None));
 
         Assert.Equal(503, exc.StatusCode);
@@ -59,14 +60,14 @@ public sealed class FoundryAudioClientTests
     [Fact]
     public async Task TranscribeAsync_BogusCharset429StillThrowsFoundryHttpException()
     {
-        var handler = new QueuedFoundryHttpHandler().EnqueueRaw(
+        QueuedFoundryHttpHandler handler = new QueuedFoundryHttpHandler().EnqueueRaw(
             HttpStatusCode.TooManyRequests,
             Encoding.UTF8.GetBytes("""{"error":"rate limited"}"""),
             "application/json; charset=bogus-charset",
             retryAfterHeader: "3");
-        var client = NewClient(handler);
+        FoundryAudioClient client = NewClient(handler);
 
-        var exc = await Assert.ThrowsAsync<FoundryHttpException>(() =>
+        FoundryHttpException exc = await Assert.ThrowsAsync<FoundryHttpException>(() =>
             client.TranscribeAsync([0x00, 0x00], "gpt-4o-transcribe", 24000, CancellationToken.None));
 
         Assert.Equal(429, exc.StatusCode);
@@ -77,18 +78,18 @@ public sealed class FoundryAudioClientTests
     [Fact]
     public async Task SpeakAsync_PostsJsonBodyWithPcmResponseFormatAndReturnsRawBytes()
     {
-        var pcmResponse = new byte[] { 1, 2, 3, 4, 5 };
-        var handler = new QueuedFoundryHttpHandler().EnqueueBytes(HttpStatusCode.OK, pcmResponse);
-        var client = NewClient(handler, token: "my-token");
+        byte[] pcmResponse = [1, 2, 3, 4, 5];
+        QueuedFoundryHttpHandler handler = new QueuedFoundryHttpHandler().EnqueueBytes(HttpStatusCode.OK, pcmResponse);
+        FoundryAudioClient client = NewClient(handler, token: "my-token");
 
-        var result = await client.SpeakAsync("Welcome to Test Co.!", voice: "marin", deployment: "gpt-4o-mini-tts", CancellationToken.None);
+        byte[] result = await client.SpeakAsync("Welcome to Test Co.!", voice: "marin", deployment: "gpt-4o-mini-tts", CancellationToken.None);
 
         Assert.Equal(pcmResponse, result);
-        var request = Assert.Single(handler.Requests);
+        HttpRequestMessage request = Assert.Single(handler.Requests);
         Assert.Equal("https://fake-foundry.example.com/openai/v1/audio/speech", request.RequestUri!.ToString());
         Assert.Equal("Bearer", request.Headers.Authorization!.Scheme);
 
-        var body = System.Text.Json.Nodes.JsonNode.Parse(handler.RequestBodies.Single())!.AsObject();
+        JsonObject body = System.Text.Json.Nodes.JsonNode.Parse(handler.RequestBodies.Single())!.AsObject();
         Assert.Equal("gpt-4o-mini-tts", body["model"]!.GetValue<string>());
         Assert.Equal("Welcome to Test Co.!", body["input"]!.GetValue<string>());
         Assert.Equal("marin", body["voice"]!.GetValue<string>());
@@ -98,11 +99,11 @@ public sealed class FoundryAudioClientTests
     [Fact]
     public async Task SpeakAsync_NonSuccessStatus_ThrowsFoundryHttpExceptionWithRetryAfterHeader()
     {
-        var handler = new QueuedFoundryHttpHandler().Enqueue(
+        QueuedFoundryHttpHandler handler = new QueuedFoundryHttpHandler().Enqueue(
             HttpStatusCode.TooManyRequests, """{"error":"rate limited"}""", retryAfterHeader: "3");
-        var client = NewClient(handler);
+        FoundryAudioClient client = NewClient(handler);
 
-        var exc = await Assert.ThrowsAsync<FoundryHttpException>(() =>
+        FoundryHttpException exc = await Assert.ThrowsAsync<FoundryHttpException>(() =>
             client.SpeakAsync("hi", "marin", "gpt-4o-mini-tts", CancellationToken.None));
 
         Assert.Equal(429, exc.StatusCode);
@@ -112,8 +113,8 @@ public sealed class FoundryAudioClientTests
     [Fact]
     public void PcmToWav_ProducesACorrectFortyFourByteRiffHeaderForMonoSixteenBit()
     {
-        var pcm = new byte[] { 0x11, 0x22, 0x33, 0x44 }; // 2 fake samples
-        var wav = WavEncoder.PcmToWav(pcm, sampleRate: 24000);
+        byte[] pcm = [0x11, 0x22, 0x33, 0x44]; // 2 fake samples
+        byte[] wav = WavEncoder.PcmToWav(pcm, sampleRate: 24000);
 
         Assert.Equal(44 + pcm.Length, wav.Length);
         Assert.Equal("RIFF", Encoding.ASCII.GetString(wav, 0, 4));
@@ -135,7 +136,7 @@ public sealed class FoundryAudioClientTests
     [Fact]
     public void PcmToWav_EmptyPcm_ProducesAnEmptyDataChunk()
     {
-        var wav = WavEncoder.PcmToWav([], sampleRate: 24000);
+        byte[] wav = WavEncoder.PcmToWav([], sampleRate: 24000);
 
         Assert.Equal(44, wav.Length);
         Assert.Equal(0, BitConverter.ToInt32(wav, 40));

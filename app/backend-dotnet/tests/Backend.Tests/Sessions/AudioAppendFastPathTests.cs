@@ -98,7 +98,7 @@ public sealed class AudioAppendFastPathTests
         // as 0-2 TRAILING padding characters). This is a deliberate, documented match of Python's
         // existing fast-path behaviour (issue #13's "match Python's handling exactly"), not a new
         // looseness introduced by the C# port -- see IsFastPathAudioAlphabetByte's doc comment.
-        var frameWithMidStringEquals = Utf8("""{"type":"input_audio_buffer.append","audio":"A=A"}""");
+        byte[] frameWithMidStringEquals = Utf8("""{"type":"input_audio_buffer.append","audio":"A=A"}""");
         Assert.True(RealtimeProcessor.TryMatchAppendFastPath(frameWithMidStringEquals));
     }
 
@@ -107,11 +107,11 @@ public sealed class AudioAppendFastPathTests
     [Fact]
     public void TryAppendFastPath_reports_NoMatch_for_a_non_fast_path_frame_regardless_of_echo_state()
     {
-        var processor = CreateProcessor();
+        RealtimeProcessor processor = CreateProcessor();
         using var echo = new EchoSuppressor(cooldownSeconds: 1.5, flushSendAsync: static _ => Task.CompletedTask);
         echo.OnAudioDelta(); // AI is "speaking" -- would suppress if this were a match.
 
-        var result = processor.TryAppendFastPath(Utf8("""{"type":"response.cancel"}"""), echo);
+        FramePump.AppendFastPathResult result = processor.TryAppendFastPath(Utf8("""{"type":"response.cancel"}"""), echo);
 
         Assert.False(result.IsMatch);
         Assert.False(result.Suppressed);
@@ -120,10 +120,10 @@ public sealed class AudioAppendFastPathTests
     [Fact]
     public void TryAppendFastPath_matches_and_is_not_suppressed_when_the_assistant_is_silent()
     {
-        var processor = CreateProcessor();
+        RealtimeProcessor processor = CreateProcessor();
         using var echo = new EchoSuppressor(cooldownSeconds: 1.5, flushSendAsync: static _ => Task.CompletedTask);
 
-        var result = processor.TryAppendFastPath(
+        FramePump.AppendFastPathResult result = processor.TryAppendFastPath(
             Utf8("""{"type":"input_audio_buffer.append","audio":"AAAA"}"""), echo);
 
         Assert.True(result.IsMatch);
@@ -136,11 +136,11 @@ public sealed class AudioAppendFastPathTests
         // Mutation check target: if the fast path forwarded unconditionally on a shape match
         // (skipping the ShouldSuppressAudio gate), this would start failing -- Suppressed must
         // stay true, and the caller in RealtimeProcessor.cs must not forward the frame.
-        var processor = CreateProcessor();
+        RealtimeProcessor processor = CreateProcessor();
         using var echo = new EchoSuppressor(cooldownSeconds: 1.5, flushSendAsync: static _ => Task.CompletedTask);
         echo.OnAudioDelta();
 
-        var result = processor.TryAppendFastPath(
+        FramePump.AppendFastPathResult result = processor.TryAppendFastPath(
             Utf8("""{"type":"input_audio_buffer.append","audio":"AAAA"}"""), echo);
 
         Assert.True(result.IsMatch);
@@ -172,18 +172,18 @@ public sealed class AudioAppendFastPathTests
         // reset to 0 regardless of how far the FAKE clock is actually advanced -- which the
         // advanceSeconds=3.0 case below catches directly.
         var fakeTime = new FakeTimeProvider();
-        var processor = CreateProcessor(fakeTime);
+        RealtimeProcessor processor = CreateProcessor(fakeTime);
         using var echo = new EchoSuppressor(cooldownSeconds: 1.5, flushSendAsync: static _ => Task.CompletedTask);
-        var appendFrame = Utf8("""{"type":"input_audio_buffer.append","audio":"AAAA"}""");
+        byte[] appendFrame = Utf8("""{"type":"input_audio_buffer.append","audio":"AAAA"}""");
 
         echo.OnAudioDelta();
         echo.OnAudioDone(Now(fakeTime));
-        var cooldownEndAfterCompletion = echo.CooldownEnd;
+        double cooldownEndAfterCompletion = echo.CooldownEnd;
         Assert.True(cooldownEndAfterCompletion > 0.0);
 
         fakeTime.Advance(TimeSpan.FromSeconds(advanceSeconds));
 
-        var result = processor.TryAppendFastPath(appendFrame, echo);
+        FramePump.AppendFastPathResult result = processor.TryAppendFastPath(appendFrame, echo);
 
         Assert.True(result.IsMatch);
         Assert.False(result.Suppressed); // never suppressed once the assistant has stopped speaking.
@@ -203,18 +203,18 @@ public sealed class AudioAppendFastPathTests
         // `if (!fastPath.Suppressed)` branch really wires "not suppressed" to "send these exact
         // bytes upstream". This drives the real shape match, the real (silent) echo-suppression
         // gate, and the real forward together, through a FakeWebSocket stand-in for upstream.
-        var processor = CreateProcessor();
+        RealtimeProcessor processor = CreateProcessor();
         using var echo = new EchoSuppressor(cooldownSeconds: 1.5, flushSendAsync: static _ => Task.CompletedTask);
-        var upstream = new FakeWebSocket(Array.Empty<(byte[], bool, WebSocketMessageType)>());
-        var payload = Utf8("""{"type":"input_audio_buffer.append","audio":"AQIDBA=="}""");
+        var upstream = new FakeWebSocket([]);
+        byte[] payload = Utf8("""{"type":"input_audio_buffer.append","audio":"AQIDBA=="}""");
 
-        var fastPath = processor.TryAppendFastPath(payload, echo); // assistant silent -- real gate says "forward".
+        FramePump.AppendFastPathResult fastPath = processor.TryAppendFastPath(payload, echo); // assistant silent -- real gate says "forward".
         Assert.True(fastPath.IsMatch);
         Assert.False(fastPath.Suppressed);
 
         await processor.ForwardFastPathAudioAsync(fastPath, payload, upstream, sessionId: "s1", CancellationToken.None);
 
-        var sent = Assert.Single(upstream.SentMessages);
+        (byte[] Data, WebSocketMessageType MessageType, bool EndOfMessage) sent = Assert.Single(upstream.SentMessages);
         Assert.Equal(payload, sent.Data);
         Assert.Equal(WebSocketMessageType.Text, sent.MessageType);
         Assert.True(sent.EndOfMessage);
@@ -226,13 +226,13 @@ public sealed class AudioAppendFastPathTests
         // Mutation check target: if the forward branch stopped checking fastPath.Suppressed (or
         // the echo gate itself stopped suppressing while the assistant speaks), this frame would
         // reach upstream and the Assert.Empty below would fail.
-        var processor = CreateProcessor();
+        RealtimeProcessor processor = CreateProcessor();
         using var echo = new EchoSuppressor(cooldownSeconds: 1.5, flushSendAsync: static _ => Task.CompletedTask);
         echo.OnAudioDelta(); // assistant speaking -- real gate says "suppress".
-        var upstream = new FakeWebSocket(Array.Empty<(byte[], bool, WebSocketMessageType)>());
-        var payload = Utf8("""{"type":"input_audio_buffer.append","audio":"AQIDBA=="}""");
+        var upstream = new FakeWebSocket([]);
+        byte[] payload = Utf8("""{"type":"input_audio_buffer.append","audio":"AQIDBA=="}""");
 
-        var fastPath = processor.TryAppendFastPath(payload, echo);
+        FramePump.AppendFastPathResult fastPath = processor.TryAppendFastPath(payload, echo);
         Assert.True(fastPath.IsMatch);
         Assert.True(fastPath.Suppressed);
 
@@ -246,12 +246,12 @@ public sealed class AudioAppendFastPathTests
     [Fact]
     public async Task SendBytesAsync_forwards_the_exact_original_bytes_unchanged()
     {
-        var socket = new FakeWebSocket(Array.Empty<(byte[], bool, WebSocketMessageType)>());
-        var payload = Utf8("""{"type":"input_audio_buffer.append","audio":"AQIDBA=="}""");
+        var socket = new FakeWebSocket([]);
+        byte[] payload = Utf8("""{"type":"input_audio_buffer.append","audio":"AQIDBA=="}""");
 
         await RealtimeProcessor.SendBytesAsync(socket, payload, CancellationToken.None);
 
-        var sent = Assert.Single(socket.SentMessages);
+        (byte[] Data, WebSocketMessageType MessageType, bool EndOfMessage) sent = Assert.Single(socket.SentMessages);
         Assert.Equal(payload, sent.Data);
         Assert.Equal(WebSocketMessageType.Text, sent.MessageType);
         Assert.True(sent.EndOfMessage);
@@ -260,7 +260,7 @@ public sealed class AudioAppendFastPathTests
     [Fact]
     public async Task SendBytesAsync_is_a_no_op_once_the_socket_is_no_longer_open()
     {
-        var socket = new FakeWebSocket(Array.Empty<(byte[], bool, WebSocketMessageType)>());
+        var socket = new FakeWebSocket([]);
         await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
 
         await RealtimeProcessor.SendBytesAsync(socket, Utf8("""{"type":"input_audio_buffer.append","audio":"AAAA"}"""), CancellationToken.None);

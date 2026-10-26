@@ -98,7 +98,7 @@ public sealed class FramePumpTests
 
         await FramePump.SendTextAsync(socket, "hello", TestContext.Current.CancellationToken);
 
-        var sent = Assert.Single(socket.SentMessages);
+        (byte[] Data, WebSocketMessageType MessageType, bool EndOfMessage) sent = Assert.Single(socket.SentMessages);
         Assert.Equal("hello", System.Text.Encoding.UTF8.GetString(sent.Data));
         Assert.Equal(WebSocketMessageType.Text, sent.MessageType);
         Assert.True(sent.EndOfMessage);
@@ -123,7 +123,7 @@ public sealed class FramePumpTests
 
         await FramePump.SendBytesAsync(socket, payload, TestContext.Current.CancellationToken);
 
-        var sent = Assert.Single(socket.SentMessages);
+        (byte[] Data, WebSocketMessageType MessageType, bool EndOfMessage) sent = Assert.Single(socket.SentMessages);
         Assert.Equal(payload, sent.Data);
     }
 

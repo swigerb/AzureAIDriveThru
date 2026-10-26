@@ -36,7 +36,7 @@ internal static class EntraAuthentication
     /// run first) as "shape OK" -- this is purely an additional structural defense layer on top
     /// of the existing, always-enforced role/scope VALUE checks, not a replacement for them.
     /// </summary>
-    internal static readonly object ClaimShapeViolationKey = new();
+    internal static readonly object s_claimShapeViolationKey = new();
 
     /// <summary>
     /// entra_auth.py's ANONYMOUS_ASSET_EXTENSIONS: a persona asset is anonymous purely by its
@@ -78,7 +78,7 @@ internal static class EntraAuthentication
         services.AddSingleton<IAuthorizationHandler, EntraAccessRequirementHandler>();
         services.AddAuthorization(options =>
         {
-            var policy = BuildAccessPolicy(settings);
+            AuthorizationPolicy policy = BuildAccessPolicy(settings);
             options.DefaultPolicy = policy;
             options.FallbackPolicy = policy;
         });
@@ -149,7 +149,7 @@ internal static class EntraAuthentication
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidIssuer = settings.Issuer,
-            ValidAudiences = [settings.ClientId!, $"api://{settings.ClientId}"],
+            ValidAudiences = [settings.ClientId, $"api://{settings.ClientId}"],
             ValidAlgorithms = [SecurityAlgorithms.RsaSha256],
             ClockSkew = TimeSpan.FromMinutes(5),
             RequireExpirationTime = true,
@@ -226,7 +226,7 @@ internal static class EntraAuthentication
                 if (!context.Request.Headers.ContainsKey("Authorization") &&
                     context.Request.Path.Equals(RealtimePath, StringComparison.OrdinalIgnoreCase))
                 {
-                    var accessToken = context.Request.Query["access_token"];
+                    StringValues accessToken = context.Request.Query["access_token"];
                     if (!StringValues.IsNullOrEmpty(accessToken))
                     {
                         context.Token = accessToken.ToString();
@@ -247,7 +247,7 @@ internal static class EntraAuthentication
                 // follow-up question on PR #226): this short-circuit must NOT fire for a request
                 // whose signing key is already resolvable without any network call --
                 // HasUsableCachedConfiguration's doc comment below has the full story.
-                var hasToken = context.Request.Headers.ContainsKey("Authorization") || context.Token is not null;
+                bool hasToken = context.Request.Headers.ContainsKey("Authorization") || context.Token is not null;
                 if (hasToken && discoveryFailureGate.IsInCooldown() && !HasUsableCachedConfiguration(options))
                 {
                     context.Fail("OIDC discovery/JWKS endpoint is in a failure cooldown window.");
@@ -287,7 +287,7 @@ internal static class EntraAuthentication
             // issuer URL, since a future issuer shape change could otherwise silently drop it.
             OnTokenValidated = context =>
             {
-                var tid = context.Principal?.FindFirst("tid")?.Value;
+                string? tid = context.Principal?.FindFirst("tid")?.Value;
                 if (!string.Equals(tid, settings.TenantId, StringComparison.Ordinal))
                 {
                     context.Fail("Token tid does not match the configured ENTRA_TENANT_ID.");
@@ -336,14 +336,14 @@ internal static class EntraAuthentication
                 // ourselves with <see cref="JsonDocument"/> reads the TRUE raw JSON shape
                 // regardless of which CLR type IdentityModel happened to map it to, matching
                 // Python's own `claims.get(...)`/`isinstance` checks against the real parsed JSON.
-                using var rawPayload = ParseRawPayload(jsonWebToken);
-                var rolesShapeOk = !rawPayload.RootElement.TryGetProperty("roles", out var rolesElement) ||
+                using JsonDocument rawPayload = ParseRawPayload(jsonWebToken);
+                bool rolesShapeOk = !rawPayload.RootElement.TryGetProperty("roles", out JsonElement rolesElement) ||
                     rolesElement.ValueKind is JsonValueKind.Array or JsonValueKind.Null;
-                var scpShapeOk = !rawPayload.RootElement.TryGetProperty("scp", out var scpElement) ||
+                bool scpShapeOk = !rawPayload.RootElement.TryGetProperty("scp", out JsonElement scpElement) ||
                     scpElement.ValueKind is JsonValueKind.String or JsonValueKind.Null;
                 if (!rolesShapeOk || !scpShapeOk)
                 {
-                    context.HttpContext.Items[ClaimShapeViolationKey] = true;
+                    context.HttpContext.Items[s_claimShapeViolationKey] = true;
                 }
 
                 return Task.CompletedTask;
@@ -385,7 +385,7 @@ internal static class EntraAuthentication
     /// </summary>
     internal static bool IsDiscoveryOrBackchannelFailure(Exception? exception)
     {
-        for (var current = exception; current is not null; current = current.InnerException)
+        for (Exception? current = exception; current is not null; current = current.InnerException)
         {
             if (current is HttpRequestException or IOException or JsonException or OperationCanceledException)
             {
@@ -407,12 +407,16 @@ internal static class EntraAuthentication
     /// </summary>
     internal static JsonDocument ParseRawPayload(JsonWebToken jsonWebToken)
     {
-        var payload = jsonWebToken.EncodedPayload;
-        var base64 = payload.Replace('-', '+').Replace('_', '/');
+        string payload = jsonWebToken.EncodedPayload;
+        string base64 = payload.Replace('-', '+').Replace('_', '/');
         switch (base64.Length % 4)
         {
-            case 2: base64 += "=="; break;
-            case 3: base64 += "="; break;
+            case 2:
+                base64 += "==";
+                break;
+            case 3:
+                base64 += "=";
+                break;
         }
         return JsonDocument.Parse(Convert.FromBase64String(base64));
     }
@@ -522,12 +526,12 @@ internal sealed class EntraAccessRequirementHandler : AuthorizationHandler<Entra
         // existing unit test that constructs an AuthorizationHandlerContext directly -- is
         // treated as "shape OK", so this is purely an additional structural defense layer on top
         // of the value checks, never a substitute for them.
-        var hasClaimShapeViolation = httpContext is not null &&
-            httpContext.Items.TryGetValue(EntraAuthentication.ClaimShapeViolationKey, out var violation) &&
+        bool hasClaimShapeViolation = httpContext is not null &&
+            httpContext.Items.TryGetValue(EntraAuthentication.s_claimShapeViolationKey, out object? violation) &&
             violation is true;
 
-        var roles = context.User.FindAll("roles").Select(claim => claim.Value);
-        var hasRole = roles.Contains(requirement.AppRole, StringComparer.Ordinal);
+        IEnumerable<string> roles = context.User.FindAll("roles").Select(claim => claim.Value);
+        bool hasRole = roles.Contains(requirement.AppRole, StringComparer.Ordinal);
 
         // #163 N2 (Python follow-up, mirrored here for #147 parity): `scopes = scp.split() if
         // isinstance(scp, str) else []`. A JSON-array-shaped `scp` claim (non-standard for Entra,
@@ -542,7 +546,7 @@ internal sealed class EntraAccessRequirementHandler : AuthorizationHandler<Entra
         // first claim via FindFirst and silently ignoring the rest (which could under- or
         // over-grant depending on which value happened to come first).
         var scopeClaims = context.User.FindAll("scp").ToList();
-        var hasScope = scopeClaims.Count == 1 &&
+        bool hasScope = scopeClaims.Count == 1 &&
             scopeClaims[0].Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Contains(requirement.ApiScope, StringComparer.Ordinal);
 
         if (hasRole && hasScope && !hasClaimShapeViolation)
@@ -571,20 +575,20 @@ internal sealed class EntraAccessRequirementHandler : AuthorizationHandler<Entra
     /// </summary>
     private static bool IsAnonymousAssetRequest(HttpContext httpContext)
     {
-        var endpoint = httpContext.GetEndpoint();
-        var routeName = endpoint?.Metadata.GetMetadata<RouteNameMetadata>()?.RouteName;
+        Endpoint? endpoint = httpContext.GetEndpoint();
+        string? routeName = endpoint?.Metadata.GetMetadata<RouteNameMetadata>()?.RouteName;
         if (!string.Equals(routeName, PersonaRoutes.PersonaAssetRouteName, StringComparison.Ordinal))
         {
             return false;
         }
 
-        var assetPath = httpContext.Request.RouteValues.TryGetValue("assetPath", out var value) ? value as string : null;
+        string? assetPath = httpContext.Request.RouteValues.TryGetValue("assetPath", out object? value) ? value as string : null;
         if (string.IsNullOrEmpty(assetPath))
         {
             return false;
         }
 
-        var extension = GetPythonStyleSuffix(assetPath);
+        string extension = GetPythonStyleSuffix(assetPath);
         return EntraAuthentication.AnonymousAssetExtensions.Contains(extension);
     }
 
@@ -606,9 +610,9 @@ internal sealed class EntraAccessRequirementHandler : AuthorizationHandler<Entra
     /// </summary>
     private static string GetPythonStyleSuffix(string assetPath)
     {
-        var lastSlash = assetPath.LastIndexOf('/');
-        var name = lastSlash >= 0 ? assetPath[(lastSlash + 1)..] : assetPath;
-        var dotIndex = name.LastIndexOf('.');
+        int lastSlash = assetPath.LastIndexOf('/');
+        string name = lastSlash >= 0 ? assetPath[(lastSlash + 1)..] : assetPath;
+        int dotIndex = name.LastIndexOf('.');
         if (dotIndex <= 0 || dotIndex >= name.Length - 1)
         {
             return string.Empty;

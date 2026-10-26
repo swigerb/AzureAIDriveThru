@@ -113,7 +113,7 @@ public sealed record GoldenOrderPricingData(
     IReadOnlyList<ComboAbsorptionScenario> ComboAbsorptionScenarios,
     IReadOnlyList<SpokenTotalCase> SpokenTotalCases)
 {
-    private static readonly JsonSerializerOptions Options = new()
+    private static readonly JsonSerializerOptions s_options = new()
     {
         PropertyNameCaseInsensitive = true,
         NumberHandling = JsonNumberHandling.AllowReadingFromString,
@@ -122,9 +122,9 @@ public sealed record GoldenOrderPricingData(
     /// <summary>Loads and deserializes the golden dataset from its fixed repo-relative path.</summary>
     public static GoldenOrderPricingData Load(string repoRoot)
     {
-        var path = RepoPaths.GoldenOrderPricingJsonPath(repoRoot);
-        var json = File.ReadAllText(path);
-        return JsonSerializer.Deserialize<GoldenOrderPricingData>(json, Options)
+        string path = RepoPaths.GoldenOrderPricingJsonPath(repoRoot);
+        string json = File.ReadAllText(path);
+        return JsonSerializer.Deserialize<GoldenOrderPricingData>(json, s_options)
             ?? throw new InvalidDataException($"Golden order pricing dataset at '{path}' deserialized to null.");
     }
 }

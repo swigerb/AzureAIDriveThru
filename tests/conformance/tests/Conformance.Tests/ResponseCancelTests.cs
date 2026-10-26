@@ -21,21 +21,21 @@ namespace Conformance.Tests;
 [Trait("Dotnet", "n/a-harness")] // Issue #21: backend-agnostic harness self-test, never exercises app/backend or app/backend-dotnet.
 public sealed class ResponseCancelTests
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(10);
 
     /// <summary>Bounds a single frame read so a regression that silently drops an expected frame
     /// (or fails to interrupt a paced stream) fails the test cleanly instead of hanging the host.</summary>
     private static async Task<JsonElement?> ReceiveJsonWithTimeoutAsync(WebSocket socket, CancellationToken cancellationToken)
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        cts.CancelAfter(FrameTimeout);
+        cts.CancelAfter(s_frameTimeout);
         try
         {
             return await WebSocketJson.ReceiveJsonAsync(socket, cts.Token);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new TimeoutException($"No frame received within {FrameTimeout}.");
+            throw new TimeoutException($"No frame received within {s_frameTimeout}.");
         }
     }
 
@@ -57,10 +57,10 @@ public sealed class ResponseCancelTests
             ["event_id"] = "evt_cancel_nothing_active",
         }, TestContext.Current.CancellationToken);
 
-        var error = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+        JsonElement? error = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
         Assert.NotNull(error);
-        Assert.Equal("error", error!.Value.GetProperty("type").GetString());
-        var errorBody = error.Value.GetProperty("error");
+        Assert.Equal("error", error.Value.GetProperty("type").GetString());
+        JsonElement errorBody = error.Value.GetProperty("error");
         Assert.Equal("invalid_request_error", errorBody.GetProperty("type").GetString());
         Assert.Equal("response_cancel_not_active", errorBody.GetProperty("code").GetString());
         Assert.Equal("evt_cancel_nothing_active", errorBody.GetProperty("event_id").GetString());
@@ -73,8 +73,8 @@ public sealed class ResponseCancelTests
         {
             frame = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
             Assert.NotNull(frame);
-        } while (frame!.Value.GetProperty("type").GetString() != "response.done");
-        Assert.Equal("completed", frame!.Value.GetProperty("response").GetProperty("status").GetString());
+        } while (frame.Value.GetProperty("type").GetString() != "response.done");
+        Assert.Equal("completed", frame.Value.GetProperty("response").GetProperty("status").GetString());
 
         await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
     }
@@ -87,9 +87,9 @@ public sealed class ResponseCancelTests
 
         using var socket = new ClientWebSocket();
         var wsUri = new Uri($"ws://{fake.BaseUri.Host}:{fake.BaseUri.Port}/openai/v1/realtime?model=gpt-realtime-test");
-        var connectionTask = fake.WaitForNextConnectionAsync(FrameTimeout, TestContext.Current.CancellationToken);
+        Task<FakeRealtimeConnection?> connectionTask = fake.WaitForNextConnectionAsync(s_frameTimeout, TestContext.Current.CancellationToken);
         await socket.ConnectAsync(wsUri, TestContext.Current.CancellationToken);
-        var connection = await connectionTask;
+        FakeRealtimeConnection? connection = await connectionTask;
         Assert.NotNull(connection);
         Assert.NotNull(await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken)); // session.created
 
@@ -106,10 +106,10 @@ public sealed class ResponseCancelTests
 
         await WebSocketJson.SendAsync(socket, new JsonObject { ["type"] = "response.create" }, TestContext.Current.CancellationToken);
 
-        var created = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+        JsonElement? created = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
         Assert.NotNull(created);
         Assert.Equal("response.created", created!.Value.GetProperty("type").GetString());
-        var responseId = created.Value.GetProperty("response").GetProperty("id").GetString();
+        string? responseId = created.Value.GetProperty("response").GetProperty("id").GetString();
 
         Assert.Equal("response.output_item.added", (await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken))!.Value.GetProperty("type").GetString());
         Assert.Equal("conversation.item.added", (await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken))!.Value.GetProperty("type").GetString());
@@ -127,7 +127,7 @@ public sealed class ResponseCancelTests
         Assert.Equal("response.output_audio.done", (await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken))!.Value.GetProperty("type").GetString());
         Assert.Equal("response.content_part.done", (await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken))!.Value.GetProperty("type").GetString());
 
-        var itemDone = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+        JsonElement? itemDone = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
         Assert.NotNull(itemDone);
         Assert.Equal("response.output_item.done", itemDone!.Value.GetProperty("type").GetString());
         // Stopped mid-stream, not finished -- "incomplete", not "completed" (item 4's audio item
@@ -137,15 +137,15 @@ public sealed class ResponseCancelTests
         // GA also emits conversation.item.done "when the item is finalized" -- a second, separate
         // event on the conversation.item.* family carrying the same (now-incomplete) item again,
         // right after response.output_item.done (PR #30 review "M1"/"M2").
-        var conversationItemDone = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+        JsonElement? conversationItemDone = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
         Assert.NotNull(conversationItemDone);
         Assert.Equal("conversation.item.done", conversationItemDone!.Value.GetProperty("type").GetString());
         Assert.Equal("incomplete", conversationItemDone.Value.GetProperty("item").GetProperty("status").GetString());
 
-        var done = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+        JsonElement? done = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
         Assert.NotNull(done);
         Assert.Equal("response.done", done!.Value.GetProperty("type").GetString());
-        var response = done.Value.GetProperty("response");
+        JsonElement response = done.Value.GetProperty("response");
         Assert.Equal(responseId, response.GetProperty("id").GetString());
         Assert.Equal("cancelled", response.GetProperty("status").GetString());
         // Exactly one output item (the incomplete audio item) -- the second, paced delta and the
@@ -163,9 +163,9 @@ public sealed class ResponseCancelTests
 
         using var socket = new ClientWebSocket();
         var wsUri = new Uri($"ws://{fake.BaseUri.Host}:{fake.BaseUri.Port}/openai/v1/realtime?model=gpt-realtime-test");
-        var connectionTask = fake.WaitForNextConnectionAsync(FrameTimeout, TestContext.Current.CancellationToken);
+        Task<FakeRealtimeConnection?> connectionTask = fake.WaitForNextConnectionAsync(s_frameTimeout, TestContext.Current.CancellationToken);
         await socket.ConnectAsync(wsUri, TestContext.Current.CancellationToken);
-        var connection = await connectionTask;
+        FakeRealtimeConnection? connection = await connectionTask;
         Assert.NotNull(connection);
         Assert.NotNull(await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken)); // session.created
 
@@ -174,17 +174,17 @@ public sealed class ResponseCancelTests
         // ResponseScript.Default's unpaced delta, RespondAsync can race all the way to completion
         // (clearing ActiveResponseId) before this test's second response.create round-trips back
         // to the server, which was observed to flake without pacing here.
-        connection!.Script.Enqueue(new ResponseScript(
+        connection.Script.Enqueue(new ResponseScript(
         [
             new AudioDeltaEvent("b25seS1kZWx0YQ==", Pace: TimeSpan.FromMilliseconds(300)),
             new DoneEvent(),
         ]));
 
         await WebSocketJson.SendAsync(socket, new JsonObject { ["type"] = "response.create" }, TestContext.Current.CancellationToken);
-        var created = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+        JsonElement? created = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
         Assert.NotNull(created);
-        Assert.Equal("response.created", created!.Value.GetProperty("type").GetString());
-        var firstResponseId = created.Value.GetProperty("response").GetProperty("id").GetString();
+        Assert.Equal("response.created", created.Value.GetProperty("type").GetString());
+        string? firstResponseId = created.Value.GetProperty("response").GetProperty("id").GetString();
 
         // Well inside the 300ms pace window -- the first response is still active.
         await WebSocketJson.SendAsync(socket, new JsonObject
@@ -193,10 +193,10 @@ public sealed class ResponseCancelTests
             ["event_id"] = "evt_second_create",
         }, TestContext.Current.CancellationToken);
 
-        var rejected = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+        JsonElement? rejected = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
         Assert.NotNull(rejected);
-        Assert.Equal("error", rejected!.Value.GetProperty("type").GetString());
-        var errorBody = rejected.Value.GetProperty("error");
+        Assert.Equal("error", rejected.Value.GetProperty("type").GetString());
+        JsonElement errorBody = rejected.Value.GetProperty("error");
         Assert.Equal("invalid_request_error", errorBody.GetProperty("type").GetString());
         Assert.Equal("conversation_already_has_active_response", errorBody.GetProperty("code").GetString());
         Assert.Equal("evt_second_create", errorBody.GetProperty("event_id").GetString());
@@ -214,8 +214,8 @@ public sealed class ResponseCancelTests
         {
             frame = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
             Assert.NotNull(frame);
-        } while (frame!.Value.GetProperty("type").GetString() != "response.done");
-        Assert.Equal("cancelled", frame!.Value.GetProperty("response").GetProperty("status").GetString());
+        } while (frame.Value.GetProperty("type").GetString() != "response.done");
+        Assert.Equal("cancelled", frame.Value.GetProperty("response").GetProperty("status").GetString());
 
         await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
     }

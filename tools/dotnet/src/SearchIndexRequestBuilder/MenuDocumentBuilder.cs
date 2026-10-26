@@ -22,20 +22,20 @@ internal static class MenuDocumentBuilder
     {
         var documents = new List<PreparedDocument>();
 
-        foreach (var categoryGroupNode in menuData["menuItems"]!.AsArray())
+        foreach (JsonNode? categoryGroupNode in menuData["menuItems"]!.AsArray())
         {
-            var categoryGroup = categoryGroupNode!.AsObject();
-            var categoryName = categoryGroup["category"]!.GetValue<string>();
+            JsonObject categoryGroup = categoryGroupNode!.AsObject();
+            string categoryName = categoryGroup["category"]!.GetValue<string>();
 
-            foreach (var itemNode in categoryGroup["items"]!.AsArray())
+            foreach (JsonNode? itemNode in categoryGroup["items"]!.AsArray())
             {
-                var item = itemNode!.AsObject();
-                var name = item["name"]!.GetValue<string>();
-                var description = item["description"]!.GetValue<string>();
-                var longDescription = GetStringOrDefault(item, "longDescription", "");
+                JsonObject item = itemNode!.AsObject();
+                string name = item["name"]!.GetValue<string>();
+                string description = item["description"]!.GetValue<string>();
+                string longDescription = GetStringOrDefault(item, "longDescription", "");
 
-                var docId = SanitizeKey($"{categoryName}_{name.Replace(' ', '_')}".ToLowerInvariant());
-                var combinedText = $"{categoryName} {name} {description} {longDescription}";
+                string docId = SanitizeKey($"{categoryName}_{name.Replace(' ', '_')}".ToLowerInvariant());
+                string combinedText = $"{categoryName} {name} {description} {longDescription}";
 
                 var fields = new JsonObject
                 {
@@ -63,7 +63,7 @@ internal static class MenuDocumentBuilder
     }
 
     private static string GetStringOrDefault(JsonObject obj, string key, string fallback) =>
-        obj.TryGetPropertyValue(key, out var value) && value is not null ? value.GetValue<string>() : fallback;
+        obj.TryGetPropertyValue(key, out JsonNode? value) && value is not null ? value.GetValue<string>() : fallback;
 
     /// <summary>Same semantics as setup_search_index.py's <c>sanitize_key</c> (line 111-113):
     /// <c>re.sub(r"[^a-zA-Z0-9_\-]", "_", key)</c>. Python's <c>re</c> module iterates <c>str</c>
@@ -76,7 +76,7 @@ internal static class MenuDocumentBuilder
     private static string SanitizeKey(string key)
     {
         var builder = new StringBuilder(key.Length);
-        foreach (var rune in key.EnumerateRunes())
+        foreach (Rune rune in key.EnumerateRunes())
         {
             builder.Append(IsValidKeyRune(rune) ? (char)rune.Value : '_');
         }

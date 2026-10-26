@@ -76,8 +76,8 @@ public sealed class RateLimitRecoveryUnitTests
         // to this name -- was `enabled:` (lowercase) on the old realtime-only class.
         var h = new Harness(new RateLimitSettings(Enabled: false));
 
-        var handledError = await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
-        var handledDone = await h.Recovery.OnResponseDoneAsync(ResponseDoneFailed(RateLimitError()), CancellationToken.None);
+        bool handledError = await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
+        bool handledDone = await h.Recovery.OnResponseDoneAsync(ResponseDoneFailed(RateLimitError()), CancellationToken.None);
 
         Assert.False(handledError);
         Assert.False(handledDone);
@@ -93,7 +93,7 @@ public sealed class RateLimitRecoveryUnitTests
     {
         var h = new Harness();
 
-        var handled = await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
+        bool handled = await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
 
         Assert.True(handled);
         Assert.Empty(h.Client); // silent -- the first retry never tells the browser.
@@ -169,7 +169,7 @@ public sealed class RateLimitRecoveryUnitTests
     {
         var h = new Harness();
 
-        var handled = await h.Recovery.OnResponseDoneAsync(ResponseDoneFailed(RateLimitError()), CancellationToken.None);
+        bool handled = await h.Recovery.OnResponseDoneAsync(ResponseDoneFailed(RateLimitError()), CancellationToken.None);
 
         Assert.True(handled);
         h.Time.Advance(TimeSpan.FromSeconds(1.5));
@@ -180,7 +180,7 @@ public sealed class RateLimitRecoveryUnitTests
     public async Task OnResponseDoneAsync_NonRateLimitFailure_NotHandled()
     {
         var h = new Harness();
-        var handled = await h.Recovery.OnResponseDoneAsync(
+        bool handled = await h.Recovery.OnResponseDoneAsync(
             ResponseDoneFailed(new JsonObject { ["code"] = "content_filter" }), CancellationToken.None);
 
         Assert.False(handled);
@@ -199,7 +199,7 @@ public sealed class RateLimitRecoveryUnitTests
         await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
         h.Time.Advance(TimeSpan.FromSeconds(1.5));
         h.Recovery.OnResponseCreated();
-        var handled = await h.Recovery.OnResponseDoneAsync(ResponseDoneOk(), CancellationToken.None);
+        bool handled = await h.Recovery.OnResponseDoneAsync(ResponseDoneOk(), CancellationToken.None);
 
         Assert.False(handled); // not a rate-limit failure -- caller forwards response.done as-is.
         Assert.False(h.Recovery.Busy);
@@ -219,7 +219,7 @@ public sealed class RateLimitRecoveryUnitTests
         var h = new Harness();
         h.Recovery.OnResponseCreated(); // a normal (non-retry) response starts.
 
-        var handled = await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
+        bool handled = await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
 
         Assert.True(handled); // swallowed -- but...
         h.Time.Advance(TimeSpan.FromSeconds(10));
@@ -330,7 +330,7 @@ public sealed class RateLimitRecoveryUnitTests
         // That same response.create now reaches upstream and fails as rate-limited -- even if
         // this happens essentially instantaneously relative to the caller's own bookkeeping.
         h.Recovery.OnResponseCreated();
-        var handled = await h.Recovery.OnResponseDoneAsync(ResponseDoneFailed(RateLimitError()), CancellationToken.None);
+        bool handled = await h.Recovery.OnResponseDoneAsync(ResponseDoneFailed(RateLimitError()), CancellationToken.None);
 
         Assert.True(handled);
         Assert.True(h.Recovery.Busy); // the first (silent) retry is scheduled, undisturbed.
@@ -380,7 +380,7 @@ public sealed class RateLimitRecoveryUnitTests
     [InlineData(null, null)]
     public void ParseRetryHint_MatchesPythonsRegexContract(string? text, double? expected)
     {
-        var hint = RateLimitRecovery.ParseRetryHint(text);
+        double? hint = RateLimitRecovery.ParseRetryHint(text);
         if (expected is null)
         {
             Assert.Null(hint);
@@ -388,7 +388,7 @@ public sealed class RateLimitRecoveryUnitTests
         else
         {
             Assert.NotNull(hint);
-            Assert.Equal(expected.Value, hint!.Value, precision: 6);
+            Assert.Equal(expected.Value, hint.Value, precision: 6);
         }
     }
 
@@ -443,8 +443,8 @@ public sealed class RateLimitRecoveryUnitTests
         // OnResponseCreated(), which would otherwise cancel this very pending retry as part of its
         // own normal, non-racy behaviour) so the retry already scheduled above is the one and only
         // delayed continuation in flight when time advances past its due time.
-        var recoveryType = typeof(RateLimitRecovery);
-        var inFlightField = recoveryType.GetField("_responseInFlight", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        Type recoveryType = typeof(RateLimitRecovery);
+        FieldInfo inFlightField = recoveryType.GetField("_responseInFlight", BindingFlags.NonPublic | BindingFlags.Instance)!;
         inFlightField.SetValue(h.Recovery, true);
 
         h.Time.Advance(TimeSpan.FromSeconds(1.5)); // runs the real scheduled continuation inline.
@@ -491,25 +491,25 @@ public sealed class RateLimitRecoveryUnitTests
     // with that now-stale CTS. That is precisely what the real timer continuation would observe if
     // it acquired _sync a moment later: same method, same lock, same reference-equality check --
     // with zero threads, sleeps, or wall-clock dependence anywhere in the reproduction itself.
-    private static readonly MethodInfo RunRetryAsyncMethod = typeof(RateLimitRecovery).GetMethod(
+    private static readonly MethodInfo s_runRetryAsyncMethod = typeof(RateLimitRecovery).GetMethod(
         "RunRetryAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
 
-    private static readonly FieldInfo PendingCtsField = typeof(RateLimitRecovery).GetField(
+    private static readonly FieldInfo s_pendingCtsField = typeof(RateLimitRecovery).GetField(
         "_pendingCts", BindingFlags.NonPublic | BindingFlags.Instance)!;
 
     private static CancellationTokenSource CapturePendingCts(RateLimitRecovery recovery) =>
-        (CancellationTokenSource)PendingCtsField.GetValue(recovery)!;
+        (CancellationTokenSource)s_pendingCtsField.GetValue(recovery)!;
 
     private static async Task RunStaleRetryRaceAsync(Harness h, Action<RateLimitRecovery> duringTheRace)
     {
-        var staleCts = CapturePendingCts(h.Recovery);
+        CancellationTokenSource staleCts = CapturePendingCts(h.Recovery);
 
         duringTheRace(h.Recovery);
 
         // delaySeconds/attempt are irrelevant: a stale scheduledCts makes RunRetryAsync's very
         // first lock-held check (ReferenceEquals(_pendingCts, scheduledCts)) return before either
         // value is ever read.
-        await (Task)RunRetryAsyncMethod.Invoke(h.Recovery, new object[] { 0d, 0, staleCts })!;
+        await (Task)s_runRetryAsyncMethod.Invoke(h.Recovery, [0d, 0, staleCts])!;
     }
 
     public static IEnumerable<object[]> CancellationSources()
@@ -559,7 +559,7 @@ public sealed class RateLimitRecoveryUnitTests
         await RunStaleRetryRaceAsync(h, r =>
         {
             r.OnGuestSpeech();
-            var handled = r.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None)
+            bool handled = r.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None)
                 .GetAwaiter().GetResult();
             Assert.True(handled);
         });

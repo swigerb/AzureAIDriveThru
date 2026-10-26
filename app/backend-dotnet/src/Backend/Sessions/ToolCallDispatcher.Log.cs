@@ -1,5 +1,4 @@
 using Backend.Tools;
-using Microsoft.Extensions.Logging;
 
 namespace Backend.Sessions;
 

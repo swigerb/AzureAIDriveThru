@@ -54,7 +54,7 @@ public static class EnabledPersonaDiscovery
     public static IReadOnlyList<DiscoveredPersona> DiscoverAll(
         string repoRoot, string? personasDirOverride = null, IReadOnlyList<string>? enabledIdsOverride = null)
     {
-        var personasDir = string.IsNullOrEmpty(personasDirOverride)
+        string personasDir = string.IsNullOrEmpty(personasDirOverride)
             ? Path.Combine(repoRoot, "personas")
             : personasDirOverride;
         if (!Directory.Exists(personasDir))
@@ -83,16 +83,15 @@ public static class EnabledPersonaDiscovery
                     $"{Path.Combine(personasDir, missing[0], "persona.json")} does not exist.");
             }
 
-            personaIds = enabledIdsOverride.Distinct(StringComparer.Ordinal).OrderBy(id => id, StringComparer.Ordinal).ToList();
+            personaIds = [.. enabledIdsOverride.Distinct(StringComparer.Ordinal).OrderBy(id => id, StringComparer.Ordinal)];
         }
         else
         {
-            personaIds = Directory.GetDirectories(personasDir)
+            personaIds = [.. Directory.GetDirectories(personasDir)
                 .Select(Path.GetFileName)
                 .Where(id => id is not null && File.Exists(Path.Combine(personasDir, id, "persona.json")))
                 .Select(id => id!)
-                .OrderBy(id => id, StringComparer.Ordinal)
-                .ToList();
+                .OrderBy(id => id, StringComparer.Ordinal)];
         }
 
         if (personaIds.Count == 0)
@@ -102,24 +101,24 @@ public static class EnabledPersonaDiscovery
                 "folder with a persona.json.");
         }
 
-        return personaIds.Select(id => Discover(personasDir, id)).ToList();
+        return [.. personaIds.Select(id => Discover(personasDir, id))];
     }
 
     private static DiscoveredPersona Discover(string personasDir, string personaId)
     {
-        var personaDir = Path.Combine(personasDir, personaId);
-        var manifestPath = Path.Combine(personaDir, "persona.json");
+        string personaDir = Path.Combine(personasDir, personaId);
+        string manifestPath = Path.Combine(personaDir, "persona.json");
         using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
 
-        if (!document.RootElement.TryGetProperty("search", out var search) ||
-            !search.TryGetProperty("indexName", out var indexNameElement) ||
+        if (!document.RootElement.TryGetProperty("search", out JsonElement search) ||
+            !search.TryGetProperty("indexName", out JsonElement indexNameElement) ||
             indexNameElement.GetString() is not { Length: > 0 } indexName)
         {
             throw new InvalidOperationException(
                 $"Persona '{personaId}': '{manifestPath}' has no string search.indexName.");
         }
 
-        var menuPath = Path.Combine(personaDir, "menu", "menuItems.json");
+        string menuPath = Path.Combine(personaDir, "menu", "menuItems.json");
         return new DiscoveredPersona(personaId, indexName, menuPath);
     }
 }

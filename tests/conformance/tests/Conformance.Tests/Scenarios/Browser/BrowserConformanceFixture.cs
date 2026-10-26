@@ -128,7 +128,7 @@ public sealed class BrowserConformanceFixture : IAsyncLifetime
             return;
         }
 
-        var filteredBefore = Backend?.UnhandledErrorCount(IsBenignProactorTeardownIncident) ?? 0;
+        int filteredBefore = Backend?.UnhandledErrorCount(IsBenignProactorTeardownIncident) ?? 0;
         try
         {
             await _inner.RunAsync(body).ConfigureAwait(false);

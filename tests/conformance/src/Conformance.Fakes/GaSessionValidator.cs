@@ -186,16 +186,15 @@ public static class GaSessionValidator
         RealtimeSessionState state,
         string deploymentModel)
     {
-        if (!sessionUpdateFrame.TryGetProperty("session", out var session) ||
+        if (!sessionUpdateFrame.TryGetProperty("session", out JsonElement session) ||
             session.ValueKind != JsonValueKind.Object)
         {
             return SessionUpdateValidationResult.Accepted;
         }
 
-        var unknown = session.EnumerateObject()
+        string[] unknown = [.. session.EnumerateObject()
             .Select(p => p.Name)
-            .Where(name => !GaSessionTopLevelKeys.Contains(name))
-            .ToArray();
+            .Where(name => !GaSessionTopLevelKeys.Contains(name))];
         if (unknown.Length > 0)
         {
             return SessionUpdateValidationResult.Rejected(
@@ -219,11 +218,11 @@ public static class GaSessionValidator
                 echoEventId: false);
         }
 
-        if (session.TryGetProperty("audio", out var audio) && audio.ValueKind == JsonValueKind.Object)
+        if (session.TryGetProperty("audio", out JsonElement audio) && audio.ValueKind == JsonValueKind.Object)
         {
-            if (audio.TryGetProperty("input", out var input) && input.ValueKind == JsonValueKind.Object)
+            if (audio.TryGetProperty("input", out JsonElement input) && input.ValueKind == JsonValueKind.Object)
             {
-                var badInputKey = FirstUnknownKey(input, AudioInputKeys);
+                string? badInputKey = FirstUnknownKey(input, AudioInputKeys);
                 if (badInputKey is not null)
                 {
                     return SessionUpdateValidationResult.Rejected(
@@ -235,10 +234,10 @@ public static class GaSessionValidator
 
                 // #28 N11: nested keys under audio.input.transcription / audio.input.turn_detection
                 // were never validated -- only that the parent object itself was named correctly.
-                if (input.TryGetProperty("transcription", out var transcription) &&
+                if (input.TryGetProperty("transcription", out JsonElement transcription) &&
                     transcription.ValueKind == JsonValueKind.Object)
                 {
-                    var badTranscriptionKey = FirstUnknownKey(transcription, AudioInputTranscriptionKeys);
+                    string? badTranscriptionKey = FirstUnknownKey(transcription, AudioInputTranscriptionKeys);
                     if (badTranscriptionKey is not null)
                     {
                         return SessionUpdateValidationResult.Rejected(
@@ -254,10 +253,10 @@ public static class GaSessionValidator
                     // Only the key NAME is validated now (immediately above).
                 }
 
-                if (input.TryGetProperty("turn_detection", out var turnDetection) &&
+                if (input.TryGetProperty("turn_detection", out JsonElement turnDetection) &&
                     turnDetection.ValueKind == JsonValueKind.Object)
                 {
-                    var badTurnDetectionKey = FirstUnknownKey(turnDetection, AudioInputTurnDetectionKeys);
+                    string? badTurnDetectionKey = FirstUnknownKey(turnDetection, AudioInputTurnDetectionKeys);
                     if (badTurnDetectionKey is not null)
                     {
                         return SessionUpdateValidationResult.Rejected(
@@ -269,9 +268,9 @@ public static class GaSessionValidator
                 }
             }
 
-            if (audio.TryGetProperty("output", out var output) && output.ValueKind == JsonValueKind.Object)
+            if (audio.TryGetProperty("output", out JsonElement output) && output.ValueKind == JsonValueKind.Object)
             {
-                var badOutputKey = FirstUnknownKey(output, AudioOutputKeys);
+                string? badOutputKey = FirstUnknownKey(output, AudioOutputKeys);
                 if (badOutputKey is not null)
                 {
                     return SessionUpdateValidationResult.Rejected(
@@ -281,9 +280,9 @@ public static class GaSessionValidator
                         echoEventId: true);
                 }
 
-                if (output.TryGetProperty("voice", out var voiceProp) && voiceProp.ValueKind == JsonValueKind.String)
+                if (output.TryGetProperty("voice", out JsonElement voiceProp) && voiceProp.ValueKind == JsonValueKind.String)
                 {
-                    var requestedVoice = voiceProp.GetString();
+                    string? requestedVoice = voiceProp.GetString();
                     if (state.AssistantAudioSeen &&
                         !string.IsNullOrEmpty(state.CurrentVoice) &&
                         !string.Equals(requestedVoice, state.CurrentVoice, StringComparison.Ordinal))
@@ -308,7 +307,7 @@ public static class GaSessionValidator
         // on both legs while production ran with no tools and no instructions. Checked before the
         // `type` discriminator below so a malformed schema is reported as the specific tool/field
         // at fault rather than a generic missing-`type` message when both happen to be present.
-        var toolSchemaError = ValidateToolSchemas(session);
+        SessionUpdateValidationResult? toolSchemaError = ValidateToolSchemas(session);
         if (toolSchemaError is not null)
         {
             return toolSchemaError;
@@ -320,7 +319,7 @@ public static class GaSessionValidator
         // (unknown key, reasoning-on-1.5, cannot_update_voice) win when a payload trips more
         // than one rule at once, matching the live-probe evidence that each of those fires
         // independently of whether `type` happens to be present.
-        if (!session.TryGetProperty("type", out var typeProp) ||
+        if (!session.TryGetProperty("type", out JsonElement typeProp) ||
             typeProp.ValueKind != JsonValueKind.String ||
             string.IsNullOrEmpty(typeProp.GetString()))
         {
@@ -348,23 +347,23 @@ public static class GaSessionValidator
     /// </summary>
     private static SessionUpdateValidationResult? ValidateToolSchemas(JsonElement session)
     {
-        if (!session.TryGetProperty("tools", out var tools) || tools.ValueKind != JsonValueKind.Array)
+        if (!session.TryGetProperty("tools", out JsonElement tools) || tools.ValueKind != JsonValueKind.Array)
         {
             return null;
         }
 
-        var index = 0;
-        foreach (var tool in tools.EnumerateArray())
+        int index = 0;
+        foreach (JsonElement tool in tools.EnumerateArray())
         {
             if (tool.ValueKind == JsonValueKind.Object &&
-                tool.TryGetProperty("parameters", out var parameters) &&
+                tool.TryGetProperty("parameters", out JsonElement parameters) &&
                 parameters.ValueKind != JsonValueKind.Null &&
                 parameters.ValueKind != JsonValueKind.Undefined)
             {
-                var schemaError = ValidateSchemaNode(parameters);
+                string? schemaError = ValidateSchemaNode(parameters);
                 if (schemaError is not null)
                 {
-                    var name = TryGetToolName(tool) ?? "<unnamed>";
+                    string name = TryGetToolName(tool) ?? "<unnamed>";
                     return SessionUpdateValidationResult.Rejected(
                         code: "invalid_function_parameters",
                         param: $"session.tools[{index}].parameters",
@@ -397,11 +396,11 @@ public static class GaSessionValidator
             return $"{Describe(node)} is not of type 'object'";
         }
 
-        if (node.TryGetProperty("type", out var typeProp))
+        if (node.TryGetProperty("type", out JsonElement typeProp))
         {
             if (typeProp.ValueKind == JsonValueKind.Array)
             {
-                foreach (var item in typeProp.EnumerateArray())
+                foreach (JsonElement item in typeProp.EnumerateArray())
                 {
                     if (item.ValueKind != JsonValueKind.String)
                     {
@@ -415,20 +414,20 @@ public static class GaSessionValidator
             }
         }
 
-        if (node.TryGetProperty("additionalProperties", out var additionalProperties) &&
+        if (node.TryGetProperty("additionalProperties", out JsonElement additionalProperties) &&
             additionalProperties.ValueKind is not (JsonValueKind.True or JsonValueKind.False or JsonValueKind.Object))
         {
             return $"{Describe(additionalProperties)} is not of type 'object', 'boolean'";
         }
 
-        if (node.TryGetProperty("required", out var required))
+        if (node.TryGetProperty("required", out JsonElement required))
         {
             if (required.ValueKind != JsonValueKind.Array)
             {
                 return $"{Describe(required)} is not of type 'array'";
             }
 
-            foreach (var item in required.EnumerateArray())
+            foreach (JsonElement item in required.EnumerateArray())
             {
                 if (item.ValueKind != JsonValueKind.String)
                 {
@@ -437,16 +436,16 @@ public static class GaSessionValidator
             }
         }
 
-        if (node.TryGetProperty("properties", out var properties))
+        if (node.TryGetProperty("properties", out JsonElement properties))
         {
             if (properties.ValueKind != JsonValueKind.Object)
             {
                 return $"{Describe(properties)} is not of type 'object'";
             }
 
-            foreach (var property in properties.EnumerateObject())
+            foreach (JsonProperty property in properties.EnumerateObject())
             {
-                var nestedError = ValidateSchemaNode(property.Value);
+                string? nestedError = ValidateSchemaNode(property.Value);
                 if (nestedError is not null)
                 {
                     return nestedError;
@@ -454,9 +453,9 @@ public static class GaSessionValidator
             }
         }
 
-        if (node.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Object)
+        if (node.TryGetProperty("items", out JsonElement items) && items.ValueKind == JsonValueKind.Object)
         {
-            var nestedError = ValidateSchemaNode(items);
+            string? nestedError = ValidateSchemaNode(items);
             if (nestedError is not null)
             {
                 return nestedError;
@@ -467,7 +466,7 @@ public static class GaSessionValidator
     }
 
     private static string? TryGetToolName(JsonElement tool) =>
-        tool.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String
+        tool.TryGetProperty("name", out JsonElement name) && name.ValueKind == JsonValueKind.String
             ? name.GetString()
             : null;
 
@@ -515,7 +514,7 @@ public sealed class RealtimeSessionState
     /// in the conversation with `item_create_duplicate_item_id` (live-verified against
     /// gpt-realtime-2.1 / gpt-realtime-2.1-dz for PR #30 review "G1") -- this set is what lets
     /// <see cref="RealtimeScript.WithVadDefaults"/> reproduce that rejection.</summary>
-    public HashSet<string> SeenConversationItemIds { get; } = new(StringComparer.Ordinal);
+    public HashSet<string> SeenConversationItemIds { get; } = [with(StringComparer.Ordinal)];
 
     /// <summary>#28 N18: the fake's own copy of every conversation item it has ever sent, keyed
     /// by item id, so `conversation.item.retrieve` has something real to answer with. Populated
@@ -526,41 +525,41 @@ public sealed class RealtimeSessionState
     /// deliberately a plain content mirror, not a source of truth for id-uniqueness or ordering:
     /// #30 owns duplicate-id rejection (<see cref="SeenConversationItemIds"/>) and
     /// `previous_item_id` tracking (<see cref="LastConversationItemId"/>).</summary>
-    public Dictionary<string, JsonObject> ConversationItemsById { get; } = new(StringComparer.Ordinal);
+    public Dictionary<string, JsonObject> ConversationItemsById { get; } = [with(StringComparer.Ordinal)];
 
     /// <summary>The full session as GA would report it in `session.updated`, accumulated across
     /// every accepted `session.update` on this connection. Top-level keys from each update
     /// overwrite the corresponding key here; `audio.input`/`audio.output` are merged one level
     /// deeper (so setting `audio.output.voice` alone doesn't drop a previously-set
     /// `audio.input.format`), matching GA's documented partial-update semantics.</summary>
-    public System.Text.Json.Nodes.JsonObject EffectiveSession { get; } = new();
+    public System.Text.Json.Nodes.JsonObject EffectiveSession { get; } = [];
 
     /// <summary>Merges an accepted `session.update`'s `session` object into
     /// <see cref="EffectiveSession"/> using GA's partial-patch semantics.</summary>
     public void MergeSessionUpdate(JsonElement session)
     {
-        foreach (var prop in session.EnumerateObject())
+        foreach (JsonProperty prop in session.EnumerateObject())
         {
             if (prop.NameEquals("audio") && prop.Value.ValueKind == JsonValueKind.Object)
             {
-                var audio = EffectiveSession.TryGetPropertyValue("audio", out var existingAudioNode) &&
+                JsonObject audio = EffectiveSession.TryGetPropertyValue("audio", out JsonNode? existingAudioNode) &&
                     existingAudioNode is System.Text.Json.Nodes.JsonObject existingAudio
                     ? existingAudio
-                    : new System.Text.Json.Nodes.JsonObject();
+                    : [];
                 EffectiveSession["audio"] = audio;
 
-                foreach (var audioProp in prop.Value.EnumerateObject())
+                foreach (JsonProperty audioProp in prop.Value.EnumerateObject())
                 {
                     if ((audioProp.NameEquals("input") || audioProp.NameEquals("output")) &&
                         audioProp.Value.ValueKind == JsonValueKind.Object)
                     {
-                        var side = audio.TryGetPropertyValue(audioProp.Name, out var existingSideNode) &&
+                        JsonObject side = audio.TryGetPropertyValue(audioProp.Name, out JsonNode? existingSideNode) &&
                             existingSideNode is System.Text.Json.Nodes.JsonObject existingSide
                             ? existingSide
-                            : new System.Text.Json.Nodes.JsonObject();
+                            : [];
                         audio[audioProp.Name] = side;
 
-                        foreach (var sideProp in audioProp.Value.EnumerateObject())
+                        foreach (JsonProperty sideProp in audioProp.Value.EnumerateObject())
                         {
                             side[sideProp.Name] = System.Text.Json.Nodes.JsonNode.Parse(sideProp.Value.GetRawText());
                         }

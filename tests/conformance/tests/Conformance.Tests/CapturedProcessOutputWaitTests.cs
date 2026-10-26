@@ -24,18 +24,18 @@ public sealed class CapturedProcessOutputWaitTests
     // Generous enough to be reliably distinguishable from CI scheduling jitter without making
     // this file slow -- the same order of magnitude as this fix's own BaselineQuiescenceWindow
     // (250ms) constant in ConformanceFixture.cs.
-    private static readonly TimeSpan ShortIdleWindow = TimeSpan.FromMilliseconds(150);
-    private static readonly TimeSpan ShortMaxWait = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan s_shortIdleWindow = TimeSpan.FromMilliseconds(150);
+    private static readonly TimeSpan s_shortMaxWait = TimeSpan.FromSeconds(2);
 
     [Fact]
     public async Task WaitForDiagnosticsAsync_returns_true_immediately_when_the_predicate_already_matches()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         var output = new CapturedProcessOutput();
         output.Append("ERR", "already here before anyone waits");
 
         var sw = Stopwatch.StartNew();
-        var matched = await output.WaitForDiagnosticsAsync(
+        bool matched = await output.WaitForDiagnosticsAsync(
             d => d.Contains("already here", StringComparison.Ordinal), TimeSpan.FromSeconds(5), ct);
         sw.Stop();
 
@@ -53,7 +53,7 @@ public sealed class CapturedProcessOutputWaitTests
     [Fact]
     public async Task WaitForDiagnosticsAsync_returns_true_once_a_matching_line_is_appended_later()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         var output = new CapturedProcessOutput();
         _ = Task.Run(async () =>
         {
@@ -61,7 +61,7 @@ public sealed class CapturedProcessOutputWaitTests
             output.Append("ERR", "the line arrives late");
         }, ct);
 
-        var matched = await output.WaitForDiagnosticsAsync(
+        bool matched = await output.WaitForDiagnosticsAsync(
             d => d.Contains("arrives late", StringComparison.Ordinal), TimeSpan.FromSeconds(5), ct);
 
         Assert.True(matched);
@@ -70,11 +70,11 @@ public sealed class CapturedProcessOutputWaitTests
     [Fact]
     public async Task WaitForDiagnosticsAsync_returns_false_on_timeout_when_the_predicate_never_matches()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         var output = new CapturedProcessOutput();
         output.Append("ERR", "never contains the target phrase");
 
-        var matched = await output.WaitForDiagnosticsAsync(
+        bool matched = await output.WaitForDiagnosticsAsync(
             d => d.Contains("no such phrase", StringComparison.Ordinal), TimeSpan.FromMilliseconds(300), ct);
 
         Assert.False(matched);
@@ -104,12 +104,12 @@ public sealed class CapturedProcessOutputWaitTests
     [Fact]
     public async Task WaitForDiagnosticsAsync_sinceWatermark_ignores_a_matching_line_captured_before_it()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         var output = new CapturedProcessOutput();
         output.Append("ERR", "an earlier scenario's own fallback-timeout warning");
-        var watermark = output.Watermark;
+        int watermark = output.Watermark;
 
-        var matched = await output.WaitForDiagnosticsAsync(
+        bool matched = await output.WaitForDiagnosticsAsync(
             d => d.Contains("fallback-timeout warning", StringComparison.Ordinal),
             TimeSpan.FromMilliseconds(300),
             ct,
@@ -121,13 +121,13 @@ public sealed class CapturedProcessOutputWaitTests
     [Fact]
     public async Task WaitForDiagnosticsAsync_sinceWatermark_still_matches_a_line_captured_after_it()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         var output = new CapturedProcessOutput();
         output.Append("ERR", "an earlier scenario's own fallback-timeout warning");
-        var watermark = output.Watermark;
+        int watermark = output.Watermark;
         output.Append("ERR", "this scenario's own fallback-timeout warning");
 
-        var matched = await output.WaitForDiagnosticsAsync(
+        bool matched = await output.WaitForDiagnosticsAsync(
             d => d.Contains("this scenario's own fallback-timeout warning", StringComparison.Ordinal),
             TimeSpan.FromMilliseconds(300),
             ct,
@@ -139,10 +139,10 @@ public sealed class CapturedProcessOutputWaitTests
     [Fact]
     public async Task WaitForOutputQuiescenceAsync_returns_true_when_nothing_was_ever_appended()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         var output = new CapturedProcessOutput();
 
-        Assert.True(await output.WaitForOutputQuiescenceAsync(ShortIdleWindow, ShortMaxWait, ct));
+        Assert.True(await output.WaitForOutputQuiescenceAsync(s_shortIdleWindow, s_shortMaxWait, ct));
     }
 
     /// <summary>
@@ -155,7 +155,7 @@ public sealed class CapturedProcessOutputWaitTests
     [Fact]
     public async Task WaitForOutputQuiescenceAsync_waits_out_a_still_arriving_second_line_before_returning()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         var output = new CapturedProcessOutput();
         output.Append("ERR", "first line");
         _ = Task.Run(async () =>
@@ -165,7 +165,7 @@ public sealed class CapturedProcessOutputWaitTests
         }, ct);
 
         var sw = Stopwatch.StartNew();
-        var quiesced = await output.WaitForOutputQuiescenceAsync(ShortIdleWindow, ShortMaxWait, ct);
+        bool quiesced = await output.WaitForOutputQuiescenceAsync(s_shortIdleWindow, s_shortMaxWait, ct);
         sw.Stop();
 
         Assert.True(quiesced);
@@ -194,7 +194,7 @@ public sealed class CapturedProcessOutputWaitTests
     [Fact]
     public async Task WaitForOutputQuiescenceAsync_rearms_the_idle_window_on_every_new_line()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         var output = new CapturedProcessOutput();
         // Seeds a recent _lastAppendUtc so the call below genuinely enters the debounce loop
         // instead of taking the #66 S1 fast path on its very first check (an entirely empty
@@ -202,10 +202,10 @@ public sealed class CapturedProcessOutputWaitTests
         // return true before ever observing any of the three lines appended below, making this
         // assert nothing about re-arming at all).
         output.Append("ERR", "seed line so the S1 fast path does not short-circuit this test");
-        var appendCount = 0;
+        int appendCount = 0;
         _ = Task.Run(async () =>
         {
-            for (var i = 0; i < 3; i++)
+            for (int i = 0; i < 3; i++)
             {
                 await Task.Delay(100, ct);
                 output.Append("ERR", $"line {i}");
@@ -213,8 +213,8 @@ public sealed class CapturedProcessOutputWaitTests
             }
         }, ct);
 
-        var quiesced = await output.WaitForOutputQuiescenceAsync(ShortIdleWindow, ShortMaxWait, ct);
-        var completedUtc = DateTimeOffset.UtcNow;
+        bool quiesced = await output.WaitForOutputQuiescenceAsync(s_shortIdleWindow, s_shortMaxWait, ct);
+        DateTimeOffset completedUtc = DateTimeOffset.UtcNow;
 
         Assert.True(quiesced);
         // Must not have returned before all three lines landed -- a stale, never-re-armed idle
@@ -225,9 +225,9 @@ public sealed class CapturedProcessOutputWaitTests
         // against the exact instant that line was recorded internally (see this test's own doc
         // comment above for why that -- not an independent Stopwatch read -- is what removes the
         // flake without widening any margin).
-        Assert.True(completedUtc - output.LastAppendUtc >= ShortIdleWindow,
+        Assert.True(completedUtc - output.LastAppendUtc >= s_shortIdleWindow,
             $"Returned at {completedUtc:O}, but the last line was recorded at {output.LastAppendUtc:O} " +
-            $"and needed a further {ShortIdleWindow} of silence after that.");
+            $"and needed a further {s_shortIdleWindow} of silence after that.");
     }
 
     /// <summary>Mutation check for #66 S4: if a cap hit still silently returned success (the
@@ -237,7 +237,7 @@ public sealed class CapturedProcessOutputWaitTests
     [Fact]
     public async Task WaitForOutputQuiescenceAsync_returns_false_when_maxWait_elapses_without_ever_going_quiet()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         var output = new CapturedProcessOutput();
         // Same reasoning as the re-arm test above: seed a recent append first so this exercises
         // the real debounce-then-cap logic, not the S1 fast path's "nothing captured yet, so
@@ -254,7 +254,7 @@ public sealed class CapturedProcessOutputWaitTests
             }
         }, ct);
 
-        var quiesced = await output.WaitForOutputQuiescenceAsync(ShortIdleWindow, TimeSpan.FromMilliseconds(300), ct);
+        bool quiesced = await output.WaitForOutputQuiescenceAsync(s_shortIdleWindow, TimeSpan.FromMilliseconds(300), ct);
         churnerStop.Cancel();
         await churner;
 
@@ -278,24 +278,24 @@ public sealed class CapturedProcessOutputWaitTests
     /// <summary>
     /// Mutation check for #66 S1: if the fast path were removed (every call pays the full
     /// idle-window cost even when already silent, the pre-S1 shape), this goes red -- it asserts
-    /// the already-silent case returns well under <see cref="ShortIdleWindow"/>, which is only
+    /// the already-silent case returns well under <see cref="s_shortIdleWindow"/>, which is only
     /// possible via the fast path.
     /// </summary>
     [Fact]
     public async Task WaitForOutputQuiescenceAsync_fast_path_returns_well_under_the_idle_window_when_already_silent()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         var output = new CapturedProcessOutput();
         output.Append("ERR", "one line, then genuinely nothing else ever again");
-        await Task.Delay(ShortIdleWindow + ShortIdleWindow, ct); // already silent for 2 idle windows
+        await Task.Delay(s_shortIdleWindow + s_shortIdleWindow, ct); // already silent for 2 idle windows
 
         var sw = Stopwatch.StartNew();
-        var quiesced = await output.WaitForOutputQuiescenceAsync(ShortIdleWindow, ShortMaxWait, ct);
+        bool quiesced = await output.WaitForOutputQuiescenceAsync(s_shortIdleWindow, s_shortMaxWait, ct);
         sw.Stop();
 
         Assert.True(quiesced);
-        Assert.True(sw.Elapsed < ShortIdleWindow / 2,
-            $"Expected the fast path to return in well under {ShortIdleWindow} once already-silent, took {sw.Elapsed}.");
+        Assert.True(sw.Elapsed < s_shortIdleWindow / 2,
+            $"Expected the fast path to return in well under {s_shortIdleWindow} once already-silent, took {sw.Elapsed}.");
     }
 
     /// <summary>
@@ -356,8 +356,8 @@ public sealed class CapturedProcessOutputWaitTests
     [InlineData(2000)]
     public async Task Fixture_level_M1_late_error_from_scenario_A_is_attributed_to_A(int lagMs)
     {
-        var ct = TestContext.Current.CancellationToken;
-        const string script =
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        const string Script =
             "import sys\n" +
             "while True:\n" +
             "    line = sys.stdin.readline()\n" +
@@ -371,8 +371,8 @@ public sealed class CapturedProcessOutputWaitTests
             "    time.sleep(int(delay_ms) / 1000.0)\n" +
             "    print(message, file=sys.stderr, flush=True)\n";
 
-        var repoRoot = RepoPaths.FindRepoRoot();
-        var pythonExe = RepoPaths.PythonExecutable(repoRoot);
+        string repoRoot = RepoPaths.FindRepoRoot();
+        string pythonExe = RepoPaths.PythonExecutable(repoRoot);
         var startInfo = new ProcessStartInfo(pythonExe)
         {
             RedirectStandardOutput = true,
@@ -382,7 +382,7 @@ public sealed class CapturedProcessOutputWaitTests
             CreateNoWindow = true,
         };
         startInfo.ArgumentList.Add("-c");
-        startInfo.ArgumentList.Add(script);
+        startInfo.ArgumentList.Add(Script);
 
         using var process = new Process { StartInfo = startInfo };
         var output = new CapturedProcessOutput();
@@ -397,21 +397,21 @@ public sealed class CapturedProcessOutputWaitTests
         try
         {
             // --- Scenario A ---
-            var (baselineA, strandedBeforeA) = attribution.BeginScenario(output.CountUnhandledErrors);
+            (int baselineA, string? strandedBeforeA) = attribution.BeginScenario(output.CountUnhandledErrors);
             Assert.Null(strandedBeforeA); // nothing has run yet -- no history to charge against.
 
             // Scenario A's body: a harmless, immediate line -- realistic backend chatter, not
             // required by the assertions below, but keeps this test wired the same way
             // ConformanceFixture actually drives a scenario.
             await process.StandardInput.WriteLineAsync("0|INFO:sonic-drive-in:scenario A body ran");
-            var sawBodyOutput = await output.WaitForDiagnosticsAsync(
+            bool sawBodyOutput = await output.WaitForDiagnosticsAsync(
                 d => d.Contains("scenario A body ran", StringComparison.Ordinal), TimeSpan.FromSeconds(5), ct);
             Assert.True(sawBodyOutput, "The immediate body-output line never arrived.");
 
             // Scenario A's own check runs and passes HERE -- strictly before the error below is
             // even written to the child process's stdin, so it structurally cannot observe it.
             // No drain, no idle window, no wall-clock margin: this is a guarantee, not a timing bet.
-            var (actualA, withinBoundA) = attribution.EndScenario(
+            (int actualA, bool withinBoundA) = attribution.EndScenario(
                 "ScenarioA", output.CountUnhandledErrors, baselineA, allowedNewBackendErrors: 0);
             Assert.True(withinBoundA, "Scenario A's own check must pass -- its error has not been " +
                 "written to the child process yet.");
@@ -431,11 +431,11 @@ public sealed class CapturedProcessOutputWaitTests
             // observe a false match ahead of the real increment the way a text-based predicate
             // could (Append enqueues a line before ScanLine increments the count). 30s is a
             // generous cap, far larger than any lag exercised by this [Theory].
-            var errorLanded = await output.WaitForDiagnosticsAsync(
+            bool errorLanded = await output.WaitForDiagnosticsAsync(
                 _ => output.CountUnhandledErrors() > actualA, TimeSpan.FromSeconds(30), ct);
             Assert.True(errorLanded, "The late error from scenario A never landed within 30s.");
 
-            var (_, strandedMessage) = attribution.BeginScenario(output.CountUnhandledErrors);
+            (int _, string? strandedMessage) = attribution.BeginScenario(output.CountUnhandledErrors);
 
             Assert.NotNull(strandedMessage);
             Assert.Contains("ScenarioA", strandedMessage);

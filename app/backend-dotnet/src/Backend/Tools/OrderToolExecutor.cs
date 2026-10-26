@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using Backend.Ordering;
 using Backend.Personas;
 using Backend.Prompts;
 
@@ -74,38 +76,42 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
     private ToolResult UpdateOrder(JsonElement args)
     {
         if (_order.RewardsCompleted)
+        {
             return new ToolResult(JsonSerializer.Serialize(new
             {
-                status = "rejected", item_added = false, reason = "demo_order_completed",
+                status = "rejected",
+                item_added = false,
+                reason = "demo_order_completed",
                 message = _menu.SpeechStyle == "naturalDriveThru"
                     ? "This order is already complete. Start a fresh order to make changes."
                     : "Demo order already completed. Use reset_order before changing the order.",
             }), ToolResultDirection.ToServer);
+        }
         // #36: validate required args up front instead of a raw missing-property exception deep
         // inside this handler tearing down the whole realtime connection.
         string[] required = ["action", "item_name", "size", "quantity"];
         var missing = required.Where(key => !args.TryGetProperty(key, out _)).ToList();
         if (missing.Count > 0)
         {
-            var err = _promptLoader?.RenderError("tool_execution_failed")
+            string err = _promptLoader?.RenderError("tool_execution_failed")
                 ?? "I'm sorry, something went wrong with that. Could you try again?";
             return new ToolResult(err, ToolResultDirection.ToServer);
         }
 
-        var action = args.GetProperty("action").GetString() ?? "";
-        var itemName = args.GetProperty("item_name").GetString() ?? "";
-        var size = args.GetProperty("size").GetString() ?? "";
-        var quantity = args.GetProperty("quantity").GetInt32();
-        var callerPrice = TryGetPrice(args);
+        string action = args.GetProperty("action").GetString() ?? "";
+        string itemName = args.GetProperty("item_name").GetString() ?? "";
+        string size = args.GetProperty("size").GetString() ?? "";
+        int quantity = args.GetProperty("quantity").GetInt32();
+        decimal? callerPrice = TryGetPrice(args);
         // #325 B2: the guest's own genuine modifier-group text, if any -- set by
         // ReattachCustomizationSuffix below for add/modify/remove, so the customization-
         // validation block further down can tell a real guest customization apart from the
         // menu's own canonical name happening to contain parens (e.g. "Milk Jug (1%) - White").
-        var customizationSuffix = "";
+        string? customizationSuffix = "";
 
         if (action is "add" or "modify")
         {
-            var rejection = CheckAddOrModifyGates(action, ref itemName, ref size, out customizationSuffix);
+            ToolResult? rejection = CheckAddOrModifyGates(action, ref itemName, ref size, out customizationSuffix);
             if (rejection is not null)
             {
                 return rejection;
@@ -127,7 +133,7 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
 
         if (action == "add")
         {
-            var machineRejection = CheckMachineAvailability(itemName);
+            ToolResult? machineRejection = CheckMachineAvailability(itemName);
             if (machineRejection is not null)
             {
                 return machineRejection;
@@ -143,12 +149,12 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
         // uncustomized add.
         if (customizationSuffix.Length > 0)
         {
-            var open = customizationSuffix.IndexOf('(');
-            var close = customizationSuffix.IndexOf(')');
+            int open = customizationSuffix.IndexOf('(');
+            int close = customizationSuffix.IndexOf(')');
             if (close > open)
             {
-                var modsContent = customizationSuffix[(open + 1)..close];
-                var modsError = ValidateCustomization(itemName, modsContent);
+                string modsContent = customizationSuffix[(open + 1)..close];
+                string? modsError = ValidateCustomization(itemName, modsContent);
                 if (modsError is not null)
                 {
                     return new ToolResult(modsError, ToolResultDirection.ToServer);
@@ -158,7 +164,7 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
 
         if (action == "add" && _menu.IsExtraItem(itemName))
         {
-            var extrasRejection = CheckExtrasGate(itemName);
+            ToolResult? extrasRejection = CheckExtrasGate(itemName);
             if (extrasRejection is not null)
             {
                 return extrasRejection;
@@ -167,17 +173,17 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
 
         if (action == "add")
         {
-            var limitRejection = CheckQuantityLimits(itemName, size, quantity);
+            ToolResult? limitRejection = CheckQuantityLimits(itemName, size, quantity);
             if (limitRejection is not null)
             {
                 return limitRejection;
             }
         }
 
-        var beforeRemoveQuantity = _menu.SpeechStyle == "naturalDriveThru" && action == "remove"
+        int beforeRemoveQuantity = _menu.SpeechStyle == "naturalDriveThru" && action == "remove"
             ? _order.Items.Where(i => i.Item == itemName && i.Size == _menu.CanonicalSizeKey(size)).Sum(i => i.Quantity)
             : 0;
-        var resultInfo = _order.HandleOrderUpdate(action, itemName, size, quantity, callerPrice);
+        OrderUpdateResult resultInfo = _order.HandleOrderUpdate(action, itemName, size, quantity, callerPrice);
 
         // PR #184 round 4 (Rick's review, item 3): a "wholeBundleSize" pack's
         // ComboComponentResizeRejected flag means NOTHING was mutated (OrderState.
@@ -188,11 +194,11 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
         // text, which used to tell the guest a change happened when the order was left untouched.
         if (resultInfo.ComboComponentResizeRejected is { Length: > 0 })
         {
-            var bundleName = resultInfo.ComboComponentResizeRejectedBundle ?? "";
-            var bundleSize = resultInfo.ComboComponentResizeRejectedBundleSize ?? "";
-            var bundleSizeLabel = bundleSize.Length > 0 && !string.Equals(bundleSize, "standard", StringComparison.OrdinalIgnoreCase)
+            string bundleName = resultInfo.ComboComponentResizeRejectedBundle ?? "";
+            string bundleSize = resultInfo.ComboComponentResizeRejectedBundleSize ?? "";
+            string bundleSizeLabel = bundleSize.Length > 0 && !string.Equals(bundleSize, "standard", StringComparison.OrdinalIgnoreCase)
                 ? Capitalize(bundleSize) : "";
-            var rejectMessage = _promptLoader?.RenderError(
+            string rejectMessage = _promptLoader?.RenderError(
                 "combo_component_resize_rejected",
                 Vars(("item_name", itemName), ("bundle_name", bundleName), ("bundle_size_label", bundleSizeLabel)))
                 ?? $"I'm sorry, {itemName} comes with the {bundleName} at its own size, so it can't be " +
@@ -209,22 +215,22 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
                 ToolResultDirection.ToServer);
         }
 
-        var summary = _order.Summary;
-        var jsonOrderSummary = OrderSummaryJson.Serialize(summary);
+        OrderSummary summary = _order.Summary;
+        string jsonOrderSummary = OrderSummaryJson.Serialize(summary);
         if (_menu.SpeechStyle == "naturalDriveThru")
         {
-            var displaySize = size.Length > 0 && size.ToLowerInvariant() is not ("standard" or "n/a")
+            string displaySize = size.Length > 0 && size.ToLowerInvariant() is not ("standard" or "n/a")
                 ? Capitalize(size) + " " : "";
-            var verb = action == "remove" ? "Removed" : "Confirmed";
-            var appliedQuantity = quantity;
+            string verb = action == "remove" ? "Removed" : "Confirmed";
+            int appliedQuantity = quantity;
             if (action == "remove")
             {
-                var afterRemoveQuantity = summary.Items
+                int afterRemoveQuantity = summary.Items
                     .Where(i => i.Item == itemName && i.Size == _menu.CanonicalSizeKey(size)).Sum(i => i.Quantity);
                 appliedQuantity = beforeRemoveQuantity - afterRemoveQuantity +
                     (resultInfo.VacatedComboComponent is not null ? 1 : 0);
             }
-            var acknowledgement = appliedQuantity > 0
+            string acknowledgement = appliedQuantity > 0
                 ? $"{verb} {Ordering.Money.NumberToWords(appliedQuantity)} {_menu.Spoken(displaySize + itemName)}."
                 : $"No {_menu.Spoken(displaySize + itemName)} were removed; none matched your order.";
             return new ToolResult(
@@ -233,10 +239,10 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
                 ToolResultDirection.ToBoth, clientText: jsonOrderSummary);
         }
 
-        var deltaText = BuildDeltaText(action, itemName, size, quantity, resultInfo, summary);
+        string deltaText = BuildDeltaText(action, itemName, size, quantity, resultInfo, summary);
 
         // ── Combo validation: flag missing components ──
-        var validation = _order.GetComboRequirements();
+        ComboRequirements validation = _order.GetComboRequirements();
         if (!validation.IsComplete)
         {
             deltaText += $"\n\n[SYSTEM HINT: {validation.PromptHint}]";
@@ -254,11 +260,11 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
             // through to generic, matching exactly what an extra got before hints.yaml's
             // "extras & sides" mapping was added in #168 (back then "extras & sides" didn't
             // match ANY bucket either).
-            var category = _menu.IsExtraItem(itemName) ? "" : _menu.InferCategory(itemName);
+            string category = _menu.IsExtraItem(itemName) ? "" : _menu.InferCategory(itemName);
             // #313 (Rick's review, 1.2): hints.yaml's upsell copy is free-form prose that can
             // itself name a brand item (e.g. "upgrade to a Large or add a Widget!") -- it must go
             // through the same pronunciation lexicon as everything else the realtime model speaks.
-            var hintText = _promptLoader is not null ? _promptLoader.GetUpsellHint(category) : FallbackUpsellHint(category);
+            string hintText = _promptLoader is not null ? _promptLoader.GetUpsellHint(category) : FallbackUpsellHint(category);
             deltaText += _menu.Spoken(hintText);
         }
 
@@ -269,7 +275,7 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
         // read-back available verbatim in its own tool result, not just an instruction in the
         // system prompt to "read back the order" from nothing.
         // #113: this session's own bound persona's happy-hour banner -- never hardcoded here.
-        var happyHourNote = _order.HappyHourBanner;
+        string happyHourNote = _order.HappyHourBanner;
         return new ToolResult(
             deltaText + happyHourNote + "\n\n" + summary.SpokenReadBack + BuildRewardsModelText(summary),
             ToolResultDirection.ToBoth, clientText: jsonOrderSummary);
@@ -278,12 +284,15 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
     private ToolResult GetOrder()
     {
         if (_menu.SpeechStyle == "naturalDriveThru")
+        {
             return new ToolResult(BuildNaturalOrderContext(_order.Summary) + BuildRewardsModelText(_order.Summary),
                 ToolResultDirection.ToBoth, clientText: OrderSummaryJson.Serialize(_order.Summary));
-        var readback = _order.GetGroupedOrderForReadback();
-        var summary = _order.Summary;
-        var jsonSummary = OrderSummaryJson.Serialize(summary);
-        var happyHourNote = _order.HappyHourBanner;
+        }
+
+        string readback = _order.GetGroupedOrderForReadback();
+        OrderSummary summary = _order.Summary;
+        string jsonSummary = OrderSummaryJson.Serialize(summary);
+        string happyHourNote = _order.HappyHourBanner;
         return new ToolResult(readback + happyHourNote + BuildRewardsModelText(summary),
             ToolResultDirection.ToBoth, clientText: jsonSummary);
     }
@@ -306,21 +315,26 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
 
     private string BuildRewardsModelText(Ordering.OrderSummary summary)
     {
-        if (summary.RewardsDemo is not { } rewards) return "";
+        if (summary.RewardsDemo is not { } rewards)
+        {
+            return "";
+        }
 
         var snapshot = new System.Text.Json.Nodes.JsonObject();
-        foreach (var key in new[]
+        foreach (string? key in new[]
                  {
                      "checkedIn", "balance", "rewardCost", "rewardItem", "canRedeem", "redeemed",
                      "completed", "discount", "pointsToEarn", "pointsAwarded",
                  })
         {
-            if (rewards.TryGetPropertyValue(key, out var value))
+            if (rewards.TryGetPropertyValue(key, out JsonNode? value))
+            {
                 snapshot[key] = value?.DeepClone();
+            }
         }
 
-        var rewardItem = rewards["rewardItem"]?.GetValue<string>();
-        var eligibleLine = rewardItem is null
+        string? rewardItem = rewards["rewardItem"]?.GetValue<string>();
+        OrderItem? eligibleLine = rewardItem is null
             ? null
             : summary.Items.Where(item => item.Item == rewardItem && item.Quantity > 0 && item.Price > 0)
                 .OrderBy(item => item.Price).FirstOrDefault();
@@ -329,31 +343,40 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
         snapshot["postDiscountTotal"] = summary.TotalDisplay;
         snapshot["postDiscountFinalTotal"] = summary.FinalTotalDisplay;
 
-        var text = "\n\nPrivate model context; do not read this structured block or its markers aloud. " +
+        string text = "\n\nPrivate model context; do not read this structured block or its markers aloud. " +
                    (_menu.SpeechStyle == "naturalDriveThru"
                        ? "Use relevant confirmed facts naturally, not as a script."
                        : "The preceding order read-back is the guest-facing text.") +
                    "\n[SERVER-AUTHORITATIVE FICTIONAL REWARDS STATE: " +
                    JsonSerializer.Serialize(snapshot) + "]";
         if (rewards["canRedeem"]?.GetValue<bool>() == true)
+        {
             text += _menu.SpeechStyle == "naturalDriveThru"
                 ? $"\nOffer the eligible {rewardItem} free for {rewards["rewardCost"]!.GetValue<int>()} points. Wait for the guest's reward confirmation; do not redeem automatically."
                 : $"\nEligible reward: {rewardItem}. Offer it and direct the guest to select Use reward in the on-screen panel; do not redeem automatically.";
+        }
+
         if (_menu.SpeechStyle == "naturalDriveThru")
+        {
             text += "\nSpeak of points and a free eligible item without saying demo or software terms. " +
                     "If checking in, confirm linkage and current balance only when checkedIn is true; " +
                     "otherwise wait for the on-screen check-in and call get_order again. " +
                     "Do not claim redemption until redeemed is true. The guest confirms with Use reward; never spend automatically.";
+        }
+
         return text;
     }
 
     private ToolResult ResetOrder()
     {
         _order.ResetOrder();
-        var jsonSummary = OrderSummaryJson.Serialize(_order.Summary);
+        string jsonSummary = OrderSummaryJson.Serialize(_order.Summary);
         if (_menu.SpeechStyle == "naturalDriveThru")
+        {
             return new ToolResult("Order cleared." + BuildNaturalOrderContext(_order.Summary) + BuildRewardsModelText(_order.Summary),
                 ToolResultDirection.ToBoth, clientText: jsonSummary);
+        }
+
         return new ToolResult($"Order cleared. {jsonSummary}", ToolResultDirection.ToBoth, clientText: jsonSummary);
     }
 
@@ -366,10 +389,10 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
     private ToolResult? CheckAddOrModifyGates(string action, ref string itemName, ref string size, out string customizationSuffix)
     {
         customizationSuffix = "";
-        var menuItem = _menu.ResolveMenuItem(itemName);
+        ResolvedMenuItem? menuItem = _menu.ResolveMenuItem(itemName);
         if (menuItem is null)
         {
-            var message = _promptLoader?.RenderError("item_not_on_menu", Vars(("item_name", itemName)))
+            string message = _promptLoader?.RenderError("item_not_on_menu", Vars(("item_name", itemName)))
                 ?? $"I'm sorry, {itemName} isn't on our menu. Would you like to try something else instead? " +
                    "Use the search tool with the guest's words and offer the closest real menu item by its exact name.";
             var rejection = new Dictionary<string, object?>
@@ -382,7 +405,7 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
             };
             // #77 (shared extras engine, extras.splitCombinedNames): offer two real `add` calls
             // instead of a flat dead end when the name is really a known base + a known extra.
-            var split = _menu.TrySplitCombinedName(itemName);
+            (string BaseName, string ExtraName)? split = _menu.TrySplitCombinedName(itemName);
             if (split is { } s)
             {
                 rejection["suggested_calls"] = new object[]
@@ -418,7 +441,7 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
         // this block never rejects anything for those packs.
         if (action == "add" && !_menu.ItemAvailableNow(itemName, _menuMode))
         {
-            var message = _promptLoader?.RenderError(
+            string message = _promptLoader?.RenderError(
                 "item_out_of_mode", Vars(("item_name", menuItem.Name), ("mode_label", menuItem.MenuPeriod ?? "")))
                 ?? $"I'm sorry, {menuItem.Name} isn't on our menu right now. Would you like to try something else instead?";
             return new ToolResult(
@@ -433,7 +456,7 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
                 ToolResultDirection.ToServer);
         }
 
-        var requestedSize = _menu.CanonicalSizeKey(size);
+        string requestedSize = _menu.CanonicalSizeKey(size);
         if (!menuItem.Sizes.Contains(requestedSize) && (requestedSize is "" or "standard"))
         {
             // PR #184 round 4 (Rick's review, item 4): a bundle meal ordered with no size at all,
@@ -445,8 +468,8 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
             // bundle data, or no configured default size, falls through unchanged to the
             // rejection below exactly as before; so does any OTHER explicitly-named size that
             // the pack doesn't price (e.g. an explicit "large" on a true Standard-only item).
-            var defaultSize = _menu.BundleDefaultSize(itemName);
-            var defaultKey = string.IsNullOrEmpty(defaultSize) ? "" : _menu.CanonicalSizeKey(defaultSize);
+            string defaultSize = _menu.BundleDefaultSize(itemName);
+            string defaultKey = string.IsNullOrEmpty(defaultSize) ? "" : _menu.CanonicalSizeKey(defaultSize);
             if (!string.IsNullOrEmpty(defaultKey) && menuItem.Sizes.Contains(defaultKey))
             {
                 requestedSize = defaultKey;
@@ -455,9 +478,9 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
         }
         if (!menuItem.Sizes.Contains(requestedSize))
         {
-            var sizeMap = _menu.SizeMap;
+            IReadOnlyDictionary<string, string> sizeMap = _menu.SizeMap;
             var availableSizes = menuItem.Sizes.Select(s => sizeMap.GetValueOrDefault(s, Capitalize(s))).ToList();
-            var message = _promptLoader?.RenderError(
+            string message = _promptLoader?.RenderError(
                 "size_not_available",
                 Vars(("item_name", menuItem.Name), ("available_sizes", string.Join(", ", availableSizes))))
                 ?? $"I'm sorry, {menuItem.Name} isn't available in that size. " +
@@ -484,10 +507,10 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
         // the second chance before this rejects it.
         // #325: `itemName` is now the ref param, which a lambda can't capture directly (CS1628)
         // -- copy it to a local first. It's already the canonical name at this point.
-        var resolvedItemName = itemName;
+        string resolvedItemName = itemName;
         if (action == "modify" && !_order.Items.Any(item => item.Item == resolvedItemName) && !_order.IsAbsorbedComponent(resolvedItemName))
         {
-            var message = _promptLoader?.RenderError("item_not_in_order", Vars(("item_name", menuItem.Name)))
+            string message = _promptLoader?.RenderError("item_not_in_order", Vars(("item_name", menuItem.Name)))
                 ?? $"{menuItem.Name} isn't in the order, so nothing was changed. " +
                    "Ask the guest whether they'd like to add it.";
             return new ToolResult(
@@ -520,16 +543,16 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
     // customization-validation block in UpdateOrder can tell "Milk Jug (1%) - White" (the
     // canonical name's own parens, not a guest modifier) apart from "Milk Jug (1%) - White (no
     // ice)" (a genuine customization).
-    private static readonly System.Text.RegularExpressions.Regex ParenGroupRegex =
+    private static readonly System.Text.RegularExpressions.Regex s_parenGroupRegex =
         new(@"\([^)]*\)", System.Text.RegularExpressions.RegexOptions.Compiled);
 
     private static (string ItemName, string CustomizationSuffix) ReattachCustomizationSuffix(string rawItemName, string canonicalName)
     {
         string raw = rawItemName ?? "";
         string canonical = canonicalName ?? "";
-        var rawGroups = ParenGroupRegex.Matches(raw).Select(m => m.Value).ToList();
-        var canonicalGroups = ParenGroupRegex.Matches(canonical).Select(m => m.Value).ToList();
-        foreach (var group in canonicalGroups)
+        var rawGroups = s_parenGroupRegex.Matches(raw).Select(m => m.Value).ToList();
+        var canonicalGroups = s_parenGroupRegex.Matches(canonical).Select(m => m.Value).ToList();
+        foreach (string? group in canonicalGroups)
         {
             rawGroups.Remove(group);
         }
@@ -537,7 +560,7 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
         {
             return (canonical, "");
         }
-        var suffix = string.Join(" ", rawGroups);
+        string suffix = string.Join(" ", rawGroups);
         return ($"{canonical} {suffix}", suffix);
     }
 
@@ -547,7 +570,7 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
     /// the model used for this particular turn.</summary>
     private (string ItemName, string CustomizationSuffix) CanonicalizeForRemove(string itemName)
     {
-        var menuItem = _menu.ResolveMenuItem(itemName);
+        ResolvedMenuItem? menuItem = _menu.ResolveMenuItem(itemName);
         if (menuItem is null)
         {
             return (itemName, "");
@@ -560,13 +583,13 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
     /// <c>modify</c> never reaches this check.</summary>
     private ToolResult? CheckMachineAvailability(string itemName)
     {
-        var machine = _menu.RequiresMachine(itemName);
+        string? machine = _menu.RequiresMachine(itemName);
         if (string.IsNullOrEmpty(machine) || _order.EffectiveMachineStatus(machine) != "down")
         {
             return null;
         }
-        var machineLabel = _menu.MachineLabel(machine);
-        var message = _promptLoader?.RenderError(
+        string machineLabel = _menu.MachineLabel(machine);
+        string message = _promptLoader?.RenderError(
             "machine_unavailable", Vars(("item_name", itemName), ("machine_label", machineLabel)))
             ?? $"I'm sorry, {itemName} isn't available right now -- {machineLabel}. " +
                "Would you like to try something else instead?";
@@ -586,11 +609,11 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
     /// present, non-blocked base item already in the order.</summary>
     private ToolResult? CheckExtrasGate(string itemName)
     {
-        var hasAllowedBase = false;
-        var hasBlockedBase = false;
-        foreach (var orderItem in _order.Items)
+        bool hasAllowedBase = false;
+        bool hasBlockedBase = false;
+        foreach (OrderItem orderItem in _order.Items)
         {
-            var category = _menu.InferCategory(orderItem.Item);
+            string category = _menu.InferCategory(orderItem.Item);
             if (_menu.AllowedExtraCategories.Contains(category))
             {
                 hasAllowedBase = true;
@@ -640,13 +663,13 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
     /// <c>Configuration.BusinessRulesConfig</c>'s own doc comment).</summary>
     private ToolResult? CheckQuantityLimits(string itemName, string size, int quantity)
     {
-        var existingQty = _menu.SpeechStyle == "naturalDriveThru"
+        int existingQty = _menu.SpeechStyle == "naturalDriveThru"
             ? _order.Items.Where(i => i.Item == itemName && i.Size == _menu.CanonicalSizeKey(size)).Sum(i => i.Quantity)
             : _order.Items.FirstOrDefault(oi => oi.Item == itemName && oi.Size == size)?.Quantity ?? 0;
-        var newItemQty = existingQty + quantity;
+        int newItemQty = existingQty + quantity;
         if (newItemQty > _maxItemQuantity)
         {
-            var allowed = _maxItemQuantity - existingQty;
+            int allowed = _maxItemQuantity - existingQty;
             string msg;
             if (allowed <= 0)
             {
@@ -667,10 +690,10 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
             return new ToolResult(msg, ToolResultDirection.ToServer);
         }
 
-        var totalQty = _order.Items.Sum(oi => oi.Quantity) + quantity;
+        int totalQty = _order.Items.Sum(oi => oi.Quantity) + quantity;
         if (totalQty > _maxOrderItems)
         {
-            var remaining = _maxOrderItems - _order.Items.Sum(oi => oi.Quantity);
+            int remaining = _maxOrderItems - _order.Items.Sum(oi => oi.Quantity);
             string msg;
             if (remaining <= 0)
             {
@@ -698,16 +721,16 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
     /// side).</summary>
     private string? ValidateCustomization(string itemName, string modsContent)
     {
-        var baseName = MenuKeyValidator.StripModifiers(itemName);
-        var category = _menu.InferCategory(baseName);
-        var modsLower = modsContent.ToLowerInvariant();
-        foreach (var (catKey, forbiddenList) in _menu.InvalidModifiers)
+        string baseName = MenuKeyValidator.StripModifiers(itemName);
+        string category = _menu.InferCategory(baseName);
+        string modsLower = modsContent.ToLowerInvariant();
+        foreach ((string? catKey, IReadOnlyList<string>? forbiddenList) in _menu.InvalidModifiers)
         {
             if (!category.Contains(catKey, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
-            foreach (var forbidden in forbiddenList)
+            foreach (string forbidden in forbiddenList)
             {
                 if (modsLower.Contains(forbidden))
                 {
@@ -724,13 +747,13 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
         string action, string itemName, string size, int quantity, Ordering.OrderUpdateResult resultInfo,
         Ordering.OrderSummary summary)
     {
-        var displaySize = string.IsNullOrEmpty(size) ||
+        string displaySize = string.IsNullOrEmpty(size) ||
             (size.ToLowerInvariant() is "" or "standard" or "n/a" or "na" or "none" or "n.a.")
             ? ""
             : size;
-        var displayName = $"{(displaySize.Length > 0 ? Capitalize(displaySize) + " " : "")}{itemName}";
-        var spokenItemName = _menu.Spoken(itemName);
-        var spokenDisplayName = _menu.Spoken(displayName);
+        string displayName = $"{(displaySize.Length > 0 ? Capitalize(displaySize) + " " : "")}{itemName}";
+        string spokenItemName = _menu.Spoken(itemName);
+        string spokenDisplayName = _menu.Spoken(displayName);
 
         if (resultInfo.AbsorbedIntoCombo)
         {
@@ -740,8 +763,8 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
         }
         if (resultInfo.ComboConvertedFrom is not null && action == "add")
         {
-            var comboDisplay = spokenDisplayName;
-            var mods = resultInfo.ModsCarried ?? "";
+            string comboDisplay = spokenDisplayName;
+            string mods = resultInfo.ModsCarried ?? "";
             if (mods.Length > 0)
             {
                 comboDisplay = $"{spokenDisplayName} {mods}";
@@ -773,7 +796,7 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
         }
         if (_promptLoader is { } pl)
         {
-            var tpl = pl.GetDeltaTemplate(action);
+            string tpl = pl.GetDeltaTemplate(action);
             return PromptLoader.RenderTemplate(tpl, Vars(
                 ("quantity", Ordering.Money.NumberToWords(quantity)), ("display_name", spokenDisplayName), ("total", summary.FinalTotalSpoken)));
         }
@@ -805,7 +828,7 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
     /// True/False from Number, so (unlike Python's `isinstance(True, int)` quirk) no special-
     /// casing is needed to exclude it.</summary>
     private static decimal? TryGetPrice(JsonElement args) =>
-        args.TryGetProperty("price", out var priceEl) && priceEl.ValueKind == JsonValueKind.Number && priceEl.TryGetDecimal(out var price)
+        args.TryGetProperty("price", out JsonElement priceEl) && priceEl.ValueKind == JsonValueKind.Number && priceEl.TryGetDecimal(out decimal price)
             ? price
             : null;
 

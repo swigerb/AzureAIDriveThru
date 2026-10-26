@@ -1,5 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Conformance.Fakes;
+using Conformance.Harness;
 using Xunit;
 
 namespace Conformance.Tests.Scenarios.Cascade;
@@ -26,7 +28,7 @@ namespace Conformance.Tests.Scenarios.Cascade;
 [Trait("Dotnet", "ready")]
 public sealed class CascadeMenuModeAndVoiceConformanceTests(CascadeMenuModeAndVoiceConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = CascadeScenarioHelpers.FrameTimeout;
+    private static readonly TimeSpan s_frameTimeout = CascadeScenarioHelpers.FrameTimeout;
     private const string Persona = CascadeMenuModeAndVoiceConformanceFixture.Persona_;
 
     private static JsonObject ToolCallMessage(string toolCallId, string toolName, string argumentsJson) => new()
@@ -54,12 +56,12 @@ public sealed class CascadeMenuModeAndVoiceConformanceTests(CascadeMenuModeAndVo
     [Fact]
     public Task Cascade_greeting_is_spoken_with_the_bound_personas_own_voice() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         fixture.Chat.EnqueueMessage(new JsonObject { ["role"] = "assistant", ["content"] = "Welcome!" });
-        var browser = await CascadeScenarioHelpers.ConnectAsync(fixture, "gpt-5-mini", ct, persona: Persona);
-        await using var _ = browser;
+        RealtimeBrowserClient browser = await CascadeScenarioHelpers.ConnectAsync(fixture, "gpt-5-mini", ct, persona: Persona);
+        await using RealtimeBrowserClient _ = browser;
 
-        var audioDelta = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "response.audio.delta", FrameTimeout, ct);
+        RecordedFrame? audioDelta = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "response.audio.delta", s_frameTimeout, ct);
         Assert.True(audioDelta is not null, "Expected at least one response.audio.delta chunk for the greeting.");
 
         Assert.Contains("alloy", fixture.Realtime.TtsRequestVoices);
@@ -84,10 +86,10 @@ public sealed class CascadeMenuModeAndVoiceConformanceTests(CascadeMenuModeAndVo
     [Fact]
     public Task Cascade_session_bound_to_breakfast_mode_accepts_the_breakfast_only_meal() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        CascadeConnection connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(
             fixture, fixture.Chat, "gpt-5-mini", ct, persona: Persona, mode: "breakfast");
-        await using var browser = connection.Browser;
+        await using RealtimeBrowserClient browser = connection.Browser;
 
         fixture.Chat.EnqueueMessage(ToolCallMessage(
             "call_add_breakfast", "update_order",
@@ -97,14 +99,14 @@ public sealed class CascadeMenuModeAndVoiceConformanceTests(CascadeMenuModeAndVo
 
         await CascadeScenarioHelpers.SendGuestTurnAsync(browser, ct);
 
-        var toolResponse = await browser.ReceivedFrames.WaitForAsync(
+        RecordedFrame? toolResponse = await browser.ReceivedFrames.WaitForAsync(
             f => f.Sequence > connection.GreetingWatermark &&
                  f.Type == "extension.middle_tier_tool_response" &&
-                 f.Json.TryGetProperty("tool_name", out var name) && name.GetString() == "update_order",
-            FrameTimeout, ct);
-        Assert.True(toolResponse is not null, $"Expected an extension.middle_tier_tool_response(update_order) within {FrameTimeout}.");
+                 f.Json.TryGetProperty("tool_name", out JsonElement name) && name.GetString() == "update_order",
+            s_frameTimeout, ct);
+        Assert.True(toolResponse is not null, $"Expected an extension.middle_tier_tool_response(update_order) within {s_frameTimeout}.");
 
-        var order = JsonDocument.Parse(toolResponse!.Json.GetProperty("tool_result").GetString()!).RootElement;
+        JsonElement order = JsonDocument.Parse(toolResponse!.Json.GetProperty("tool_result").GetString()!).RootElement;
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
 
         // Rick's PR #253 review item 2: drain to this turn's OWN response.done (round 2's
@@ -118,9 +120,9 @@ public sealed class CascadeMenuModeAndVoiceConformanceTests(CascadeMenuModeAndVo
         // drain's result is asserted non-null below: a timed-out drain (the turn never reaching
         // its own response.done at all) must fail this test loudly, not silently let the test
         // finish green while one more scripted response is left behind.
-        var responseDone = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Sequence > toolResponse.Sequence && f.Type == "response.done", FrameTimeout, ct);
-        Assert.True(responseDone is not null, $"Expected this turn's own response.done within {FrameTimeout} before disposing the connection.");
+        RecordedFrame? responseDone = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > toolResponse.Sequence && f.Type == "response.done", s_frameTimeout, ct);
+        Assert.True(responseDone is not null, $"Expected this turn's own response.done within {s_frameTimeout} before disposing the connection.");
     });
 
     /// <summary>
@@ -151,10 +153,10 @@ public sealed class CascadeMenuModeAndVoiceConformanceTests(CascadeMenuModeAndVo
     [Fact]
     public Task Cascade_session_bound_to_lunch_mode_rejects_the_breakfast_only_meal_as_out_of_mode() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        CascadeConnection connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(
             fixture, fixture.Chat, "gpt-5-mini", ct, persona: Persona, mode: "lunch");
-        await using var browser = connection.Browser;
+        await using RealtimeBrowserClient browser = connection.Browser;
 
         fixture.Chat.EnqueueMessage(ToolCallMessage(
             "call_add_breakfast_in_lunch", "update_order",
@@ -165,14 +167,14 @@ public sealed class CascadeMenuModeAndVoiceConformanceTests(CascadeMenuModeAndVo
 
         await CascadeScenarioHelpers.SendGuestTurnAsync(browser, ct);
 
-        var getOrderResponse = await browser.ReceivedFrames.WaitForAsync(
+        RecordedFrame? getOrderResponse = await browser.ReceivedFrames.WaitForAsync(
             f => f.Sequence > connection.GreetingWatermark &&
                  f.Type == "extension.middle_tier_tool_response" &&
-                 f.Json.TryGetProperty("tool_name", out var name) && name.GetString() == "get_order",
-            FrameTimeout, ct);
-        Assert.True(getOrderResponse is not null, $"Expected an extension.middle_tier_tool_response(get_order) within {FrameTimeout}.");
+                 f.Json.TryGetProperty("tool_name", out JsonElement name) && name.GetString() == "get_order",
+            s_frameTimeout, ct);
+        Assert.True(getOrderResponse is not null, $"Expected an extension.middle_tier_tool_response(get_order) within {s_frameTimeout}.");
 
-        var order = JsonDocument.Parse(getOrderResponse!.Json.GetProperty("tool_result").GetString()!).RootElement;
+        JsonElement order = JsonDocument.Parse(getOrderResponse!.Json.GetProperty("tool_result").GetString()!).RootElement;
         Assert.Equal(0, order.GetProperty("items").GetArrayLength());
 
         // Rick's PR #253 review item 2 (correcting this comment's own prior, wrong theory): the
@@ -191,9 +193,9 @@ public sealed class CascadeMenuModeAndVoiceConformanceTests(CascadeMenuModeAndVo
         // ConformanceFixture.AssertNoPendingExtraFakeState (which this fixture overrides to call
         // Chat.AssertNoPendingScriptedResponses AFTER every scenario's body, including this one)
         // is the backstop that would now catch a regression here loudly instead of silently.
-        var responseDone = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Sequence > getOrderResponse.Sequence && f.Type == "response.done", FrameTimeout, ct);
-        Assert.True(responseDone is not null, $"Expected this turn's own response.done within {FrameTimeout} before disposing the connection.");
+        RecordedFrame? responseDone = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > getOrderResponse.Sequence && f.Type == "response.done", s_frameTimeout, ct);
+        Assert.True(responseDone is not null, $"Expected this turn's own response.done within {s_frameTimeout} before disposing the connection.");
     });
 
     /// <summary>
@@ -211,23 +213,23 @@ public sealed class CascadeMenuModeAndVoiceConformanceTests(CascadeMenuModeAndVo
     [Fact]
     public Task Cascade_extension_set_voice_with_an_unknown_voice_is_dropped_not_adopted() => fixture.RunAsync(async () =>
     {
-        const string forgedVoice = "rick_probe_voice";
-        var ct = TestContext.Current.CancellationToken;
-        var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(
+        const string ForgedVoice = "rick_probe_voice";
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        CascadeConnection connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(
             fixture, fixture.Chat, "gpt-5-mini", ct, persona: Persona);
-        await using var browser = connection.Browser;
+        await using RealtimeBrowserClient browser = connection.Browser;
 
-        await browser.SendExtensionSetVoiceAsync(forgedVoice, cancellationToken: ct);
+        await browser.SendExtensionSetVoiceAsync(ForgedVoice, cancellationToken: ct);
 
         fixture.Chat.EnqueueMessage(FinalMessage("Sure thing!"));
         fixture.Realtime.NextTranscript = "Hello?";
         await CascadeScenarioHelpers.SendGuestTurnAsync(browser, ct);
 
-        var responseDone = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Sequence > connection.GreetingWatermark && f.Type == "response.done", FrameTimeout, ct);
-        Assert.True(responseDone is not null, $"Expected this turn's own response.done within {FrameTimeout}.");
+        RecordedFrame? responseDone = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > connection.GreetingWatermark && f.Type == "response.done", s_frameTimeout, ct);
+        Assert.True(responseDone is not null, $"Expected this turn's own response.done within {s_frameTimeout}.");
 
-        Assert.DoesNotContain(forgedVoice, fixture.Realtime.TtsRequestVoices);
+        Assert.DoesNotContain(ForgedVoice, fixture.Realtime.TtsRequestVoices);
         Assert.Contains("alloy", fixture.Realtime.TtsRequestVoices);
     });
 }

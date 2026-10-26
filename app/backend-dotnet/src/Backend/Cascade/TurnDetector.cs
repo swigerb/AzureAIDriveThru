@@ -48,7 +48,7 @@ internal sealed class TurnDetector
 
     public byte[] TakeBuffer()
     {
-        var data = _buffer.ToArray();
+        byte[] data = [.. _buffer];
         _buffer.Clear();
         return data;
     }
@@ -82,15 +82,15 @@ internal sealed class TurnDetector
             return null;
         }
         _buffer.AddRange(pcm16Bytes);
-        var usableLen = pcm16Bytes.Length - (pcm16Bytes.Length % 2);
+        int usableLen = pcm16Bytes.Length - (pcm16Bytes.Length % 2);
         if (usableLen <= 0)
         {
             return null;
         }
 
-        var sampleCount = usableLen / 2;
+        int sampleCount = usableLen / 2;
         double sumSquares = 0;
-        for (var i = 0; i < sampleCount; i++)
+        for (int i = 0; i < sampleCount; i++)
         {
             short sample = (short)(pcm16Bytes[i * 2] | (pcm16Bytes[i * 2 + 1] << 8));
             sumSquares += (double)sample * sample;
@@ -99,7 +99,7 @@ internal sealed class TurnDetector
         {
             return null;
         }
-        var rms = Math.Sqrt(sumSquares / sampleCount);
+        double rms = Math.Sqrt(sumSquares / sampleCount);
 
         string? result = null;
         if (rms >= _cutoff)
@@ -131,7 +131,7 @@ internal sealed record CascadeVadConfig(double Threshold, int SilenceDurationMs)
 {
     public static CascadeVadConfig FromAppConfig(AppConfig config)
     {
-        var section = config.TryGetSection("vad");
+        IDictionary<object, object>? section = config.TryGetSection("vad");
         return new CascadeVadConfig(
             GetEnergyThreshold(section),
             GetInt(section, "silence_duration_ms", 200));
@@ -141,8 +141,8 @@ internal sealed record CascadeVadConfig(double Threshold, int SilenceDurationMs)
     /// instead of silently falling back to a cutoff that may never (or always) detect speech.</summary>
     internal static double GetEnergyThreshold(IDictionary<object, object>? section)
     {
-        const string key = "cascade_energy_threshold";
-        if (section is null || !section.TryGetValue(key, out var value) || value is null)
+        const string Key = "cascade_energy_threshold";
+        if (section is null || !section.TryGetValue(Key, out object? value) || value is null)
         {
             return TurnDetector.DefaultEnergyThreshold;
         }
@@ -151,19 +151,19 @@ internal sealed record CascadeVadConfig(double Threshold, int SilenceDurationMs)
             double d => d,
             int i => i,
             long l => l,
-            string s when double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var p) => p,
+            string s when double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double p) => p,
             _ => null,
         };
         if (parsed is not { } threshold || !(threshold > 0 && threshold < 1))
         {
-            throw new InvalidOperationException($"vad.{key} must be a number in (0, 1), got '{value}'.");
+            throw new InvalidOperationException($"vad.{Key} must be a number in (0, 1), got '{value}'.");
         }
         return threshold;
     }
 
     private static int GetInt(IDictionary<object, object>? section, string key, int fallback)
     {
-        if (section is null || !section.TryGetValue(key, out var value) || value is null)
+        if (section is null || !section.TryGetValue(key, out object? value) || value is null)
         {
             return fallback;
         }
@@ -171,7 +171,7 @@ internal sealed record CascadeVadConfig(double Threshold, int SilenceDurationMs)
         {
             int i => i,
             long l => (int)l,
-            string s when int.TryParse(s, out var parsed) => parsed,
+            string s when int.TryParse(s, out int parsed) => parsed,
             _ => fallback,
         };
     }

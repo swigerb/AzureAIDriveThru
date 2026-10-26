@@ -1,4 +1,3 @@
-using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Conformance.Fakes;
@@ -33,7 +32,7 @@ internal static class PersonaSessionUpdateToolsExpectations
 {
     public sealed record Expectation(string ToolDescriptionSubstring);
 
-    private static readonly JsonSerializerOptions Options = new()
+    private static readonly JsonSerializerOptions s_options = new()
     {
         PropertyNameCaseInsensitive = true,
         NumberHandling = JsonNumberHandling.AllowReadingFromString,
@@ -48,7 +47,7 @@ internal static class PersonaSessionUpdateToolsExpectations
     /// </summary>
     public static Expectation For(string personaId)
     {
-        var path = RepoPaths.PersonaSmokeDataPath(RepoPaths.FindRepoRoot(), personaId);
+        string path = RepoPaths.PersonaSmokeDataPath(RepoPaths.FindRepoRoot(), personaId);
         Assert.True(File.Exists(path),
             $"PersonaSessionUpdateToolsConformanceTests.cs's PersonaSessionUpdateToolsExpectations.For('{personaId}') " +
             $"found no data file at '{path}'. Add a \"toolDescriptionSubstring\" field to it (a short, " +
@@ -56,10 +55,10 @@ internal static class PersonaSessionUpdateToolsExpectations
             "`search` tool's own \"description\" -- e.g. that description's first sentence, stopping " +
             "before any punctuation not safe to embed in a C# assertion).");
 
-        var json = File.ReadAllText(path);
-        var expectation = JsonSerializer.Deserialize<Expectation>(json, Options);
+        string json = File.ReadAllText(path);
+        Expectation? expectation = JsonSerializer.Deserialize<Expectation>(json, s_options);
         Assert.True(expectation is not null, $"'{path}' deserialized to null.");
-        Assert.False(string.IsNullOrWhiteSpace(expectation!.ToolDescriptionSubstring),
+        Assert.False(string.IsNullOrWhiteSpace(expectation.ToolDescriptionSubstring),
             $"'{path}' is missing a non-empty \"toolDescriptionSubstring\" field.");
         return expectation;
     }
@@ -82,19 +81,19 @@ internal static class PersonaSessionUpdateToolsExpectations
     public static void AssertSearchToolDescriptionIsBoundTo(
         JsonElement session, string personaId, IReadOnlyList<string> allPersonaIdsOnThisFixture, string frameName)
     {
-        var expected = For(personaId);
+        Expectation expected = For(personaId);
 
-        Assert.True(session.TryGetProperty("tools", out var toolsProp),
+        Assert.True(session.TryGetProperty("tools", out JsonElement toolsProp),
             $"The {frameName} for persona '{personaId}' carried no 'tools' at all.");
 
-        var searchTool = toolsProp.EnumerateArray()
-            .FirstOrDefault(t => t.TryGetProperty("name", out var n) && n.GetString() == "search");
+        JsonElement searchTool = toolsProp.EnumerateArray()
+            .FirstOrDefault(t => t.TryGetProperty("name", out JsonElement n) && n.GetString() == "search");
         Assert.True(searchTool.ValueKind != JsonValueKind.Undefined,
             $"The {frameName} for persona '{personaId}' carried no 'search' tool.");
 
-        Assert.True(searchTool.TryGetProperty("description", out var descriptionProp),
+        Assert.True(searchTool.TryGetProperty("description", out JsonElement descriptionProp),
             $"The 'search' tool in the {frameName} for persona '{personaId}' carried no 'description'.");
-        var description = descriptionProp.GetString();
+        string? description = descriptionProp.GetString();
         Assert.True(!string.IsNullOrEmpty(description),
             $"The 'search' tool in the {frameName} for persona '{personaId}' carried empty 'description'.");
 
@@ -104,14 +103,14 @@ internal static class PersonaSessionUpdateToolsExpectations
         // The live bug's exact symptom: no OTHER enabled persona's tool description text leaked
         // in -- i.e. the deployment default's (or any other bound persona's) own tool schemas
         // never silently substituted.
-        foreach (var otherId in allPersonaIdsOnThisFixture)
+        foreach (string otherId in allPersonaIdsOnThisFixture)
         {
             if (otherId == personaId)
             {
                 continue;
             }
 
-            var other = For(otherId);
+            Expectation other = For(otherId);
             Assert.DoesNotContain(other.ToolDescriptionSubstring, description);
         }
     }
@@ -128,19 +127,19 @@ file static class PersonaSessionUpdateToolsScenario
     public static async Task RunAsync(
         ConformanceFixture fixture, string personaId, IReadOnlyList<string> allPersonaIdsOnThisFixture, CancellationToken ct)
     {
-        var (browser, connection, _) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+        (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int _) = await OrderScenarioHelpers.ConnectAndGreetAsync(
             fixture, ct, persona: personaId);
-        await using var _browser = browser;
+        await using RealtimeBrowserClient _browser = browser;
 
         // The browser-triggered session.update (Sequence > 0 -- Sequence 0 is the middle tier's
         // own bootstrap session.update, sent before any client traffic is relayed). Same idiom as
         // PersonaSessionUpdateInstructionsConformanceTests.cs's own scenario.
-        var sessionUpdate = connection.ReceivedFrames.Snapshot().FirstOrDefault(f =>
+        RecordedFrame? sessionUpdate = connection.ReceivedFrames.Snapshot().FirstOrDefault(f =>
             f.Sequence > 0 && f.Type == "session.update");
         Assert.True(sessionUpdate is not null,
             $"No browser-triggered session.update was forwarded upstream for persona '{personaId}'.");
 
-        var session = sessionUpdate!.Json.GetProperty("session");
+        JsonElement session = sessionUpdate.Json.GetProperty("session");
         PersonaSessionUpdateToolsExpectations.AssertSearchToolDescriptionIsBoundTo(
             session, personaId, allPersonaIdsOnThisFixture, "session.update forwarded upstream");
     }
@@ -154,7 +153,7 @@ public sealed class RealPackPersonaSessionUpdateToolsConformanceTests(Conformanc
     public static TheoryData<string> DiscoveredPersonaIds()
     {
         var data = new TheoryData<string>();
-        foreach (var id in ConformancePersonas.DiscoverFromDisk())
+        foreach (string id in ConformancePersonas.DiscoverFromDisk())
         {
             data.Add(id);
         }
@@ -175,7 +174,7 @@ public sealed class RealPackPersonaSessionUpdateToolsConformanceTests(Conformanc
 [Collection(TwoPersonaConformanceCollection.Name)]
 public sealed class FixturePackPersonaSessionUpdateToolsConformanceTests(TwoPersonaConformanceFixture fixture)
 {
-    private static readonly IReadOnlyList<string> FixturePersonaIds =
+    private static readonly IReadOnlyList<string> s_fixturePersonaIds =
     [
         TwoPersonaConformanceFixture.PersonaA,
         TwoPersonaConformanceFixture.PersonaB,
@@ -196,5 +195,5 @@ public sealed class FixturePackPersonaSessionUpdateToolsConformanceTests(TwoPers
     [MemberData(nameof(FixturePersonaIdsData))]
     public Task Client_session_update_carries_the_bound_personas_own_tool_descriptions(string personaId) => fixture.RunAsync(
         () => PersonaSessionUpdateToolsScenario.RunAsync(
-            fixture, personaId, FixturePersonaIds, TestContext.Current.CancellationToken));
+            fixture, personaId, s_fixturePersonaIds, TestContext.Current.CancellationToken));
 }

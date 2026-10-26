@@ -21,7 +21,7 @@ namespace Backend.Realtime;
 /// </summary>
 internal static class OriginValidator
 {
-    private static readonly char[] NetlocTerminators = ['/', '?', '#'];
+    private static readonly char[] s_netlocTerminators = ['/', '?', '#'];
 
     /// <summary>
     /// An empty/missing `host` can never be a legitimate match -- without this guard, a
@@ -52,8 +52,8 @@ internal static class OriginValidator
     /// </summary>
     private static string ExtractNetloc(string origin)
     {
-        var rest = origin;
-        var colon = rest.IndexOf(':');
+        string rest = origin;
+        int colon = rest.IndexOf(':');
         if (colon > 0 && IsValidScheme(rest.AsSpan(0, colon)))
         {
             rest = rest[(colon + 1)..];
@@ -65,7 +65,7 @@ internal static class OriginValidator
         }
         rest = rest[2..];
 
-        var end = rest.IndexOfAny(NetlocTerminators);
+        int end = rest.IndexOfAny(s_netlocTerminators);
         return end < 0 ? rest : rest[..end];
     }
 
@@ -75,7 +75,7 @@ internal static class OriginValidator
         {
             return false;
         }
-        foreach (var c in candidate)
+        foreach (char c in candidate)
         {
             if (!char.IsAsciiLetterOrDigit(c) && c is not ('+' or '-' or '.'))
             {

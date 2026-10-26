@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 
@@ -16,25 +17,25 @@ namespace Conformance.Tests;
 [Collection(ConformanceCollection.Name)]
 public sealed class CloseCodeTests(ConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Guest_initiated_end_session_closes_with_1000_session_ended() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
 
         // A real browser always sends session.update as its first frame -- establish the session
         // normally (waiting for session.updated to confirm the backend has left its
         // first-frame-pending resume-decision window) before ending it, exactly like a guest who
         // opens the app and then immediately backs out.
         await browser.SendStartSessionAsync(cancellationToken: ct);
-        var updated = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "session.updated", FrameTimeout, ct);
+        RecordedFrame? updated = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "session.updated", s_frameTimeout, ct);
         Assert.True(updated is not null, "session.updated never reached the browser after session.update.");
 
         await browser.SendExtensionEndSessionAsync(cancellationToken: ct);
-        await browser.WaitForCloseAsync(FrameTimeout, ct);
+        await browser.WaitForCloseAsync(s_frameTimeout, ct);
 
         Assert.Equal(WebSocketCloseStatus.NormalClosure, browser.CloseStatus); // 1000
         Assert.Equal("session_ended", browser.CloseStatusDescription);
@@ -51,28 +52,28 @@ public sealed class CloseCodeTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Resuming_a_still_attached_session_supersedes_the_original_socket_with_4002() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        await using var browserA = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using RealtimeBrowserClient browserA = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
 
         // A's very first client frame -- not a resume -- makes the resume decision "fresh", which
         // (once the upstream session.created fires, near-instant against the fake) announces
         // extension.session_metadata with a resumeId.
         await browserA.SendStartSessionAsync(cancellationToken: ct);
-        var metadata = await browserA.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        RecordedFrame? metadata = await browserA.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_metadata", s_frameTimeout, ct);
         Assert.True(metadata is not null, "Expected extension.session_metadata (with a resumeId) after A's first frame.");
-        var resumeId = metadata!.Json.GetProperty("resumeId").GetString();
+        string? resumeId = metadata!.Json.GetProperty("resumeId").GetString();
         Assert.False(string.IsNullOrWhiteSpace(resumeId), "Expected a non-empty resumeId -- resume must be enabled for this scenario to mean anything.");
 
         // A stays open/attached (no close, no drop) -- B now resumes the SAME session while A is
         // still live, which is exactly what triggers the supersede-close, not an ordinary
         // resume-after-drop.
-        await using var browserB = await RealtimeBrowserClient.ConnectAsync(fixture.Backend.BaseUri, cancellationToken: ct);
+        await using RealtimeBrowserClient browserB = await RealtimeBrowserClient.ConnectAsync(fixture.Backend.BaseUri, cancellationToken: ct);
         await browserB.SendExtensionResumeAsync(resumeId!, cancellationToken: ct);
 
-        var resumed = await browserB.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_resumed", FrameTimeout, ct);
+        RecordedFrame? resumed = await browserB.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_resumed", s_frameTimeout, ct);
         Assert.True(resumed is not null, "Expected extension.session_resumed on B once the resume was accepted.");
 
-        await browserA.WaitForCloseAsync(FrameTimeout, ct);
+        await browserA.WaitForCloseAsync(s_frameTimeout, ct);
         Assert.Equal((WebSocketCloseStatus)4002, browserA.CloseStatus);
         Assert.Equal("superseded", browserA.CloseStatusDescription);
     });
@@ -96,26 +97,26 @@ public sealed class CloseCodeTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Superseding_a_stuck_peer_that_never_acks_the_close_still_completes_promptly() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        await using var browserA = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using RealtimeBrowserClient browserA = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
 
         await browserA.SendStartSessionAsync(cancellationToken: ct);
-        var metadata = await browserA.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        RecordedFrame? metadata = await browserA.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_metadata", s_frameTimeout, ct);
         Assert.True(metadata is not null, "Expected extension.session_metadata (with a resumeId) after A's first frame.");
-        var resumeId = metadata!.Json.GetProperty("resumeId").GetString();
+        string? resumeId = metadata!.Json.GetProperty("resumeId").GetString();
         Assert.False(string.IsNullOrWhiteSpace(resumeId), "Expected a non-empty resumeId -- resume must be enabled for this scenario to mean anything.");
 
         // A goes "stuck" here -- its socket stays fully open/attached on the wire (no Abort, no
         // close), it simply stops reading, so it can never process or answer a close frame.
         browserA.StopReaderLoopForTesting();
 
-        await using var browserB = await RealtimeBrowserClient.ConnectAsync(fixture.Backend.BaseUri, cancellationToken: ct);
+        await using RealtimeBrowserClient browserB = await RealtimeBrowserClient.ConnectAsync(fixture.Backend.BaseUri, cancellationToken: ct);
         await browserB.SendExtensionResumeAsync(resumeId!, cancellationToken: ct);
 
         // The actual proof: B's resume must still complete within a generous but bounded window --
         // if the supersede path blocked waiting for A's (never-coming) close acknowledgement, this
         // would time out instead.
-        var resumed = await browserB.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_resumed", FrameTimeout, ct);
+        RecordedFrame? resumed = await browserB.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_resumed", s_frameTimeout, ct);
         Assert.True(resumed is not null,
             "Expected extension.session_resumed on B promptly even though A's stuck peer can never " +
             "acknowledge its own supersede close -- a hang here would mean the supersede path is " +
@@ -129,19 +130,19 @@ public sealed class CloseCodeTests(ConformanceFixture fixture)
 [Collection(ShortTimersConformanceCollection.Name)]
 public sealed class IdleCloseCodeTests(ShortTimersConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Idle_connection_closes_with_4000_idle_timeout() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
 
         // Deliberately sends nothing at all -- ShortTimers' CONFORMANCE_IDLE_TIMEOUT_SECONDS=1
         // (sweep interval 0.2s) means the idle checker closes this within a couple of seconds,
         // well inside FrameTimeout, with no client activity to drive the idle clock.
-        await browser.WaitForCloseAsync(FrameTimeout, ct);
+        await browser.WaitForCloseAsync(s_frameTimeout, ct);
 
         Assert.Equal((WebSocketCloseStatus)4000, browser.CloseStatus);
         Assert.Equal("idle_timeout", browser.CloseStatusDescription);

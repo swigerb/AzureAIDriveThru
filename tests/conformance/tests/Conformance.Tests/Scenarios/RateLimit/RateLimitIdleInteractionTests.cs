@@ -26,7 +26,7 @@ namespace Conformance.Tests.Scenarios.RateLimit;
 [Collection(RateLimitIdleInteractionTimersConformanceCollection.Name)]
 public sealed class RateLimitIdleInteractionTests(RateLimitIdleInteractionTimersConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     /// <summary>Enqueues a rate-limited failure with no parseable hint, so retry_delay() falls
     /// through to the profile-overridden default instead of clamping a hint.</summary>
@@ -41,24 +41,24 @@ public sealed class RateLimitIdleInteractionTests(RateLimitIdleInteractionTimers
     private static async Task<FakeRealtimeConnection> ConnectAndGetPastGreetingAsync(
         Task<FakeRealtimeConnection?> connectionTask, RealtimeBrowserClient browser, CancellationToken ct)
     {
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await browser.SendStartSessionAsync(cancellationToken: ct);
 
-        var greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        RecordedFrame? greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token", s_frameTimeout, ct);
         Assert.True(greetingRoundTrip is not null, "Greeting round trip never completed.");
-        return connection!;
+        return connection;
     }
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task A_retry_is_not_guest_activity_the_idle_clock_still_closes_the_socket_on_schedule() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await ConnectAndGetPastGreetingAsync(connectionTask, browser, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection connection = await ConnectAndGetPastGreetingAsync(connectionTask, browser, ct);
 
         // Two scripted failures push both of rate_limit.py's retries out
         // (CONFORMANCE_RATE_LIMIT_RETRY_DELAY_SECONDS=0.9, then
@@ -86,9 +86,9 @@ public sealed class RateLimitIdleInteractionTests(RateLimitIdleInteractionTimers
         // failure) before measuring the close -- otherwise a harness regression that silently
         // drops a scripted failure could make this pass for the wrong reason (fewer retries than
         // intended, less activity-touching opportunity for the mutation to expose).
-        var attempt1Notification = await browser.ReceivedFrames.WaitForAsync(
+        RecordedFrame? attempt1Notification = await browser.ReceivedFrames.WaitForAsync(
             f => f.Type == "extension.rate_limited" && f.Json.GetProperty("attempt").GetInt32() == 1,
-            FrameTimeout, ct);
+            s_frameTimeout, ct);
         Assert.True(attempt1Notification is not null,
             "Expected extension.rate_limited{attempt:1} after the second scripted failure.");
 
@@ -110,7 +110,7 @@ public sealed class RateLimitIdleInteractionTests(RateLimitIdleInteractionTimers
     /// any earlier is silently dropped by the echo-suppression `continue` before it ever reaches
     /// the fake upstream, so WithVadDefaults' speech_started reply (and this test's activity
     /// signal) would never fire.</summary>
-    private static readonly TimeSpan EchoCooldownWait = TimeSpan.FromSeconds(3.3);
+    private static readonly TimeSpan s_echoCooldownWait = TimeSpan.FromSeconds(3.3);
 
     /// <summary>
     /// Rick's #244 review (issue 1, HIGH): rtmt.py's from_server_to_client also calls
@@ -139,27 +139,27 @@ public sealed class RateLimitIdleInteractionTests(RateLimitIdleInteractionTimers
     [Trait("Dotnet", "ready")]
     public Task Repeated_guest_speech_keeps_the_session_alive_past_idle_timeout_seconds() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
         await ConnectAndGetPastGreetingAsync(connectionTask, browser, ct);
 
-        await Task.Delay(EchoCooldownWait, ct);
+        await Task.Delay(s_echoCooldownWait, ct);
 
         // Three rounds, 3s apart (idle_timeout_seconds=6, so each gap leaves real margin): each
         // append's synthetic speech_started reply must independently reset last_activity. By the
         // third append, ~6s has elapsed since the FIRST one alone -- if speech_started genuinely
         // weren't touching activity, the idle sweep (CONFORMANCE_SWEEP_INTERVAL_SECONDS=0.2) would
         // have already closed the socket by now, measuring entirely from that first touch.
-        for (var round = 0; round < 3; round++)
+        for (int round = 0; round < 3; round++)
         {
-            var sinceSequence = browser.ReceivedFrames.Count;
+            int sinceSequence = browser.ReceivedFrames.Count;
             await browser.SendInputAudioAppendAsync("dGVzdA==", ct);
-            var speechStarted = await browser.ReceivedFrames.WaitForAsync(
-                f => f.Sequence >= sinceSequence && f.Type == "input_audio_buffer.speech_started", FrameTimeout, ct);
+            RecordedFrame? speechStarted = await browser.ReceivedFrames.WaitForAsync(
+                f => f.Sequence >= sinceSequence && f.Type == "input_audio_buffer.speech_started", s_frameTimeout, ct);
             Assert.True(speechStarted is not null, $"Expected speech_started to be forwarded for round {round}.");
 
-            var closedQuickly = true;
+            bool closedQuickly = true;
             try
             {
                 await browser.WaitForCloseAsync(TimeSpan.FromSeconds(3), ct);

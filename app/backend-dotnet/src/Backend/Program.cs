@@ -5,16 +5,15 @@ using Backend.Cascade;
 using Backend.Configuration;
 using Backend.Health;
 using Backend.Models;
-using Backend.Ordering;
 using Backend.Personas;
 using Backend.Prompts;
 using Backend.Realtime;
-using Backend.Search;
 using Backend.Sessions;
 using Backend.Shared;
 using Backend.Tools;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Primitives;
 
 // Host wiring (issue #12 S2): config, persona-pack loading, health, auth token endpoint, static
 // files, one event loop per session -- mirrors app/backend/app.py's create_app() startup sequence
@@ -23,9 +22,9 @@ using Microsoft.Extensions.Options;
 // before the WebSocket upgrade; the realtime processor's own relay loop (owning frames after the
 // upgrade) is issue #13's job, not this wave's.
 
-var runningInProduction = ParseBool(BackendEnvironment.Get(BackendEnvironment.RunningInProduction));
+bool runningInProduction = ParseBool(BackendEnvironment.Get(BackendEnvironment.RunningInProduction));
 
-var builder = WebApplication.CreateBuilder(args);
+WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
 if (ConformanceHooks.HooksEnabled)
 {
@@ -39,10 +38,10 @@ if (ConformanceHooks.HooksEnabled)
     builder.Logging.AddSimpleConsole(ConformanceHooks.ApplyConsoleTimestampFormat);
 }
 
-var host = BackendEnvironment.Get(BackendEnvironment.Host) ?? "127.0.0.1";
+string host = BackendEnvironment.Get(BackendEnvironment.Host) ?? "127.0.0.1";
 // Default port aligned with app/backend/app.py's `int(os.environ.get("PORT", 8000))` (PR #96
 // review nit) -- both backends bind the same default when PORT is unset.
-var port = BackendEnvironment.Get(BackendEnvironment.Port) ?? "8000";
+string port = BackendEnvironment.Get(BackendEnvironment.Port) ?? "8000";
 builder.WebHost.UseUrls($"http://{host}:{port}");
 
 var startupChecks = new StartupChecks();
@@ -102,7 +101,7 @@ builder.Services.AddSingleton(sp => ModelCatalog.FromConfig(sp.GetRequiredServic
 builder.Services.AddBackendConfigurationOptions();
 builder.Services.AddSingleton(sp =>
 {
-    var promptLoaders = sp.GetRequiredService<PromptLoaderRegistry>();
+    PromptLoaderRegistry promptLoaders = sp.GetRequiredService<PromptLoaderRegistry>();
     return (IToolExecutor)new StubToolExecutor(promptLoaders.AllToolNames);
 });
 builder.Services.AddSingleton<SessionToolExecutorFactory>();
@@ -120,7 +119,7 @@ builder.Services.AddSingleton(sp =>
     BuildRealtimeStartupSettings(sp.GetRequiredService<AppConfig>(), sp.GetRequiredService<ILogger<Program>>()));
 builder.Services.AddSingleton(sp =>
 {
-    var settings = sp.GetRequiredService<RealtimeStartupSettings>();
+    RealtimeStartupSettings settings = sp.GetRequiredService<RealtimeStartupSettings>();
     return new RealtimeProcessor(
         sp.GetRequiredService<ModelCatalog>(),
         new RealtimeProcessorOptions(
@@ -145,9 +144,9 @@ builder.Services.AddSingleton(sp =>
 });
 builder.Services.AddSingleton(sp =>
 {
-    var appConfig = sp.GetRequiredService<AppConfig>();
-    var settings = sp.GetRequiredService<RealtimeStartupSettings>();
-    var cascadeBearerTokenProvider = ConformanceHooks.CascadeFakeToken is { } cascadeFakeToken
+    AppConfig appConfig = sp.GetRequiredService<AppConfig>();
+    RealtimeStartupSettings settings = sp.GetRequiredService<RealtimeStartupSettings>();
+    StaticBearerTokenProvider? cascadeBearerTokenProvider = ConformanceHooks.CascadeFakeToken is { } cascadeFakeToken
         ? new StaticBearerTokenProvider(cascadeFakeToken)
         : null;
     return new CascadeProcessor(
@@ -179,7 +178,7 @@ builder.Services.AddSingleton(sp =>
 });
 builder.Services.AddSingleton(sp =>
 {
-    var appSecret = AppSecretProvider.Load(builder.Configuration, sp.GetRequiredService<ILogger<Program>>(), runningInProduction);
+    byte[] appSecret = AppSecretProvider.Load(builder.Configuration, sp.GetRequiredService<ILogger<Program>>(), runningInProduction);
     return new SessionTokenService(appSecret);
 });
 builder.Services.AddSingleton<SessionRegistry>();
@@ -189,9 +188,9 @@ builder.Services.AddSingleton<SessionRegistry>();
 // through DI keeps the hosted service on the same singleton the processors use.
 builder.Services.AddHostedService<SessionSweepService>();
 
-var app = builder.Build();
-var logger = app.Logger;
-var httpClientFactory = app.Services.GetRequiredService<IHttpClientFactory>();
+WebApplication app = builder.Build();
+ILogger logger = app.Logger;
+IHttpClientFactory httpClientFactory = app.Services.GetRequiredService<IHttpClientFactory>();
 
 if (entraSettings.Mode == EntraMode.Development)
 {
@@ -314,13 +313,13 @@ logger.LogInformation(
     RequiredBackendOptions.RequiredEnvironmentVariableNames.Count);
 
 // ── Session token service (rtmt.py's create_hmac_token/validate_hmac_token) ─────────────────
-var tokenService = app.Services.GetRequiredService<SessionTokenService>();
+SessionTokenService tokenService = app.Services.GetRequiredService<SessionTokenService>();
 
 // config.yaml's `security` section (rtmt.py's module-level `_security_cfg`) -- gates the
 // /realtime Origin and session-token checks below.
-var securityConfig = app.Services.GetRequiredService<SecurityConfig>();
+SecurityConfig securityConfig = app.Services.GetRequiredService<SecurityConfig>();
 
-var sessionRegistry = app.Services.GetRequiredService<SessionRegistry>();
+SessionRegistry sessionRegistry = app.Services.GetRequiredService<SessionRegistry>();
 
 // ── Static files (shared with the Python backend -- frontend unchanged by the port) -- placed
 // BEFORE UseRouting/UseAuthentication/UseAuthorization below so a static-file request never
@@ -328,7 +327,7 @@ var sessionRegistry = app.Services.GetRequiredService<SessionRegistry>();
 // circuits the pipeline for any file it serves). Computed here (rather than down where it maps
 // "/") so UseStaticFiles can be registered at the correct pipeline position while the "/" route
 // itself can still be mapped anywhere (Map* calls aren't position-sensitive). ───────────────────
-var staticDir = BackendEnvironment.Get(BackendEnvironment.StaticFilesDir) ?? TryFindStaticDir();
+string? staticDir = BackendEnvironment.Get(BackendEnvironment.StaticFilesDir) ?? TryFindStaticDir();
 if (staticDir is not null && Directory.Exists(staticDir))
 {
     var fileProvider = new PhysicalFileProvider(staticDir);
@@ -369,7 +368,7 @@ app.MapGet("/health", () => HealthEndpoint.Handle(startupChecks, personaCatalog)
 // the time this delegate runs, context.User is guaranteed authenticated with an `oid` claim.
 app.MapGet("/api/auth/session", (HttpContext context) =>
 {
-    var oid = entraSettings.Mode == EntraMode.Development
+    string? oid = entraSettings.Mode == EntraMode.Development
         ? EntraSettings.SyntheticOid
         : context.User.FindFirst("oid")?.Value;
     return Results.Json(new { token = tokenService.Create(expirySeconds: 900, oid) });
@@ -420,7 +419,7 @@ app.MapGet("/realtime", async (HttpContext context) =>
     // delegate ever started running. See Realtime/RealtimeAuthGate.cs for the ported logic and
     // its own unit tests, and tests/conformance's Scenarios/Http, Scenarios/Security, and
     // Scenarios/Auth tests for the over-the-wire proof against this backend.
-    var rejection = RealtimeAuthGate.Check(
+    IResult? rejection = RealtimeAuthGate.Check(
         context.Request.Headers["Origin"].ToString(),
         context.Request.Headers["Host"].ToString(),
         context.Request.Query["token"].ToString(),
@@ -438,8 +437,8 @@ app.MapGet("/realtime", async (HttpContext context) =>
     // 404s as plain text -- rtmt.py's _websocket_handler rejects here with `web.Response(status=
     // 404, text=...)`, not the JSON shape the HTTP persona routes use, since this is still a
     // pre-upgrade HTTP response on the /realtime endpoint itself, not a persona-discovery route.
-    var requestedPersonaId = context.Request.Query["persona"].ToString();
-    var personaId = string.IsNullOrEmpty(requestedPersonaId) ? personaCatalog.DefaultPersonaId : requestedPersonaId;
+    string requestedPersonaId = context.Request.Query["persona"].ToString();
+    string personaId = string.IsNullOrEmpty(requestedPersonaId) ? personaCatalog.DefaultPersonaId : requestedPersonaId;
     if (!personaCatalog.Contains(personaId))
     {
         // rtmt.py's `_websocket_handler` logs this rejection at warning level before returning
@@ -447,7 +446,7 @@ app.MapGet("/realtime", async (HttpContext context) =>
         logger.LogWarning("Rejected WebSocket for unknown/disabled persona: {PersonaId}", personaId);
         return Results.Text($"Unknown or disabled persona: '{personaId}'", statusCode: 404);
     }
-    var persona = personaCatalog.Get(personaId);
+    Persona persona = personaCatalog.Get(personaId);
 
     // Menu mode binding (issue 165): only a persona that declares features.dayparts has a menu
     // mode at all -- a persona without that feature never shows a toggle in Settings, so a stray
@@ -458,7 +457,7 @@ app.MapGet("/realtime", async (HttpContext context) =>
     // defaults to "lunch" (the original reference app's own default, decision D3) further down,
     // not here. TryGetValue (not Query["mode"].ToString()) preserves the distinct "absent" vs
     // "present but empty" cases, same as requestedModelId below.
-    var requestedMenuMode = context.Request.Query.TryGetValue("mode", out var modeQueryValues)
+    string? requestedMenuMode = context.Request.Query.TryGetValue("mode", out StringValues modeQueryValues)
         ? modeQueryValues.ToString()
         : null;
     if (persona.Features.Dayparts)
@@ -486,7 +485,7 @@ app.MapGet("/realtime", async (HttpContext context) =>
     // persona defaults to "lunch" here (there's no separate session-creation step to defer this
     // to, unlike the Python port) -- a persona with no features.dayparts stays null, so
     // OrderToolExecutor/SearchTool's own menu-mode gates/filters are a pure no-op for it.
-    var menuMode = persona.Features.Dayparts ? (requestedMenuMode ?? "lunch") : null;
+    string? menuMode = persona.Features.Dayparts ? (requestedMenuMode ?? "lunch") : null;
 
     // Model dispatch + resolution (issue #75): resolves which pipeline processor owns this
     // session, then validates the requested (or defaulted) model against that persona/pipeline.
@@ -498,7 +497,7 @@ app.MapGet("/realtime", async (HttpContext context) =>
     // default`, processors.py), not treated the same as omitted. `Query["model"].ToString()`
     // collapses both cases to `""`, so read via `TryGetValue` to preserve the distinction, same
     // as `request.query.get("model")` returning `None` vs `""`.
-    var requestedModelId = context.Request.Query.TryGetValue("model", out var modelQueryValues)
+    string? requestedModelId = context.Request.Query.TryGetValue("model", out StringValues modelQueryValues)
         ? modelQueryValues.ToString()
         : null;
     string pipelineName;
@@ -534,10 +533,10 @@ app.MapGet("/realtime", async (HttpContext context) =>
         return Results.Text($"Unknown or disallowed model: {PyRepr(requestedModelId)}", statusCode: 404);
     }
 
-    var sessionId = Guid.NewGuid().ToString("n");
-    using var socket = await context.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
+    string sessionId = Guid.NewGuid().ToString("n");
+    using WebSocket socket = await context.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
     var metadata = new SessionMetadata(persona.Id, resolvedModel.Id, pipelineName);
-    var actor = sessionRegistry.GetOrAdd(sessionId, id => new SessionActor(id, processor, metadata));
+    SessionActor actor = sessionRegistry.GetOrAdd(sessionId, id => new SessionActor(id, processor, metadata));
     try
     {
         if (processor is RealtimeProcessor realtimeProc)
@@ -546,7 +545,7 @@ app.MapGet("/realtime", async (HttpContext context) =>
             // bootstrap, voice lock, greeting gate, tool-call dispatch, echo suppression/barge-in,
             // rejected-session-update recovery, rate-limit notice) instead of draining the generic
             // per-session mailbox -- see RealtimeProcessor.RunSessionAsync's own doc comment.
-            var diagnostic = realtimeDiagnosticGate.TryClaim(
+            CascadeDiagnosticCapture? diagnostic = realtimeDiagnosticGate.TryClaim(
                 entraSettings.Mode == EntraMode.Entra, context.User.Identity?.IsAuthenticated == true,
                 context.User.FindFirst("oid")?.Value, context.Request.Query["diagnostic_run"].ToString(),
                 persona.Id, pipelineName, sessionId, logger);
@@ -559,7 +558,7 @@ app.MapGet("/realtime", async (HttpContext context) =>
             // (greeting, local VAD-driven turn detection, STT -> chat-tool-loop -> TTS, barge-in,
             // rate-limit ladder) instead of draining the generic per-session mailbox -- see
             // CascadeProcessor.RunSessionAsync's own doc comment.
-            var diagnostic = cascadeDiagnosticGate.TryClaim(
+            CascadeDiagnosticCapture? diagnostic = cascadeDiagnosticGate.TryClaim(
                 entraSettings.Mode == EntraMode.Entra,
                 context.User.Identity?.IsAuthenticated == true,
                 context.User.FindFirst("oid")?.Value,
@@ -577,7 +576,7 @@ app.MapGet("/realtime", async (HttpContext context) =>
             // "cascade") registers its own processor -- none does yet.
             while (socket.State == WebSocketState.Open)
             {
-                var frame = await WebSocketFrameReader.ReadMessageAsync(socket, context.RequestAborted).ConfigureAwait(false);
+                WebSocketFrame? frame = await WebSocketFrameReader.ReadMessageAsync(socket, context.RequestAborted).ConfigureAwait(false);
                 if (frame is null)
                 {
                     await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, context.RequestAborted).ConfigureAwait(false);
@@ -604,7 +603,7 @@ if (staticDir is not null && Directory.Exists(staticDir))
 {
     app.MapGet("/", (HttpContext context) =>
     {
-        var indexPath = Path.Combine(staticDir, "index.html");
+        string indexPath = Path.Combine(staticDir, "index.html");
         if (!File.Exists(indexPath))
         {
             return Results.NotFound();
@@ -639,9 +638,9 @@ static async Task CheckServiceConnectivityAsync(ILogger logger, IHttpClientFacto
     };
     try
     {
-        using var httpClient = httpClientFactory.CreateClient(BackendHttpClientNames.ConnectivityCheck);
+        using HttpClient httpClient = httpClientFactory.CreateClient(BackendHttpClientNames.ConnectivityCheck);
         httpClient.Timeout = TimeSpan.FromSeconds(5);
-        foreach (var (name, url) in endpoints)
+        foreach ((string? name, string? url) in endpoints)
         {
             if (string.IsNullOrEmpty(url))
             {
@@ -649,7 +648,7 @@ static async Task CheckServiceConnectivityAsync(ILogger logger, IHttpClientFacto
             }
             try
             {
-                using var response = await httpClient.GetAsync(url).ConfigureAwait(false);
+                using HttpResponseMessage response = await httpClient.GetAsync(url).ConfigureAwait(false);
                 logger.LogInformation("✅ {Name} reachable (HTTP {StatusCode})", name, (int)response.StatusCode);
             }
             catch (Exception exc)
@@ -666,33 +665,33 @@ static async Task CheckServiceConnectivityAsync(ILogger logger, IHttpClientFacto
 
 static RealtimeStartupSettings BuildRealtimeStartupSettings(AppConfig appConfig, ILogger logger)
 {
-    var modelSection = appConfig.TryGetSection("model");
-    var audioSection = appConfig.TryGetSection("audio");
-    var realtimeDeployment = BackendEnvironment.Get(BackendEnvironment.AzureOpenAiRealtimeDeployment)!;
+    IDictionary<object, object>? modelSection = appConfig.TryGetSection("model");
+    IDictionary<object, object>? audioSection = appConfig.TryGetSection("audio");
+    string realtimeDeployment = BackendEnvironment.Get(BackendEnvironment.AzureOpenAiRealtimeDeployment)!;
 
-    var voiceChoiceOverride = BackendEnvironment.Get(BackendEnvironment.AzureOpenAiRealtimeVoiceChoice);
-    var voiceChoice = !string.IsNullOrEmpty(voiceChoiceOverride)
+    string? voiceChoiceOverride = BackendEnvironment.Get(BackendEnvironment.AzureOpenAiRealtimeVoiceChoice);
+    string voiceChoice = !string.IsNullOrEmpty(voiceChoiceOverride)
         ? voiceChoiceOverride
         : ReadString(modelSection, "default_voice") ?? "marin";
 
-    var transcriptionModelOverride = BackendEnvironment.Get(BackendEnvironment.AzureOpenAiRealtimeTranscriptionModel);
-    var transcriptionModel = !string.IsNullOrEmpty(transcriptionModelOverride)
+    string? transcriptionModelOverride = BackendEnvironment.Get(BackendEnvironment.AzureOpenAiRealtimeTranscriptionModel);
+    string transcriptionModel = !string.IsNullOrEmpty(transcriptionModelOverride)
         ? transcriptionModelOverride
         : ReadString(modelSection, "transcription_model") ?? "whisper-1";
 
-    var reasoningEffortOverride = BackendEnvironment.Get(BackendEnvironment.AzureOpenAiRealtimeReasoningEffort);
-    var reasoningEffortSource = !string.IsNullOrEmpty(reasoningEffortOverride)
+    string? reasoningEffortOverride = BackendEnvironment.Get(BackendEnvironment.AzureOpenAiRealtimeReasoningEffort);
+    string? reasoningEffortSource = !string.IsNullOrEmpty(reasoningEffortOverride)
         ? reasoningEffortOverride
         : ReadString(modelSection, "reasoning_effort");
-    var reasoningEffort = ReasoningRules.NormalizeReasoningEffort(reasoningEffortSource);
+    string? reasoningEffort = ReasoningRules.NormalizeReasoningEffort(reasoningEffortSource);
 
-    var reasoningModelOverride = BackendEnvironment.Get(BackendEnvironment.AzureOpenAiRealtimeReasoningModel);
-    var reasoningModelSource = !string.IsNullOrEmpty(reasoningModelOverride)
+    string? reasoningModelOverride = BackendEnvironment.Get(BackendEnvironment.AzureOpenAiRealtimeReasoningModel);
+    string? reasoningModelSource = !string.IsNullOrEmpty(reasoningModelOverride)
         ? reasoningModelOverride
         : ReadString(modelSection, "reasoning_model");
-    var reasoningModel = ReasoningRules.ParseReasoningModel(reasoningModelSource);
+    bool? reasoningModel = ReasoningRules.ParseReasoningModel(reasoningModelSource);
 
-    var configuredVoices = ReadStringList(modelSection, "allowed_voices");
+    List<string>? configuredVoices = ReadStringList(modelSection, "allowed_voices");
     IReadOnlySet<string> allowedVoices = configuredVoices is { Count: > 0 }
         ? new HashSet<string>(configuredVoices, StringComparer.Ordinal)
         : ClientServerFilter.DefaultAllowedVoices;
@@ -742,21 +741,21 @@ static RealtimeStartupSettings BuildRealtimeStartupSettings(AppConfig appConfig,
 // native numeric/bool type. A YAML `null`/absent key/absent section all fall through to `null`,
 // matching Python's dict.get(key) returning None for the same three cases.
 static string? ReadString(IDictionary<object, object>? section, string key) =>
-    section is not null && section.TryGetValue(key, out var raw) && raw is not null ? raw.ToString() : null;
+    section is not null && section.TryGetValue(key, out object? raw) && raw is not null ? raw.ToString() : null;
 
 static double? ReadDouble(IDictionary<object, object>? section, string key) =>
-    section is not null && section.TryGetValue(key, out var raw) && raw is not null
+    section is not null && section.TryGetValue(key, out object? raw) && raw is not null
         ? Convert.ToDouble(raw, System.Globalization.CultureInfo.InvariantCulture)
         : null;
 
 static int? ReadInt(IDictionary<object, object>? section, string key) =>
-    section is not null && section.TryGetValue(key, out var raw) && raw is not null
+    section is not null && section.TryGetValue(key, out object? raw) && raw is not null
         ? Convert.ToInt32(raw, System.Globalization.CultureInfo.InvariantCulture)
         : null;
 
 static bool? ReadBool(IDictionary<object, object>? section, string key)
 {
-    if (section is null || !section.TryGetValue(key, out var raw) || raw is null)
+    if (section is null || !section.TryGetValue(key, out object? raw) || raw is null)
     {
         return null;
     }
@@ -765,11 +764,11 @@ static bool? ReadBool(IDictionary<object, object>? section, string key)
 
 static List<string>? ReadStringList(IDictionary<object, object>? section, string key)
 {
-    if (section is null || !section.TryGetValue(key, out var raw) || raw is not IEnumerable<object> list)
+    if (section is null || !section.TryGetValue(key, out object? raw) || raw is not IEnumerable<object> list)
     {
         return null;
     }
-    return list.Select(v => v?.ToString() ?? string.Empty).ToList();
+    return [.. list.Select(v => v?.ToString() ?? string.Empty)];
 }
 
 // Rick's PR #122 review item 2: matches Python's `!r` for the two shapes `requested_model_id`

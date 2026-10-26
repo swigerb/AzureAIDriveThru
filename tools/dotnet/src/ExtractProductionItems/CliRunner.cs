@@ -23,7 +23,7 @@ public static class CliRunner
         string? production = null;
         string? menu = null;
 
-        for (var i = 0; i < args.Length; i++)
+        for (int i = 0; i < args.Length; i++)
         {
             switch (args[i])
             {
@@ -56,8 +56,8 @@ public static class CliRunner
             }
             else
             {
-                var sourceDir = Path.GetDirectoryName(Path.GetFullPath(production))!; // .../menu/source
-                var menuDir = Directory.GetParent(sourceDir)!.FullName;               // .../menu
+                string sourceDir = Path.GetDirectoryName(Path.GetFullPath(production))!; // .../menu/source
+                string menuDir = Directory.GetParent(sourceDir)!.FullName;               // .../menu
                 menuPath = Path.Combine(menuDir, "menuItems.json");
             }
         }
@@ -66,7 +66,7 @@ public static class CliRunner
             ProductionExportLocator.Discovery discovery;
             try
             {
-                var repoRoot = repoRootOverride ?? RepoRoot.Find(AppContext.BaseDirectory);
+                string repoRoot = repoRootOverride ?? RepoRoot.Find(AppContext.BaseDirectory);
                 discovery = ProductionExportLocator.Locate(repoRoot);
             }
             catch (InvalidOperationException ex)
@@ -81,10 +81,10 @@ public static class CliRunner
             menuPath = menu ?? discovery.MenuFilePath;
         }
 
-        var productionItems = ProductionItemsExtractor.ExtractProductionItems(productionPath);
-        var uiItems = ProductionItemsExtractor.LoadUiItems(menuPath);
-        var report = ProductionItemsExtractor.BuildReport(productionItems, uiItems);
-        foreach (var line in report)
+        IReadOnlyList<ProductionItem> productionItems = ProductionItemsExtractor.ExtractProductionItems(productionPath);
+        IReadOnlyList<UiItem> uiItems = ProductionItemsExtractor.LoadUiItems(menuPath);
+        IReadOnlyList<string> report = ProductionItemsExtractor.BuildReport(productionItems, uiItems);
+        foreach (string line in report)
         {
             stdout.WriteLine(line);
         }

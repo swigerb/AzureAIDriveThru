@@ -1,6 +1,5 @@
 using System.Text.Json;
 using Conformance.Fakes;
-using Conformance.Harness;
 using Microsoft.Playwright;
 using Xunit;
 
@@ -106,7 +105,7 @@ namespace Conformance.Tests.Scenarios.Browser;
 [Trait("Category", "Browser")]
 public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     // Same shape as OrderResumeBrowserTests' own InitScript, trimmed to just the parts this
     // scenario needs (no drop/probe helpers): every /realtime socket's URL and sent/received
@@ -168,15 +167,15 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
         page.EvaluateAsync<int>($"window.__sockets[{index}] ? window.__sockets[{index}].ws.readyState : -1");
 
     private static IEnumerable<string> TypesOf(JsonElement frames) =>
-        frames.EnumerateArray().Select(f => f.TryGetProperty("type", out var t) ? t.GetString() ?? "" : "");
+        frames.EnumerateArray().Select(f => f.TryGetProperty("type", out JsonElement t) ? t.GetString() ?? "" : "");
 
     private static bool HasSessionMetadata(JsonElement received) =>
         TypesOf(received).Any(t => t == "extension.session_metadata");
 
     private static bool IsMessageItem(RecordedFrame f) =>
         f.Type == "conversation.item.create" &&
-        f.Json.TryGetProperty("item", out var item) &&
-        item.TryGetProperty("type", out var itemType) && itemType.GetString() == "message";
+        f.Json.TryGetProperty("item", out JsonElement item) &&
+        item.TryGetProperty("type", out JsonElement itemType) && itemType.GetString() == "message";
 
     /// <summary>Polls <paramref name="probe"/> until <paramref name="ready"/> is satisfied or
     /// <paramref name="timeout"/> elapses -- same black-box polling helper as
@@ -185,10 +184,10 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
     private static async Task<T> UntilAsync<T>(
         Func<Task<T>> probe, Func<T, bool> ready, TimeSpan timeout, string what, CancellationToken ct)
     {
-        var deadline = DateTimeOffset.UtcNow + timeout;
+        DateTimeOffset deadline = DateTimeOffset.UtcNow + timeout;
         while (true)
         {
-            var value = await probe().ConfigureAwait(false);
+            T? value = await probe().ConfigureAwait(false);
             if (ready(value))
             {
                 return value;
@@ -206,11 +205,11 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
     /// whose URL carries <c>persona=&lt;personaId&gt;</c>, or -1 if none exists yet.</summary>
     private static async Task<int> FindPersonaSocketIndexAsync(IPage page, string personaId, int fromIndex, CancellationToken ct)
     {
-        var count = await SocketCountAsync(page).ConfigureAwait(false);
-        for (var i = fromIndex; i < count; i++)
+        int count = await SocketCountAsync(page).ConfigureAwait(false);
+        for (int i = fromIndex; i < count; i++)
         {
             ct.ThrowIfCancellationRequested();
-            var url = await UrlAsync(page, i).ConfigureAwait(false);
+            string url = await UrlAsync(page, i).ConfigureAwait(false);
             if (url.Contains($"persona={personaId}", StringComparison.Ordinal))
             {
                 return i;
@@ -221,10 +220,10 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
 
     private static async Task<(IBrowserContext Context, IPage Page)> NewPageAsync(IBrowser browser, CancellationToken ct)
     {
-        var context = await browser.NewContextAsync(new BrowserNewContextOptions { Permissions = ["microphone"] })
+        IBrowserContext context = await browser.NewContextAsync(new BrowserNewContextOptions { Permissions = ["microphone"] })
             .ConfigureAwait(false);
         await context.AddInitScriptAsync(InitScript).ConfigureAwait(false);
-        var page = await context.NewPageAsync().ConfigureAwait(false);
+        IPage page = await context.NewPageAsync().ConfigureAwait(false);
         return (context, page);
     }
 
@@ -235,25 +234,25 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
     /// </summary>
     private async Task RunSwitchScenarioAsync(bool clickImmediately)
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (context, page) = await NewPageAsync(fixture.Browser!, ct).ConfigureAwait(false);
-        await using var _ = context;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!, ct).ConfigureAwait(false);
+        await using IBrowserContext _ = context;
 
-        var firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
         await page.GotoAsync($"{fixture.Backend!.BaseUri}?persona={PersonaSwitchBackendFixture.PersonaA}").ConfigureAwait(false);
-        var firstConnection = await firstConnectionTask;
-        Assert.True(firstConnection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        FakeRealtimeConnection? firstConnection = await firstConnectionTask;
+        Assert.True(firstConnection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
-        await UntilAsync(() => SocketCountAsync(page), n => n >= 1, FrameTimeout, "the frontend's first realtime socket to open", ct);
+        await UntilAsync(() => SocketCountAsync(page), n => n >= 1, s_frameTimeout, "the frontend's first realtime socket to open", ct);
         await UntilAsync(
             () => ReceivedAsync(page, 0),
             HasSessionMetadata,
-            FrameTimeout, "extension.session_metadata on the test-alpha socket", ct);
+            s_frameTimeout, "extension.session_metadata on the test-alpha socket", ct);
 
-        var socketsBeforeSwitch = await SocketCountAsync(page);
-        var alphaSentBeforeSwitch = (await SentAsync(page, 0)).GetArrayLength();
+        int socketsBeforeSwitch = await SocketCountAsync(page);
+        int alphaSentBeforeSwitch = (await SentAsync(page, 0)).GetArrayLength();
 
-        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        Task<FakeRealtimeConnection?> secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
 
         // The real PersonaPicker <select>, exactly as a guest would operate it -- never the URL
         // or a hook called directly.
@@ -265,16 +264,16 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
             // Case A (settled): wait until the newest socket is bound to test-beta and OPEN
             // before tapping, so this case proves the switch works in the "everything already
             // settled" ordering too, not just the race.
-            var settledIndex = await UntilAsync(
+            int settledIndex = await UntilAsync(
                 () => FindPersonaSocketIndexAsync(page, PersonaSwitchBackendFixture.PersonaB, socketsBeforeSwitch, ct),
-                idx => idx >= 0, FrameTimeout, "a test-beta socket to be created", ct);
+                idx => idx >= 0, s_frameTimeout, "a test-beta socket to be created", ct);
             await UntilAsync(() => ReadyStateAsync(page, settledIndex), state => state == 1 /* OPEN */,
-                FrameTimeout, "the test-beta socket to open", ct);
+                s_frameTimeout, "the test-beta socket to open", ct);
         }
 
         await page.GetByRole(AriaRole.Button, new() { Name = "Start recording", Exact = true }).ClickAsync().ConfigureAwait(false);
 
-        var secondConnection = await secondConnectionTask;
+        FakeRealtimeConnection? secondConnection = await secondConnectionTask;
         await AssertSwitchDeliveredToNewPersonaAsync(
             page, socketsBeforeSwitch, alphaSentBeforeSwitch, secondConnection, expectEndSessionSent: true, ct).ConfigureAwait(false);
     }
@@ -307,30 +306,30 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
         CancellationToken ct)
     {
         // ── The fake upstream connection for the test-beta session ──
-        Assert.True(secondConnection is not null, $"No upstream connection for the switched-to persona was accepted within {FrameTimeout}.");
+        Assert.True(secondConnection is not null, $"No upstream connection for the switched-to persona was accepted within {s_frameTimeout}.");
 
-        var sessionUpdate = await secondConnection!.ReceivedFrames.WaitForAsync(f => f.Type == "session.update", FrameTimeout, ct);
+        RecordedFrame? sessionUpdate = await secondConnection.ReceivedFrames.WaitForAsync(f => f.Type == "session.update", s_frameTimeout, ct);
         Assert.True(sessionUpdate is not null, "Expected the client's session.update on the test-beta upstream connection.");
         // rtmt.py's `_to_ga_session` moves the legacy top-level `turn_detection` the browser
         // sends into the GA endpoint's `session.audio.input.turn_detection` before relaying it
         // upstream -- see `_to_ga_session`'s docstring and `_BOOTSTRAP_CLIENT_SESSION`.
-        var turnDetection = sessionUpdate!.Json.GetProperty("session").GetProperty("audio").GetProperty("input").GetProperty("turn_detection");
+        JsonElement turnDetection = sessionUpdate.Json.GetProperty("session").GetProperty("audio").GetProperty("input").GetProperty("turn_detection");
         Assert.Equal("server_vad", turnDetection.GetProperty("type").GetString());
         Assert.Equal(0.7, turnDetection.GetProperty("threshold").GetDouble());
 
-        var greetingFrame = await secondConnection.ReceivedFrames.WaitForAsync(IsMessageItem, FrameTimeout, ct);
+        RecordedFrame? greetingFrame = await secondConnection.ReceivedFrames.WaitForAsync(IsMessageItem, s_frameTimeout, ct);
         Assert.True(greetingFrame is not null, "Expected the test-beta greeting conversation.item.create on the test-beta upstream connection.");
-        var greetingText = greetingFrame!.Json.GetProperty("item").GetProperty("content")[0].GetProperty("text").GetString();
+        string? greetingText = greetingFrame.Json.GetProperty("item").GetProperty("content")[0].GetProperty("text").GetString();
         Assert.Contains(PersonaSmokeExpectations.For(PersonaSwitchBackendFixture.PersonaB).GreetingSubstring, greetingText);
 
         // ── Browser side: EXACTLY ONE socket for test-beta, session.update on it EXACTLY ONCE ──
-        var betaIndex = await UntilAsync(
+        int betaIndex = await UntilAsync(
             () => FindPersonaSocketIndexAsync(page, PersonaSwitchBackendFixture.PersonaB, socketsBeforeSwitch, ct),
-            idx => idx >= 0, FrameTimeout, "a test-beta socket to exist", ct);
-        var betaSent = await UntilAsync(
+            idx => idx >= 0, s_frameTimeout, "a test-beta socket to exist", ct);
+        JsonElement betaSent = await UntilAsync(
             () => SentAsync(page, betaIndex),
             sent => TypesOf(sent).Count(t => t == "session.update") >= 1,
-            FrameTimeout, "session.update to be sent on the test-beta socket", ct);
+            s_frameTimeout, "session.update to be sent on the test-beta socket", ct);
         Assert.Equal(1, TypesOf(betaSent).Count(t => t == "session.update"));
 
         // A little settling margin before the negative assertions below: both the
@@ -342,11 +341,11 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
         //    socket overall (issue #171 round 3: the earlier version of this check only counted
         //    session.update on the FIRST test-beta socket found, which would have missed a
         //    second, orphaned one existing alongside it) ──
-        var socketsAfter = await SocketCountAsync(page);
-        var betaSocketCount = 0;
-        for (var i = socketsBeforeSwitch; i < socketsAfter; i++)
+        int socketsAfter = await SocketCountAsync(page);
+        int betaSocketCount = 0;
+        for (int i = socketsBeforeSwitch; i < socketsAfter; i++)
         {
-            var url = await UrlAsync(page, i);
+            string url = await UrlAsync(page, i);
             Assert.False(
                 url.Contains($"persona={PersonaSwitchBackendFixture.PersonaA}", StringComparison.Ordinal),
                 $"Socket #{i} (url={url}) was created for test-alpha AFTER the switch click -- orphaned double-connect (issue #171, H2/H4).");
@@ -361,7 +360,7 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
         //    `expectEndSessionSent` (issue #180 round 3, R7/R9: see this method's own doc
         //    comment for why "all equal end_session" alone cannot distinguish "sent exactly one"
         //    from "sent none at all") ──
-        var alphaSentAfter = await SentAsync(page, 0);
+        JsonElement alphaSentAfter = await SentAsync(page, 0);
         var alphaTypesAfter = TypesOf(alphaSentAfter).Skip(alphaSentBeforeSwitch).ToList();
         if (expectEndSessionSent)
         {
@@ -423,23 +422,23 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
     /// </summary>
     private async Task RunSwitchScenarioCAsync()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (context, page) = await NewPageAsync(fixture.Browser!, ct).ConfigureAwait(false);
-        await using var _ = context;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!, ct).ConfigureAwait(false);
+        await using IBrowserContext _ = context;
 
-        var firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
         await page.GotoAsync($"{fixture.Backend!.BaseUri}?persona={PersonaSwitchBackendFixture.PersonaA}").ConfigureAwait(false);
-        var firstConnection = await firstConnectionTask;
-        Assert.True(firstConnection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        FakeRealtimeConnection? firstConnection = await firstConnectionTask;
+        Assert.True(firstConnection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
-        await UntilAsync(() => SocketCountAsync(page), n => n >= 1, FrameTimeout, "the frontend's first realtime socket to open", ct);
+        await UntilAsync(() => SocketCountAsync(page), n => n >= 1, s_frameTimeout, "the frontend's first realtime socket to open", ct);
         await UntilAsync(
             () => ReceivedAsync(page, 0),
             HasSessionMetadata,
-            FrameTimeout, "extension.session_metadata on the test-alpha socket", ct);
+            s_frameTimeout, "extension.session_metadata on the test-alpha socket", ct);
 
-        var socketsBeforeSwitch = await SocketCountAsync(page);
-        var alphaSentBeforeSwitch = (await SentAsync(page, 0)).GetArrayLength();
+        int socketsBeforeSwitch = await SocketCountAsync(page);
+        int alphaSentBeforeSwitch = (await SentAsync(page, 0)).GetArrayLength();
 
         // Hold the persona-detail fetch BEFORE the picker selection: the selection itself still
         // runs (beginSwitch()'s bookkeeping flips immediately), but endSession() -- issue #180
@@ -453,7 +452,7 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
             await route.ContinueAsync().ConfigureAwait(false);
         }).ConfigureAwait(false);
 
-        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        Task<FakeRealtimeConnection?> secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
 
         // The real PersonaPicker <select>, exactly as a guest would operate it.
         await page.GetByLabel("Select persona").SelectOptionAsync(
@@ -464,19 +463,19 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
         // tapping, not a race against the old wait-for-CLOSED step this case used to have.
         Assert.Equal(1 /* OPEN */, await ReadyStateAsync(page, 0).ConfigureAwait(false));
 
-        var alphaSentBeforeTap = (await SentAsync(page, 0)).GetArrayLength();
+        int alphaSentBeforeTap = (await SentAsync(page, 0)).GetArrayLength();
         await page.GetByRole(AriaRole.Button, new() { Name = "Start recording", Exact = true }).ClickAsync().ConfigureAwait(false);
 
         // Issue #180 round 3, R8: long enough for a regression (starting the OLD persona's
         // session on this tap) to have shown up, before the fetch is ever released -- nothing may
         // be sent on the OLD socket yet; the tap must still be waiting for the switch to settle.
         await Task.Delay(1000, ct).ConfigureAwait(false);
-        var alphaSentStillPending = (await SentAsync(page, 0)).GetArrayLength();
+        int alphaSentStillPending = (await SentAsync(page, 0)).GetArrayLength();
         Assert.Equal(alphaSentBeforeTap, alphaSentStillPending);
 
         gate.SetResult();
 
-        var secondConnection = await secondConnectionTask;
+        FakeRealtimeConnection? secondConnection = await secondConnectionTask;
         await AssertSwitchDeliveredToNewPersonaAsync(
             page, socketsBeforeSwitch, alphaSentBeforeSwitch, secondConnection, expectEndSessionSent: true, ct).ConfigureAwait(false);
     }
@@ -494,30 +493,30 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
     /// </summary>
     private async Task RunSwitchScenarioDAsync()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (context, page) = await NewPageAsync(fixture.Browser!, ct).ConfigureAwait(false);
-        await using var _ = context;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!, ct).ConfigureAwait(false);
+        await using IBrowserContext _ = context;
 
-        var firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
         await page.GotoAsync($"{fixture.Backend!.BaseUri}?persona={PersonaSwitchBackendFixture.PersonaA}").ConfigureAwait(false);
-        var firstConnection = await firstConnectionTask;
-        Assert.True(firstConnection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        FakeRealtimeConnection? firstConnection = await firstConnectionTask;
+        Assert.True(firstConnection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
-        await UntilAsync(() => SocketCountAsync(page), n => n >= 1, FrameTimeout, "the frontend's first realtime socket to open", ct);
+        await UntilAsync(() => SocketCountAsync(page), n => n >= 1, s_frameTimeout, "the frontend's first realtime socket to open", ct);
         await UntilAsync(
             () => ReceivedAsync(page, 0),
             HasSessionMetadata,
-            FrameTimeout, "extension.session_metadata on the test-alpha socket", ct);
+            s_frameTimeout, "extension.session_metadata on the test-alpha socket", ct);
 
-        var socketsBeforeSwitch = await SocketCountAsync(page);
-        var alphaSentBeforeSwitch = (await SentAsync(page, 0)).GetArrayLength();
+        int socketsBeforeSwitch = await SocketCountAsync(page);
+        int alphaSentBeforeSwitch = (await SentAsync(page, 0)).GetArrayLength();
 
         // Hold socket 0's (test-alpha's) own onclose HANDLER INVOCATION before the switch even
         // starts, so the server's close for extension.end_session (sent moments later) is
         // captured but deferred.
         await page.EvaluateAsync("window.__sockets[0].holdClose = true").ConfigureAwait(false);
 
-        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        Task<FakeRealtimeConnection?> secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
 
         await page.GetByLabel("Select persona").SelectOptionAsync(
             new SelectOptionValue { Value = PersonaSwitchBackendFixture.PersonaB }).ConfigureAwait(false);
@@ -525,11 +524,11 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
         // Wait until the replacement (test-beta) socket exists and is fully OPEN -- entirely
         // independent of the still-deferred old-socket close, since react-use-websocket's
         // url-keyed effect reacts to the prop change itself, not to the old socket's close.
-        var betaIndex = await UntilAsync(
+        int betaIndex = await UntilAsync(
             () => FindPersonaSocketIndexAsync(page, PersonaSwitchBackendFixture.PersonaB, socketsBeforeSwitch, ct),
-            idx => idx >= 0, FrameTimeout, "a test-beta socket to be created", ct);
+            idx => idx >= 0, s_frameTimeout, "a test-beta socket to be created", ct);
         await UntilAsync(() => ReadyStateAsync(page, betaIndex), state => state == 1 /* OPEN */,
-            FrameTimeout, "the test-beta socket to open", ct);
+            s_frameTimeout, "the test-beta socket to open", ct);
 
         // Only now -- after the replacement socket is already live -- let the OLD socket's
         // deferred close handler run: exactly the production bug's ordering.
@@ -537,7 +536,7 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
 
         await page.GetByRole(AriaRole.Button, new() { Name = "Start recording", Exact = true }).ClickAsync().ConfigureAwait(false);
 
-        var secondConnection = await secondConnectionTask;
+        FakeRealtimeConnection? secondConnection = await secondConnectionTask;
         await AssertSwitchDeliveredToNewPersonaAsync(
             page, socketsBeforeSwitch, alphaSentBeforeSwitch, secondConnection, expectEndSessionSent: true, ct).ConfigureAwait(false);
     }
@@ -578,23 +577,23 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
     /// </summary>
     private async Task RunSwitchScenarioEAsync(bool holdFetch)
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (context, page) = await NewPageAsync(fixture.Browser!, ct).ConfigureAwait(false);
-        await using var _ = context;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!, ct).ConfigureAwait(false);
+        await using IBrowserContext _ = context;
 
-        var firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
         await page.GotoAsync($"{fixture.Backend!.BaseUri}?persona={PersonaSwitchBackendFixture.PersonaA}").ConfigureAwait(false);
-        var firstConnection = await firstConnectionTask;
-        Assert.True(firstConnection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        FakeRealtimeConnection? firstConnection = await firstConnectionTask;
+        Assert.True(firstConnection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
-        await UntilAsync(() => SocketCountAsync(page), n => n >= 1, FrameTimeout, "the frontend's first realtime socket to open", ct);
+        await UntilAsync(() => SocketCountAsync(page), n => n >= 1, s_frameTimeout, "the frontend's first realtime socket to open", ct);
         await UntilAsync(
             () => ReceivedAsync(page, 0),
             HasSessionMetadata,
-            FrameTimeout, "extension.session_metadata on the test-alpha socket", ct);
+            s_frameTimeout, "extension.session_metadata on the test-alpha socket", ct);
 
-        var socketsBeforeSwitch = await SocketCountAsync(page);
-        var alphaSentBeforeSwitch = (await SentAsync(page, 0)).GetArrayLength();
+        int socketsBeforeSwitch = await SocketCountAsync(page);
+        int alphaSentBeforeSwitch = (await SentAsync(page, 0)).GetArrayLength();
 
         // Let the first socket run all the way down to the backend's own idle-timeout sweep --
         // by the time the guest ever touches the picker below, `shouldConnect` is already false
@@ -609,7 +608,7 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
             // precondition -- the tap must land before the persona fetch (and therefore the prop
             // change the H5 fix's useEffect keys on) resolves either way.
             gate = new TaskCompletionSource();
-            var localGate = gate;
+            TaskCompletionSource localGate = gate;
             await page.RouteAsync($"**/api/personas/{PersonaSwitchBackendFixture.PersonaB}", async route =>
             {
                 await localGate.Task.ConfigureAwait(false);
@@ -617,7 +616,7 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
             }).ConfigureAwait(false);
         }
 
-        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        Task<FakeRealtimeConnection?> secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
 
         // The real PersonaPicker <select>, exactly as a guest would operate it -- never the URL
         // or a hook called directly.
@@ -634,7 +633,7 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
             gate!.SetResult();
         }
 
-        var secondConnection = await secondConnectionTask;
+        FakeRealtimeConnection? secondConnection = await secondConnectionTask;
         await AssertSwitchDeliveredToNewPersonaAsync(
             page, socketsBeforeSwitch, alphaSentBeforeSwitch, secondConnection, expectEndSessionSent: false, ct).ConfigureAwait(false);
     }
@@ -692,28 +691,28 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
     /// </summary>
     private async Task RunSwitchAfterReloadResumeScenarioAsync()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (context, page) = await NewPageAsync(fixture.Browser!, ct).ConfigureAwait(false);
-        await using var _ = context;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!, ct).ConfigureAwait(false);
+        await using IBrowserContext _ = context;
 
-        var firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
         await page.GotoAsync($"{fixture.Backend!.BaseUri}?persona={PersonaSwitchBackendFixture.PersonaA}").ConfigureAwait(false);
-        var firstConnection = await firstConnectionTask;
-        Assert.True(firstConnection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        FakeRealtimeConnection? firstConnection = await firstConnectionTask;
+        Assert.True(firstConnection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
-        await UntilAsync(() => SocketCountAsync(page), n => n >= 1, FrameTimeout, "the frontend's first realtime socket to open", ct);
+        await UntilAsync(() => SocketCountAsync(page), n => n >= 1, s_frameTimeout, "the frontend's first realtime socket to open", ct);
         await UntilAsync(
             () => ReceivedAsync(page, 0),
             HasSessionMetadata,
-            FrameTimeout, "extension.session_metadata on the test-alpha socket", ct);
+            s_frameTimeout, "extension.session_metadata on the test-alpha socket", ct);
 
         // Build a REAL order against test-alpha: a scripted update_order call, which attaches
         // the item to the SERVER-SIDE session so it genuinely survives the reload below like a
         // guest's real order would, not just pushed as client-side UI state a hand-crafted frame
         // would be. Sourced from test-alpha's own smoke.json (PersonaSmokeTests.cs's own
         // no-persona-literal-in-shared-code convention) rather than a hardcoded item/size/price.
-        var alphaItem = PersonaSmokeExpectations.For(PersonaSwitchBackendFixture.PersonaA);
-        const string callId = "call_switch_after_reload_1";
+        PersonaSmokeExpectations.Expectation alphaItem = PersonaSmokeExpectations.For(PersonaSwitchBackendFixture.PersonaA);
+        const string CallId = "call_switch_after_reload_1";
         firstConnection!.Script.Enqueue(new ResponseScript([
             new FunctionCallEvent(
                 Name: "update_order",
@@ -725,7 +724,7 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
                     quantity = 1,
                     price = alphaItem.OrderableItemPrice,
                 }),
-                CallId: callId),
+                CallId: CallId),
             new DoneEvent(),
         ]));
 
@@ -744,11 +743,11 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
         await UntilAsync(
             () => ReceivedAsync(page, 0),
             received => TypesOf(received).Any(t => t == "extension.middle_tier_tool_response"),
-            FrameTimeout, "extension.middle_tier_tool_response for update_order on the test-alpha socket", ct);
+            s_frameTimeout, "extension.middle_tier_tool_response for update_order on the test-alpha socket", ct);
 
         // The REAL frontend actually rendered the item (not a simulated client-side push).
         await page.GetByText(alphaItem.OrderableItemName).First
-            .WaitForAsync(new() { Timeout = (float)FrameTimeout.TotalMilliseconds }).ConfigureAwait(false);
+            .WaitForAsync(new() { Timeout = (float)s_frameTimeout.TotalMilliseconds }).ConfigureAwait(false);
 
         // Issue #180: before the fix, a non-empty order here would already show "Locked for this
         // order -- start a new order to switch" and disable the picker outright.
@@ -757,30 +756,30 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
 
         // Reload: window.__sockets resets to a fresh array (the init script reruns on every new
         // document), so the post-reload connection is socket index 0 again.
-        var reloadConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        Task<FakeRealtimeConnection?> reloadConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
         await page.ReloadAsync().ConfigureAwait(false);
-        var reloadConnection = await reloadConnectionTask;
-        Assert.True(reloadConnection is not null, $"No upstream connection was accepted on reload within {FrameTimeout}.");
+        FakeRealtimeConnection? reloadConnection = await reloadConnectionTask;
+        Assert.True(reloadConnection is not null, $"No upstream connection was accepted on reload within {s_frameTimeout}.");
 
-        await UntilAsync(() => SocketCountAsync(page), n => n >= 1, FrameTimeout, "the post-reload realtime socket to open", ct);
+        await UntilAsync(() => SocketCountAsync(page), n => n >= 1, s_frameTimeout, "the post-reload realtime socket to open", ct);
         await UntilAsync(
             () => ReceivedAsync(page, 0),
             received => TypesOf(received).Any(t => t == "extension.session_resumed"),
-            FrameTimeout, "extension.session_resumed on the post-reload socket", ct);
+            s_frameTimeout, "extension.session_resumed on the post-reload socket", ct);
 
         // The resumed order survived the reload and rendered again -- and the picker is STILL
         // never disabled (issue #180's actual repro: the lock re-engaged specifically after a
         // reload resumed a non-empty order).
         await page.GetByText(alphaItem.OrderableItemName).First
-            .WaitForAsync(new() { Timeout = (float)FrameTimeout.TotalMilliseconds }).ConfigureAwait(false);
-        var picker = page.GetByLabel("Select persona");
+            .WaitForAsync(new() { Timeout = (float)s_frameTimeout.TotalMilliseconds }).ConfigureAwait(false);
+        ILocator picker = page.GetByLabel("Select persona");
         Assert.True(await picker.IsEnabledAsync().ConfigureAwait(false),
             "The persona picker must never be disabled after a reload resumes a non-empty order (issue #180).");
 
-        var socketsBeforeSwitch = await SocketCountAsync(page);
-        var alphaSentBeforeSwitch = (await SentAsync(page, 0)).GetArrayLength();
+        int socketsBeforeSwitch = await SocketCountAsync(page);
+        int alphaSentBeforeSwitch = (await SentAsync(page, 0)).GetArrayLength();
 
-        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        Task<FakeRealtimeConnection?> secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
 
         // The real PersonaPicker <select>, exactly as a guest would operate it -- never the URL
         // or a hook called directly.
@@ -789,9 +788,9 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
         // Issue #180: a non-empty (here, resumed) order must open the confirm dialog instead of
         // switching immediately (cases A-E2's empty-order path) or silently refusing to switch at
         // all (the old lock).
-        var dialog = page.GetByRole(AriaRole.Dialog);
-        await dialog.WaitForAsync(new() { Timeout = (float)FrameTimeout.TotalMilliseconds }).ConfigureAwait(false);
-        var dialogText = await dialog.InnerTextAsync().ConfigureAwait(false);
+        ILocator dialog = page.GetByRole(AriaRole.Dialog);
+        await dialog.WaitForAsync(new() { Timeout = (float)s_frameTimeout.TotalMilliseconds }).ConfigureAwait(false);
+        string dialogText = await dialog.InnerTextAsync().ConfigureAwait(false);
         // Generic, pack-driven copy (issue #180: no brand words in this shared-code dialog) --
         // "Test Beta Burger Co." is test-beta's own persona.json displayName, the only
         // persona-specific detail the dialog surfaces.
@@ -806,7 +805,7 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
         // component's doc comment), then re-select test-beta to reopen the dialog and continue
         // the rest of this scenario exactly as before.
         await dialog.GetByRole(AriaRole.Button, new() { Name = "Cancel", Exact = true }).ClickAsync().ConfigureAwait(false);
-        await dialog.WaitForAsync(new() { State = WaitForSelectorState.Hidden, Timeout = (float)FrameTimeout.TotalMilliseconds })
+        await dialog.WaitForAsync(new() { State = WaitForSelectorState.Hidden, Timeout = (float)s_frameTimeout.TotalMilliseconds })
             .ConfigureAwait(false);
         // Radix's unmount/focus-restore runs one tick after the dialog itself reports hidden --
         // WaitForFunctionAsync polls instead of taking a single immediate snapshot, which flaked
@@ -814,25 +813,25 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
         await page.WaitForFunctionAsync(
                 "() => document.activeElement && document.activeElement.id === 'persona-picker'",
                 null,
-                new() { Timeout = (float)FrameTimeout.TotalMilliseconds })
+                new() { Timeout = (float)s_frameTimeout.TotalMilliseconds })
             .ConfigureAwait(false);
-        var activeElementId = await page.EvaluateAsync<string?>("document.activeElement ? document.activeElement.id : null")
+        string? activeElementId = await page.EvaluateAsync<string?>("document.activeElement ? document.activeElement.id : null")
             .ConfigureAwait(false);
         Assert.Equal("persona-picker", activeElementId);
 
         await picker.SelectOptionAsync(new SelectOptionValue { Value = PersonaSwitchBackendFixture.PersonaB }).ConfigureAwait(false);
-        await dialog.WaitForAsync(new() { Timeout = (float)FrameTimeout.TotalMilliseconds }).ConfigureAwait(false);
+        await dialog.WaitForAsync(new() { Timeout = (float)s_frameTimeout.TotalMilliseconds }).ConfigureAwait(false);
 
         await dialog.GetByRole(AriaRole.Button, new() { Name = "Switch", Exact = true }).ClickAsync().ConfigureAwait(false);
 
         await page.GetByRole(AriaRole.Button, new() { Name = "Start recording", Exact = true }).ClickAsync().ConfigureAwait(false);
 
-        var secondConnection = await secondConnectionTask;
+        FakeRealtimeConnection? secondConnection = await secondConnectionTask;
         await AssertSwitchDeliveredToNewPersonaAsync(
             page, socketsBeforeSwitch, alphaSentBeforeSwitch, secondConnection, expectEndSessionSent: true, ct).ConfigureAwait(false);
 
         // No leak: test-alpha's resumed order never carries over into the test-beta session.
-        var bodyText = await page.Locator("body").InnerTextAsync().ConfigureAwait(false);
+        string bodyText = await page.Locator("body").InnerTextAsync().ConfigureAwait(false);
         Assert.DoesNotContain(alphaItem.OrderableItemName, bodyText, StringComparison.Ordinal);
     }
 

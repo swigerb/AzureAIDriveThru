@@ -48,7 +48,7 @@ public sealed class NudgeSchedulerTests
         var h = new Harness();
         h.Scheduler.Arm();
         Assert.True(h.Scheduler.Pending);
-        var pendingBefore = h.Scheduler.Pending;
+        bool pendingBefore = h.Scheduler.Pending;
         h.Scheduler.Arm(); // must not re-schedule / reset the clock
         Assert.Equal(pendingBefore, h.Scheduler.Pending);
     }
@@ -86,8 +86,10 @@ public sealed class NudgeSchedulerTests
     [Fact]
     public async Task Fires_Skipped_WhenRateLimitBusy()
     {
-        var h = new Harness(nudgeAfterSeconds: 1.0);
-        h.RateLimitBusy = true;
+        var h = new Harness(nudgeAfterSeconds: 1.0)
+        {
+            RateLimitBusy = true
+        };
         h.Scheduler.Arm();
         h.SessionConfigured.SetResult(true);
         h.Time.Advance(TimeSpan.FromSeconds(1.5));
@@ -128,7 +130,7 @@ public sealed class NudgeSchedulerTests
         h.Scheduler.Arm();
         h.SessionConfigured.SetResult(true);
 
-        var syncRoot = h.Scheduler.SyncRootForTests;
+        Lock syncRoot = h.Scheduler.SyncRootForTests;
         Task advanceTask;
         using (syncRoot.EnterScope())
         {
@@ -137,7 +139,7 @@ public sealed class NudgeSchedulerTests
             h.Scheduler.Cancel("guest speech_started");
         }
 
-        var finished = await Task.WhenAny(advanceTask, Task.Delay(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken)) == advanceTask;
+        bool finished = await Task.WhenAny(advanceTask, Task.Delay(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken)) == advanceTask;
         Assert.True(finished, "the stale continuation deadlocked instead of returning once superseded");
         await advanceTask;
 
@@ -148,7 +150,7 @@ public sealed class NudgeSchedulerTests
 
     private static async Task WaitUntilAsync(Func<bool> condition, int timeoutMs = 2000)
     {
-        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        DateTime deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
         while (!condition() && DateTime.UtcNow < deadline)
         {
             await Task.Delay(10);

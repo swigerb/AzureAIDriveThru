@@ -20,8 +20,8 @@ public sealed class RealtimeUriLiteralScannerTests
         // hand-builds an uncredentialed "/realtime" literal from unrelated variables. The old
         // "RealtimeUris. appears anywhere earlier in the file" exemption let this through; it must
         // now be a violation.
-        var lines = new[]
-        {
+        string[] lines =
+        [
             "public sealed class SyntheticTests",
             "{",
             "    public async Task Legit_call_site()",
@@ -36,19 +36,19 @@ public sealed class RealtimeUriLiteralScannerTests
             "        await socket.ConnectAsync(badUri, ct);",
             "    }",
             "}",
-        };
+        ];
 
-        var violations = RealtimeUriLiteralScanner.Scan("Scenarios/Security/SyntheticTests.cs", lines);
+        IReadOnlyList<string> violations = RealtimeUriLiteralScanner.Scan("Scenarios/Security/SyntheticTests.cs", lines);
 
-        var violation = Assert.Single(violations);
+        string violation = Assert.Single(violations);
         Assert.Contains(":11:", violation);
     }
 
     [Fact]
     public void The_ModelSelectionConformanceTests_splice_site_is_not_a_violation()
     {
-        var lines = new[]
-        {
+        string[] lines =
+        [
             "    public static async Task<string> RealtimeConnectBodyAsync(",
             "        Uri backendBaseUri, string query, HttpStatusCode expectedStatus, CancellationToken ct)",
             "    {",
@@ -57,9 +57,9 @@ public sealed class RealtimeUriLiteralScannerTests
             "        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(backendBaseUri, $\"/realtime?{fullQuery}\"));",
             "        request.Headers.TryAddWithoutValidation(\"Connection\", \"Upgrade\");",
             "    }",
-        };
+        ];
 
-        var violations = RealtimeUriLiteralScanner.Scan(
+        IReadOnlyList<string> violations = RealtimeUriLiteralScanner.Scan(
             "tests/conformance/tests/Conformance.Tests/Scenarios/Sessions/ModelSelectionConformanceTests.cs", lines);
 
         Assert.Empty(violations);
@@ -68,16 +68,16 @@ public sealed class RealtimeUriLiteralScannerTests
     [Fact]
     public void The_HeartbeatPongSurvivalTests_splice_site_is_not_a_violation()
     {
-        var lines = new[]
-        {
+        string[] lines =
+        [
             "        var query = await RealtimeUris.BuildQueryAsync(backendUri, cancellationToken: ct);",
             "        var request =",
             "            $\"GET /realtime?{query} HTTP/1.1\\r\\n\" +",
             "            $\"Host: {backendUri.Host}:{backendUri.Port}\\r\\n\" +",
             "            \"Upgrade: websocket\\r\\n\";",
-        };
+        ];
 
-        var violations = RealtimeUriLiteralScanner.Scan(
+        IReadOnlyList<string> violations = RealtimeUriLiteralScanner.Scan(
             "tests/conformance/tests/Conformance.Tests/Scenarios/Transport/HeartbeatPongSurvivalTests.cs", lines);
 
         Assert.Empty(violations);
@@ -91,16 +91,16 @@ public sealed class RealtimeUriLiteralScannerTests
         // deliberately portless Host header), mirroring HeartbeatPongSurvivalTests.cs's own
         // already-approved splice exactly -- including building the query via
         // RealtimeUris.BuildQueryAsync first, so the request still carries the default credentials.
-        var lines = new[]
-        {
+        string[] lines =
+        [
             "        var query = await RealtimeUris.BuildQueryAsync(backend, cancellationToken: ct);",
             "        var request =",
             "            $\"GET /realtime?{query} HTTP/1.1\\r\\n\" +",
             "            $\"Host: {backend.Host}\\r\\n\" +",
             "            \"Upgrade: websocket\\r\\n\";",
-        };
+        ];
 
-        var violations = RealtimeUriLiteralScanner.Scan(
+        IReadOnlyList<string> violations = RealtimeUriLiteralScanner.Scan(
             "tests/conformance/tests/Conformance.Tests/Scenarios/Security/OriginValidationTests.cs", lines);
 
         Assert.Empty(violations);
@@ -112,12 +112,12 @@ public sealed class RealtimeUriLiteralScannerTests
         // The allow-list is keyed by (file name, exact trimmed line) -- the same literal line
         // showing up in some other file is not automatically trusted just because it matches one
         // of the known-good shapes textually.
-        var lines = new[]
-        {
+        string[] lines =
+        [
             "using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(backendBaseUri, $\"/realtime?{fullQuery}\"));",
-        };
+        ];
 
-        var violations = RealtimeUriLiteralScanner.Scan(
+        IReadOnlyList<string> violations = RealtimeUriLiteralScanner.Scan(
             "Scenarios/Security/SomeOtherFile.cs", lines);
 
         Assert.Single(violations);
@@ -130,29 +130,29 @@ public sealed class RealtimeUriLiteralScannerTests
         // Scenarios/Security/OriginValidationTests.cs:78 (PR #158 round 2 review, N2): being on the
         // allow-list for ONE specific line must not exempt a second, unrelated hand-built literal
         // elsewhere in the same file.
-        var lines = new[]
-        {
+        string[] lines =
+        [
             "        var query = await RealtimeUris.BuildQueryAsync(backend, cancellationToken: ct);",
             "        var request =",
             "            $\"GET /realtime?{query} HTTP/1.1\\r\\n\" +",
             "            \"Host: whatever\\r\\n\\r\\n\";",
             "",
             "        var badUri = new Uri($\"ws://{backend.Host}:{backend.Port}/realtime\");",
-        };
+        ];
 
-        var violations = RealtimeUriLiteralScanner.Scan(
+        IReadOnlyList<string> violations = RealtimeUriLiteralScanner.Scan(
             "tests/conformance/tests/Conformance.Tests/Scenarios/Security/OriginValidationTests.cs", lines);
 
-        var violation = Assert.Single(violations);
+        string violation = Assert.Single(violations);
         Assert.Contains(":6:", violation);
     }
 
     [Fact]
     public void A_comment_line_is_not_a_violation()
     {
-        var violations = RealtimeUriLiteralScanner.Scan(
+        IReadOnlyList<string> violations = RealtimeUriLiteralScanner.Scan(
             "Scenarios/Security/SyntheticTests.cs",
-            new[] { "        // await RealtimeUris.WithDefaultCredentialsAsync gives us /realtime\"" });
+            ["        // await RealtimeUris.WithDefaultCredentialsAsync gives us /realtime\""]);
 
         Assert.Empty(violations);
     }
@@ -160,9 +160,9 @@ public sealed class RealtimeUriLiteralScannerTests
     [Fact]
     public void An_assert_contains_line_is_not_a_violation()
     {
-        var violations = RealtimeUriLiteralScanner.Scan(
+        IReadOnlyList<string> violations = RealtimeUriLiteralScanner.Scan(
             "Scenarios/Security/SyntheticTests.cs",
-            new[] { "        Assert.Contains(\"/realtime\", requestPath);" });
+            ["        Assert.Contains(\"/realtime\", requestPath);"]);
 
         Assert.Empty(violations);
     }
@@ -170,9 +170,9 @@ public sealed class RealtimeUriLiteralScannerTests
     [Fact]
     public void A_server_side_absolute_path_inspection_is_not_a_violation()
     {
-        var violations = RealtimeUriLiteralScanner.Scan(
+        IReadOnlyList<string> violations = RealtimeUriLiteralScanner.Scan(
             "Scenarios/Security/SyntheticTests.cs",
-            new[] { "        if (context.Request.Url!.AbsolutePath == \"/realtime\")" });
+            ["        if (context.Request.Url!.AbsolutePath == \"/realtime\")"]);
 
         Assert.Empty(violations);
     }
@@ -180,9 +180,9 @@ public sealed class RealtimeUriLiteralScannerTests
     [Fact]
     public void The_fake_upstream_openai_v1_realtime_path_is_not_a_violation()
     {
-        var violations = RealtimeUriLiteralScanner.Scan(
+        IReadOnlyList<string> violations = RealtimeUriLiteralScanner.Scan(
             "Scenarios/Security/SyntheticTests.cs",
-            new[] { "        listener.Prefixes.Add($\"http://localhost:{port}/openai/v1/realtime\");" });
+            ["        listener.Prefixes.Add($\"http://localhost:{port}/openai/v1/realtime\");"]);
 
         Assert.Empty(violations);
     }

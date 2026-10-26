@@ -15,7 +15,7 @@ public sealed class MenuIndexResolveIndexPathsTests
 {
     private static string CreatePersona(string root, string personaId, string indexName)
     {
-        var dir = Path.Combine(root, personaId);
+        string dir = Path.Combine(root, personaId);
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "persona.json"),
             $$"""{ "search": { "indexName": "{{indexName}}" } }""");
@@ -25,13 +25,13 @@ public sealed class MenuIndexResolveIndexPathsTests
     [Fact]
     public void Maps_each_persona_to_its_own_index_name_and_menu_items_json_path()
     {
-        var root = Path.Combine(Path.GetTempPath(), "menu-index-test-" + Guid.NewGuid());
+        string root = Path.Combine(Path.GetTempPath(), "menu-index-test-" + Guid.NewGuid());
         try
         {
             CreatePersona(root, "sonic", "sonic-menu-items");
             CreatePersona(root, "test-alpha", "test-alpha-menu-items");
 
-            var result = MenuIndex.ResolveIndexPaths(root, ["sonic", "test-alpha"]);
+            IReadOnlyDictionary<string, string> result = MenuIndex.ResolveIndexPaths(root, ["sonic", "test-alpha"]);
 
             Assert.Equal(2, result.Count);
             Assert.Equal(Path.Combine(root, "sonic", "menu", "menuItems.json"), result["sonic-menu-items"]);
@@ -53,13 +53,13 @@ public sealed class MenuIndexResolveIndexPathsTests
     [Fact]
     public void Throws_when_two_different_personas_declare_the_same_index_name()
     {
-        var root = Path.Combine(Path.GetTempPath(), "menu-index-test-" + Guid.NewGuid());
+        string root = Path.Combine(Path.GetTempPath(), "menu-index-test-" + Guid.NewGuid());
         try
         {
             CreatePersona(root, "test-alpha", "shared-index");
             CreatePersona(root, "test-beta", "shared-index");
 
-            var ex = Assert.Throws<InvalidOperationException>(
+            InvalidOperationException ex = Assert.Throws<InvalidOperationException>(
                 () => MenuIndex.ResolveIndexPaths(root, ["test-alpha", "test-beta"]));
 
             Assert.Contains("shared-index", ex.Message);
@@ -78,12 +78,12 @@ public sealed class MenuIndexResolveIndexPathsTests
         // Defence in depth: re-resolving the SAME persona id (e.g. a caller passing a
         // duplicate-but-identical id list) must not be mistaken for a genuine cross-persona
         // collision -- only two DIFFERENT persona ids sharing one index name is the bug.
-        var root = Path.Combine(Path.GetTempPath(), "menu-index-test-" + Guid.NewGuid());
+        string root = Path.Combine(Path.GetTempPath(), "menu-index-test-" + Guid.NewGuid());
         try
         {
             CreatePersona(root, "sonic", "sonic-menu-items");
 
-            var result = MenuIndex.ResolveIndexPaths(root, ["sonic", "sonic"]);
+            IReadOnlyDictionary<string, string> result = MenuIndex.ResolveIndexPaths(root, ["sonic", "sonic"]);
 
             Assert.Single(result);
         }

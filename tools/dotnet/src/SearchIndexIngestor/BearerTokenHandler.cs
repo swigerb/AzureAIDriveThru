@@ -26,7 +26,7 @@ internal sealed class BearerTokenHandler : DelegatingHandler
 {
     private readonly TokenCredential _credential;
     private readonly string[] _scopes;
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private AccessToken? _cachedToken;
 
     public BearerTokenHandler(TokenCredential credential, string scope, HttpMessageHandler innerHandler)
@@ -39,7 +39,7 @@ internal sealed class BearerTokenHandler : DelegatingHandler
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        var token = await GetTokenAsync(cancellationToken).ConfigureAwait(false);
+        string token = await GetTokenAsync(cancellationToken).ConfigureAwait(false);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
     }
@@ -57,7 +57,7 @@ internal sealed class BearerTokenHandler : DelegatingHandler
             }
         }
 
-        var fresh = await _credential.GetTokenAsync(new TokenRequestContext(_scopes), cancellationToken)
+        AccessToken fresh = await _credential.GetTokenAsync(new TokenRequestContext(_scopes), cancellationToken)
             .ConfigureAwait(false);
         lock (_gate)
         {

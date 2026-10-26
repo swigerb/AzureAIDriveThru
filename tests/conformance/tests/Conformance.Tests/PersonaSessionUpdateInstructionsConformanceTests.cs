@@ -1,4 +1,3 @@
-using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Conformance.Fakes;
@@ -39,7 +38,7 @@ internal static class PersonaSessionUpdateExpectations
 {
     public sealed record Expectation(string InstructionsSubstring);
 
-    private static readonly JsonSerializerOptions Options = new()
+    private static readonly JsonSerializerOptions s_options = new()
     {
         PropertyNameCaseInsensitive = true,
         NumberHandling = JsonNumberHandling.AllowReadingFromString,
@@ -53,7 +52,7 @@ internal static class PersonaSessionUpdateExpectations
     /// </summary>
     public static Expectation For(string personaId)
     {
-        var path = RepoPaths.PersonaSmokeDataPath(RepoPaths.FindRepoRoot(), personaId);
+        string path = RepoPaths.PersonaSmokeDataPath(RepoPaths.FindRepoRoot(), personaId);
         Assert.True(File.Exists(path),
             $"PersonaSessionUpdateInstructionsConformanceTests.cs's PersonaSessionUpdateExpectations.For('{personaId}') " +
             $"found no data file at '{path}'. Add an \"instructionsSubstring\" field to it (a short, " +
@@ -61,10 +60,10 @@ internal static class PersonaSessionUpdateExpectations
             "IDENTITY section, priority 1 -- e.g. that section's first sentence, stopping before any " +
             "punctuation not safe to embed in a C# assertion).");
 
-        var json = File.ReadAllText(path);
-        var expectation = JsonSerializer.Deserialize<Expectation>(json, Options);
+        string json = File.ReadAllText(path);
+        Expectation? expectation = JsonSerializer.Deserialize<Expectation>(json, s_options);
         Assert.True(expectation is not null, $"'{path}' deserialized to null.");
-        Assert.False(string.IsNullOrWhiteSpace(expectation!.InstructionsSubstring),
+        Assert.False(string.IsNullOrWhiteSpace(expectation.InstructionsSubstring),
             $"'{path}' is missing a non-empty \"instructionsSubstring\" field.");
         return expectation;
     }
@@ -81,28 +80,28 @@ file static class PersonaSessionUpdateInstructionsScenario
     public static async Task RunAsync(
         ConformanceFixture fixture, string personaId, IReadOnlyList<string> allPersonaIdsOnThisFixture, CancellationToken ct)
     {
-        var expected = PersonaSessionUpdateExpectations.For(personaId);
-        var greetingExpected = PersonaSmokeExpectations.For(personaId);
+        PersonaSessionUpdateExpectations.Expectation expected = PersonaSessionUpdateExpectations.For(personaId);
+        PersonaSmokeExpectations.Expectation greetingExpected = PersonaSmokeExpectations.For(personaId);
 
-        var (browser, connection, _) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+        (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int _) = await OrderScenarioHelpers.ConnectAndGreetAsync(
             fixture, ct, persona: personaId);
-        await using var _browser = browser;
+        await using RealtimeBrowserClient _browser = browser;
 
         // The browser-triggered session.update (Sequence > 0 -- Sequence 0 is the middle tier's
         // own bootstrap session.update, sent before any client traffic is relayed). Same idiom as
         // SmokeSessionBootstrapTests.cs's Greeting_response_create_arrives_only_after_the_browser_
         // session_update, which proves this frame is forwarded but never inspects `instructions`.
-        var sessionUpdate = connection.ReceivedFrames.Snapshot().FirstOrDefault(f =>
+        RecordedFrame? sessionUpdate = connection.ReceivedFrames.Snapshot().FirstOrDefault(f =>
             f.Sequence > 0 && f.Type == "session.update");
         Assert.True(sessionUpdate is not null,
             $"No browser-triggered session.update was forwarded upstream for persona '{personaId}'.");
 
-        var session = sessionUpdate!.Json.GetProperty("session");
-        Assert.True(session.TryGetProperty("instructions", out var instructionsProp),
+        JsonElement session = sessionUpdate.Json.GetProperty("session");
+        Assert.True(session.TryGetProperty("instructions", out JsonElement instructionsProp),
             $"The session.update forwarded upstream for persona '{personaId}' carried no " +
             "'instructions' at all -- #170 regressed (the bound persona's system prompt is " +
             "no longer threaded through the client-update rebuild).");
-        var instructions = instructionsProp.GetString();
+        string? instructions = instructionsProp.GetString();
         Assert.True(!string.IsNullOrEmpty(instructions),
             $"The session.update forwarded upstream for persona '{personaId}' carried empty " +
             "'instructions'.");
@@ -112,21 +111,21 @@ file static class PersonaSessionUpdateInstructionsScenario
 
         // The live bug's exact symptom: no OTHER enabled persona's identity text leaked in --
         // i.e. the deployment default (or any other bound persona) never silently substituted.
-        foreach (var otherId in allPersonaIdsOnThisFixture)
+        foreach (string otherId in allPersonaIdsOnThisFixture)
         {
             if (otherId == personaId)
             {
                 continue;
             }
 
-            var other = PersonaSessionUpdateExpectations.For(otherId);
+            PersonaSessionUpdateExpectations.Expectation other = PersonaSessionUpdateExpectations.For(otherId);
             Assert.DoesNotContain(other.InstructionsSubstring, instructions);
         }
 
         // The greeting round trip (already awaited by ConnectAndGreetAsync) must match the SAME
         // pack too -- proves the instructions check above and the greeting can't silently
         // disagree about which persona this session is actually bound to.
-        var greetingText = OrderScenarioHelpers.GreetingInstructions(connection);
+        string greetingText = OrderScenarioHelpers.GreetingInstructions(connection);
         Assert.Contains(greetingExpected.GreetingSubstring, greetingText);
     }
 }
@@ -139,7 +138,7 @@ public sealed class RealPackPersonaSessionUpdateConformanceTests(ConformanceFixt
     public static TheoryData<string> DiscoveredPersonaIds()
     {
         var data = new TheoryData<string>();
-        foreach (var id in ConformancePersonas.DiscoverFromDisk())
+        foreach (string id in ConformancePersonas.DiscoverFromDisk())
         {
             data.Add(id);
         }
@@ -160,7 +159,7 @@ public sealed class RealPackPersonaSessionUpdateConformanceTests(ConformanceFixt
 [Collection(TwoPersonaConformanceCollection.Name)]
 public sealed class FixturePackPersonaSessionUpdateConformanceTests(TwoPersonaConformanceFixture fixture)
 {
-    private static readonly IReadOnlyList<string> FixturePersonaIds =
+    private static readonly IReadOnlyList<string> s_fixturePersonaIds =
     [
         TwoPersonaConformanceFixture.PersonaA,
         TwoPersonaConformanceFixture.PersonaB,
@@ -181,5 +180,5 @@ public sealed class FixturePackPersonaSessionUpdateConformanceTests(TwoPersonaCo
     [MemberData(nameof(FixturePersonaIdsData))]
     public Task Client_session_update_carries_the_bound_personas_own_instructions(string personaId) => fixture.RunAsync(
         () => PersonaSessionUpdateInstructionsScenario.RunAsync(
-            fixture, personaId, FixturePersonaIds, TestContext.Current.CancellationToken));
+            fixture, personaId, s_fixturePersonaIds, TestContext.Current.CancellationToken));
 }

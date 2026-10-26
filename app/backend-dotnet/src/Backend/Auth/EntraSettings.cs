@@ -42,18 +42,18 @@ internal sealed record EntraSettings(
     private const string DefaultApiScope = "access_as_user";
     private const string DefaultAppRole = "DriveThru.User";
 
-    private static readonly Regex GuidRegex = new(
+    private static readonly Regex s_guidRegex = new(
         @"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    private static readonly Regex PlaceholderWordsRegex = new(
+    private static readonly Regex s_placeholderWordsRegex = new(
         @"(your[-_]?|placeholder|changeme|example|todo|xxxx+|\bfixme\b)",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    private static readonly Regex AngleOrWhitespaceRegex = new(@"[<>]|\s", RegexOptions.Compiled);
+    private static readonly Regex s_angleOrWhitespaceRegex = new(@"[<>]|\s", RegexOptions.Compiled);
 
-    private static readonly HashSet<string> LoopbackHosts =
-        new(StringComparer.OrdinalIgnoreCase) { "127.0.0.1", "::1", "localhost" };
+    private static readonly HashSet<string> s_loopbackHosts =
+        [with(StringComparer.OrdinalIgnoreCase), "127.0.0.1", "::1", "localhost"];
 
     /// <summary>entra_auth.py's EntraSettings.issuer: f"{instance}{tenant_id}/v2.0".</summary>
     public string Issuer => $"{Instance}{TenantId}/v2.0";
@@ -67,18 +67,18 @@ internal sealed record EntraSettings(
     /// </summary>
     private static bool IsPlaceholder(string value)
     {
-        var trimmed = value.Trim();
+        string trimmed = value.Trim();
         if (trimmed.Length == 0 || trimmed == EmptyGuid)
         {
             return true;
         }
 
-        if (AngleOrWhitespaceRegex.IsMatch(trimmed))
+        if (s_angleOrWhitespaceRegex.IsMatch(trimmed))
         {
             return true;
         }
 
-        return PlaceholderWordsRegex.IsMatch(trimmed);
+        return s_placeholderWordsRegex.IsMatch(trimmed);
     }
 
     /// <summary>
@@ -88,15 +88,15 @@ internal sealed record EntraSettings(
     /// </summary>
     public static string? ValidateEntraIds(string tenantId, string clientId)
     {
-        var tenant = tenantId.Trim();
-        var client = clientId.Trim();
+        string tenant = tenantId.Trim();
+        string client = clientId.Trim();
 
         if (IsPlaceholder(tenant))
         {
             return "ENTRA_TENANT_ID is missing or looks like a placeholder value.";
         }
 
-        if (!GuidRegex.IsMatch(tenant))
+        if (!s_guidRegex.IsMatch(tenant))
         {
             return "ENTRA_TENANT_ID is not a valid GUID.";
         }
@@ -106,7 +106,7 @@ internal sealed record EntraSettings(
             return "ENTRA_CLIENT_ID is missing or looks like a placeholder value.";
         }
 
-        if (!GuidRegex.IsMatch(client))
+        if (!s_guidRegex.IsMatch(client))
         {
             return "ENTRA_CLIENT_ID is not a valid GUID.";
         }
@@ -120,12 +120,12 @@ internal sealed record EntraSettings(
     /// </summary>
     private static string ValidateInstance(string raw)
     {
-        var value = raw.Trim();
-        var isValidHttps = Uri.TryCreate(value, UriKind.Absolute, out var parsed)
+        string value = raw.Trim();
+        bool isValidHttps = Uri.TryCreate(value, UriKind.Absolute, out Uri? parsed)
             && string.Equals(parsed.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
-        var isValidLoopbackHttp = parsed is not null
+        bool isValidLoopbackHttp = parsed is not null
             && string.Equals(parsed.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
-            && LoopbackHosts.Contains(parsed.Host);
+            && s_loopbackHosts.Contains(parsed.Host);
 
         if (!isValidHttps && !isValidLoopbackHttp)
         {
@@ -147,17 +147,17 @@ internal sealed record EntraSettings(
     /// </summary>
     public static EntraSettings Resolve(Func<string, string?> getEnv, bool isProduction)
     {
-        var rawMode = (getEnv("AUTH_MODE") ?? string.Empty).Trim();
-        var normalizedMode = rawMode.ToLowerInvariant();
+        string rawMode = (getEnv("AUTH_MODE") ?? string.Empty).Trim();
+        string normalizedMode = rawMode.ToLowerInvariant();
         if (normalizedMode is not ("" or "entra" or "development"))
         {
             throw new EntraConfigException($"Unknown AUTH_MODE \"{rawMode}\". Expected \"Entra\" or \"Development\".");
         }
 
-        var tenantId = (getEnv("ENTRA_TENANT_ID") ?? string.Empty).Trim();
-        var clientId = (getEnv("ENTRA_CLIENT_ID") ?? string.Empty).Trim();
-        var idsBlank = tenantId.Length == 0 && clientId.Length == 0;
-        var idsError = idsBlank ? null : ValidateEntraIds(tenantId, clientId);
+        string tenantId = (getEnv("ENTRA_TENANT_ID") ?? string.Empty).Trim();
+        string clientId = (getEnv("ENTRA_CLIENT_ID") ?? string.Empty).Trim();
+        bool idsBlank = tenantId.Length == 0 && clientId.Length == 0;
+        string? idsError = idsBlank ? null : ValidateEntraIds(tenantId, clientId);
 
         // #163 N4 (Python follow-up, mirrored here for #147 parity): normalize to lower case.
         // ValidateEntraIds/GuidRegex are already case-insensitive, but a real Entra token's
@@ -176,7 +176,7 @@ internal sealed record EntraSettings(
         {
             if (idsBlank || idsError is not null)
             {
-                var detail = idsError is not null ? $" {idsError}" : string.Empty;
+                string detail = idsError is not null ? $" {idsError}" : string.Empty;
                 throw new EntraConfigException(
                     $"AUTH_MODE=Entra requires non-empty, valid ENTRA_TENANT_ID and ENTRA_CLIENT_ID.{detail}");
             }
@@ -243,14 +243,14 @@ internal sealed record EntraSettings(
             throw new EntraConfigException("APP_SESSION_SECRET is required in Production Entra mode.");
         }
 
-        var instanceRaw = getEnv("ENTRA_INSTANCE");
-        var instance = ValidateInstance(string.IsNullOrEmpty(instanceRaw) ? DefaultInstance : instanceRaw);
+        string? instanceRaw = getEnv("ENTRA_INSTANCE");
+        string instance = ValidateInstance(string.IsNullOrEmpty(instanceRaw) ? DefaultInstance : instanceRaw);
 
-        var apiScopeRaw = getEnv("ENTRA_API_SCOPE");
-        var apiScope = string.IsNullOrEmpty(apiScopeRaw) ? DefaultApiScope : apiScopeRaw;
+        string? apiScopeRaw = getEnv("ENTRA_API_SCOPE");
+        string apiScope = string.IsNullOrEmpty(apiScopeRaw) ? DefaultApiScope : apiScopeRaw;
 
-        var appRoleRaw = getEnv("ENTRA_APP_ROLE");
-        var appRole = string.IsNullOrEmpty(appRoleRaw) ? DefaultAppRole : appRoleRaw;
+        string? appRoleRaw = getEnv("ENTRA_APP_ROLE");
+        string appRole = string.IsNullOrEmpty(appRoleRaw) ? DefaultAppRole : appRoleRaw;
 
         return mode == EntraMode.Development
             ? new EntraSettings(mode, null, null, apiScope, appRole, instance)

@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Globalization;
-using System.Net.Http;
 using System.Text.RegularExpressions;
 
 namespace Conformance.Harness;
@@ -32,8 +31,8 @@ internal sealed class PortBindRaceException(string message) : Exception(message)
 /// <summary>Starts the Python backend (app/backend, via .venv) on a free port, pointed at the fakes.</summary>
 public static class PythonBackendLauncher
 {
-    private static readonly TimeSpan HealthTimeout = TimeSpan.FromSeconds(60);
-    private static readonly TimeSpan HealthPollInterval = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan s_healthTimeout = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan s_healthPollInterval = TimeSpan.FromMilliseconds(250);
 
     /// <summary>
     /// Issue #259: matches aiohttp's own `web.run_app` startup banner (a plain `print()` to
@@ -45,7 +44,7 @@ public static class PythonBackendLauncher
     /// resolves to the real OS-assigned port once bound, even when 0 was requested -- so this
     /// banner always names the actual listening port, never the literal "0" that was asked for.
     /// </summary>
-    private static readonly Regex RunningOnPortPattern = new(
+    private static readonly Regex s_runningOnPortPattern = new(
         @"Running on https?://[^\s:]+:(\d+)", RegexOptions.Compiled);
 
     /// <summary>
@@ -75,18 +74,18 @@ public static class PythonBackendLauncher
     /// </summary>
     internal static Action<ProcessStartInfo>? TestOnlyProcessStartInfoObserver
     {
-        get => TestOnlyProcessStartInfoObserverLocal.Value;
-        set => TestOnlyProcessStartInfoObserverLocal.Value = value;
+        get => s_testOnlyProcessStartInfoObserverLocal.Value;
+        set => s_testOnlyProcessStartInfoObserverLocal.Value = value;
     }
 
-    private static readonly AsyncLocal<Action<ProcessStartInfo>?> TestOnlyProcessStartInfoObserverLocal = new();
+    private static readonly AsyncLocal<Action<ProcessStartInfo>?> s_testOnlyProcessStartInfoObserverLocal = new();
 
     public static async Task<IBackendUnderTest> StartAsync(
         BackendContract contract, PythonBackendOptions options, CancellationToken cancellationToken = default)
     {
-        var repoRoot = RepoPaths.FindRepoRoot();
-        var backendDir = RepoPaths.BackendDirectory(repoRoot);
-        var pythonExe = RepoPaths.PythonExecutable(repoRoot);
+        string repoRoot = RepoPaths.FindRepoRoot();
+        string backendDir = RepoPaths.BackendDirectory(repoRoot);
+        string pythonExe = RepoPaths.PythonExecutable(repoRoot);
         if (!File.Exists(pythonExe))
         {
             throw new FileNotFoundException(
@@ -94,7 +93,7 @@ public static class PythonBackendLauncher
                 $"{Path.Combine(repoRoot, ".venv")} (see the repo README for setup).", pythonExe);
         }
 
-        var staticIndexHtml = RepoPaths.FrontendStaticIndexHtmlPath(repoRoot);
+        string staticIndexHtml = RepoPaths.FrontendStaticIndexHtmlPath(repoRoot);
         if (!File.Exists(staticIndexHtml))
         {
             throw new InvalidOperationException(
@@ -108,8 +107,8 @@ public static class PythonBackendLauncher
                 "\"backend exited early\" failure.");
         }
 
-        var attemptContract = contract;
-        for (var attempt = 1; ; attempt++)
+        BackendContract attemptContract = contract;
+        for (int attempt = 1; ; attempt++)
         {
             try
             {
@@ -136,7 +135,7 @@ public static class PythonBackendLauncher
         BackendContract contract, PythonBackendOptions options, string backendDir, string pythonExe,
         CancellationToken cancellationToken)
     {
-        var env = BackendEnvironment.Build(contract, options);
+        Dictionary<string, string> env = BackendEnvironment.Build(contract, options);
         var startInfo = new ProcessStartInfo(pythonExe, "app.py")
         {
             WorkingDirectory = backendDir,
@@ -155,7 +154,7 @@ public static class PythonBackendLauncher
         // categories either comes from `env` (explicit, known-good) or wasn't set at all.
         InheritedEnvironmentFilter.Apply(startInfo);
 
-        foreach (var (key, value) in env)
+        foreach ((string? key, string? value) in env)
         {
             startInfo.Environment[key] = value;
         }
@@ -173,7 +172,7 @@ public static class PythonBackendLauncher
         var output = new CapturedProcessOutput();
         output.Attach(process);
 
-        var startedAt = DateTimeOffset.UtcNow;
+        DateTimeOffset startedAt = DateTimeOffset.UtcNow;
         if (!process.Start())
         {
             throw new InvalidOperationException($"Failed to start Python backend process '{pythonExe} app.py'.");
@@ -221,8 +220,8 @@ public static class PythonBackendLauncher
     /// Now that the backend is launched with <c>PORT=0</c> (the OS assigns a genuinely free
     /// ephemeral port atomically at bind time), the real listening address is only known once
     /// aiohttp has actually bound it and printed its "Running on" banner (see
-    /// <see cref="RunningOnPortPattern"/>) -- so this method discovers that address AND waits for
-    /// `/health` to come up, under one shared <see cref="HealthTimeout"/> deadline, returning the
+    /// <see cref="s_runningOnPortPattern"/>) -- so this method discovers that address AND waits for
+    /// `/health` to come up, under one shared <see cref="s_healthTimeout"/> deadline, returning the
     /// discovered <see cref="Uri"/> once both are satisfied.
     /// </summary>
     private static async Task<Uri> WaitForListeningAndHealthyAsync(
@@ -230,7 +229,7 @@ public static class PythonBackendLauncher
         CancellationToken cancellationToken)
     {
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-        var deadline = DateTimeOffset.UtcNow + HealthTimeout;
+        DateTimeOffset deadline = DateTimeOffset.UtcNow + s_healthTimeout;
         Uri? baseUri = null;
 
         while (DateTimeOffset.UtcNow < deadline)
@@ -250,10 +249,10 @@ public static class PythonBackendLauncher
 
             if (baseUri is null)
             {
-                var match = RunningOnPortPattern.Match(output.Dump());
+                Match match = s_runningOnPortPattern.Match(output.Dump());
                 if (match.Success)
                 {
-                    var boundPort = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+                    int boundPort = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
                     baseUri = new Uri($"http://{BackendContract.Host}:{boundPort}/");
                 }
             }
@@ -262,7 +261,7 @@ public static class PythonBackendLauncher
             {
                 try
                 {
-                    using var response = await http.GetAsync(new Uri(baseUri, "/health"), cancellationToken)
+                    using HttpResponseMessage response = await http.GetAsync(new Uri(baseUri, "/health"), cancellationToken)
                         .ConfigureAwait(false);
                     if (response.StatusCode == System.Net.HttpStatusCode.OK)
                     {
@@ -279,11 +278,11 @@ public static class PythonBackendLauncher
                 }
             }
 
-            await Task.Delay(HealthPollInterval, cancellationToken).ConfigureAwait(false);
+            await Task.Delay(s_healthPollInterval, cancellationToken).ConfigureAwait(false);
         }
 
         throw new TimeoutException(
-            $"Python backend did not report listening/healthy within {HealthTimeout.TotalSeconds:F0}s " +
+            $"Python backend did not report listening/healthy within {s_healthTimeout.TotalSeconds:F0}s " +
             $"(bound port {(baseUri is null ? "never discovered" : baseUri.Port.ToString(CultureInfo.InvariantCulture))}).\n" +
             $"--- backend stdout/stderr ---\n{output.Dump()}");
     }

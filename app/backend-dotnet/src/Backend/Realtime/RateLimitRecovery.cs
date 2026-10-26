@@ -62,9 +62,9 @@ public sealed class RateLimitRecovery
 {
     public const string RateLimitedEventType = Shared.RateLimit.RateLimitedEventType;
 
-    private static readonly (double Low, double High) FirstRetryBounds = Shared.RateLimit.FirstRetryBounds;
-    private static readonly (double Low, double High) SecondRetryBounds = Shared.RateLimit.SecondRetryBounds;
-    private static readonly string ResponseCreateMessage = new JsonObject { ["type"] = "response.create" }.ToJsonString();
+    private static readonly (double Low, double High) s_firstRetryBounds = Shared.RateLimit.FirstRetryBounds;
+    private static readonly (double Low, double High) s_secondRetryBounds = Shared.RateLimit.SecondRetryBounds;
+    private static readonly string s_responseCreateMessage = new JsonObject { ["type"] = "response.create" }.ToJsonString();
 
     private readonly RateLimitSettings _settings;
     private readonly Func<string, CancellationToken, Task> _sendUpstream;
@@ -151,7 +151,7 @@ public sealed class RateLimitRecovery
             }
         }
 
-        var responseId = (message["response"] as JsonObject)?["id"]?.GetValue<string>();
+        string? responseId = (message["response"] as JsonObject)?["id"]?.GetValue<string>();
         await OnFailureAsync(error, $"response.done {responseId ?? "None"}", ct).ConfigureAwait(false);
         return true;
     }
@@ -262,7 +262,7 @@ public sealed class RateLimitRecovery
 
     private async Task OnFailureAsync(JsonObject error, string source, CancellationToken ct)
     {
-        var hint = ParseRetryHint(error["message"]?.GetValue<string>());
+        double? hint = ParseRetryHint(error["message"]?.GetValue<string>());
         _logger?.ModelResponseRateLimited(
             source,
             error["code"]?.GetValue<string>(),
@@ -270,8 +270,8 @@ public sealed class RateLimitRecovery
             hint is { } hintValue ? $"{hintValue:F3}s" : "none",
             _sessionId);
 
-        var notifyFinal = false;
-        var notifyNonFinal = false;
+        bool notifyFinal = false;
+        bool notifyNonFinal = false;
         int attempt;
 
         lock (_sync)
@@ -301,12 +301,12 @@ public sealed class RateLimitRecovery
             }
             else if (attempt == 0)
             {
-                var delay = RetryDelay(hint, _settings.RetryDelaySeconds, FirstRetryBounds);
+                double delay = RetryDelay(hint, _settings.RetryDelaySeconds, s_firstRetryBounds);
                 SchedulePendingLocked(delay, attempt + 1);
             }
             else
             {
-                var delay = RetryDelay(hint, _settings.SecondRetryDelaySeconds, SecondRetryBounds);
+                double delay = RetryDelay(hint, _settings.SecondRetryDelaySeconds, s_secondRetryBounds);
                 SchedulePendingLocked(delay, attempt + 1);
                 notifyNonFinal = true;
             }
@@ -374,7 +374,7 @@ public sealed class RateLimitRecovery
         {
             // CancellationToken.None: a closing socket must not crash this fire-and-forget
             // forwarder, same as EchoSuppressor's own delayed flush send.
-            await _sendUpstream(ResponseCreateMessage, CancellationToken.None).ConfigureAwait(false);
+            await _sendUpstream(s_responseCreateMessage, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception exc)
         {

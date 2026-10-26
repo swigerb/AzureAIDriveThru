@@ -16,7 +16,7 @@ public static class RepoRoot
         var dir = new DirectoryInfo(startDirectory);
         while (dir is not null)
         {
-            var gitPath = Path.Combine(dir.FullName, ".git");
+            string gitPath = Path.Combine(dir.FullName, ".git");
             if (Directory.Exists(Path.Combine(dir.FullName, "app")) &&
                 File.Exists(Path.Combine(dir.FullName, "azure.yaml")) &&
                 (Directory.Exists(gitPath) || File.Exists(gitPath)))

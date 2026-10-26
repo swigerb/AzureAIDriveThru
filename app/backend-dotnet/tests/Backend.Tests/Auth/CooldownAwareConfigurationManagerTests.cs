@@ -58,7 +58,7 @@ public sealed class CooldownAwareConfigurationManagerTests
         var gate = new DiscoveryFailureGate();
         var decorator = new CooldownAwareConfigurationManager(Inner(), gate);
 
-        var configuration = await decorator.GetBaseConfigurationAsync(CancellationToken.None);
+        BaseConfiguration configuration = await decorator.GetBaseConfigurationAsync(CancellationToken.None);
 
         Assert.NotNull(configuration);
         Assert.True(decorator.HasConfiguration);
@@ -71,11 +71,11 @@ public sealed class CooldownAwareConfigurationManagerTests
         // Fix #1 (HIGH): the one case this whole decorator exists for -- a genuine fetch failure
         // with nothing held yet must arm the 30s cooldown, synchronously, on the awaited call.
         var gate = new DiscoveryFailureGate();
-        var inner = Inner();
+        FakeInnerConfigurationManager inner = Inner();
         inner.NextFailure = new HttpRequestException("connection reset");
         var decorator = new CooldownAwareConfigurationManager(inner, gate);
 
-        var thrown = await Assert.ThrowsAsync<HttpRequestException>(
+        HttpRequestException thrown = await Assert.ThrowsAsync<HttpRequestException>(
             () => decorator.GetBaseConfigurationAsync(CancellationToken.None));
 
         Assert.Equal("connection reset", thrown.Message);
@@ -88,7 +88,7 @@ public sealed class CooldownAwareConfigurationManagerTests
     public async Task GetBaseConfigurationAsync_ColdFailure_RecognizesAllDiscoveryFailureShapes(Exception failure)
     {
         var gate = new DiscoveryFailureGate();
-        var inner = Inner();
+        FakeInnerConfigurationManager inner = Inner();
         inner.NextFailure = failure;
         var decorator = new CooldownAwareConfigurationManager(inner, gate);
 
@@ -97,8 +97,8 @@ public sealed class CooldownAwareConfigurationManagerTests
         Assert.True(gate.IsInCooldown());
     }
 
-    public static TheoryData<Exception> DiscoveryFailureExceptions => new()
-    {
+    public static TheoryData<Exception> DiscoveryFailureExceptions =>
+    [
         new HttpRequestException("reset"),
         new IOException("incomplete read"),
         new JsonException("malformed body"),
@@ -106,7 +106,7 @@ public sealed class CooldownAwareConfigurationManagerTests
         // IdentityModel.Protocols.ConfigurationManager<T> wraps the real cause in its own
         // InvalidOperationException ("IDX20803") when cold -- must be recognized via InnerException.
         new InvalidOperationException("IDX20803", new HttpRequestException("reset")),
-    };
+    ];
 
     [Fact]
     public async Task GetBaseConfigurationAsync_ColdFailure_UnrecognizedExceptionType_DoesNotArmGate()
@@ -114,7 +114,7 @@ public sealed class CooldownAwareConfigurationManagerTests
         // Only genuine network/backchannel/parse failures (or exceptions wrapping one) should ever
         // arm the cooldown -- an unrelated exception type must propagate untouched.
         var gate = new DiscoveryFailureGate();
-        var inner = Inner();
+        FakeInnerConfigurationManager inner = Inner();
         inner.NextFailure = new InvalidOperationException("unrelated, no network cause");
         var decorator = new CooldownAwareConfigurationManager(inner, gate);
 
@@ -130,13 +130,13 @@ public sealed class CooldownAwareConfigurationManagerTests
         // the cooldown -- that would re-block already-resolvable, cached-kid tokens (Rick's HIGH
         // finding's own failure mode, applied to the decorator in isolation).
         var gate = new DiscoveryFailureGate();
-        var inner = Inner();
+        FakeInnerConfigurationManager inner = Inner();
         var decorator = new CooldownAwareConfigurationManager(inner, gate);
         await decorator.GetBaseConfigurationAsync(CancellationToken.None);
         Assert.True(decorator.HasConfiguration);
 
         inner.NextFailure = new HttpRequestException("transient refetch failure while warm");
-        var thrown = await Assert.ThrowsAsync<HttpRequestException>(
+        HttpRequestException thrown = await Assert.ThrowsAsync<HttpRequestException>(
             () => decorator.GetBaseConfigurationAsync(CancellationToken.None));
 
         Assert.Equal("transient refetch failure while warm", thrown.Message);
@@ -150,7 +150,7 @@ public sealed class CooldownAwareConfigurationManagerTests
         // Not reachable on the real JwtBearerHandler pipeline, but must still behave correctly
         // (including arming the gate) for any caller -- test or otherwise -- that invokes it.
         var gate = new DiscoveryFailureGate();
-        var inner = Inner();
+        FakeInnerConfigurationManager inner = Inner();
         inner.NextFailure = new IOException("reset");
         IConfigurationManager<OpenIdConnectConfiguration> decorator = new CooldownAwareConfigurationManager(inner, gate);
 
@@ -169,7 +169,7 @@ public sealed class CooldownAwareConfigurationManagerTests
         // internals rather than our own decorator's contract.
         var decorator = new CooldownAwareConfigurationManager(Inner(), new DiscoveryFailureGate());
 
-        var exception = Record.Exception(decorator.RequestRefresh);
+        Exception? exception = Record.Exception(decorator.RequestRefresh);
 
         Assert.Null(exception);
     }
@@ -191,7 +191,7 @@ public sealed class CooldownAwareConfigurationManagerTests
 
         EntraAuthentication.ConfigureJwtBearer(options, settings);
 
-        var manager = Assert.IsType<CooldownAwareConfigurationManager>(options.ConfigurationManager);
+        CooldownAwareConfigurationManager manager = Assert.IsType<CooldownAwareConfigurationManager>(options.ConfigurationManager);
         Assert.Equal(TimeSpan.FromSeconds(300), manager.LastKnownGoodLifetime);
     }
 
@@ -206,7 +206,7 @@ public sealed class CooldownAwareConfigurationManagerTests
 
         EntraAuthentication.ConfigureJwtBearer(options, settings, lastKnownGoodLifetime: overrideLifetime);
 
-        var manager = Assert.IsType<CooldownAwareConfigurationManager>(options.ConfigurationManager);
+        CooldownAwareConfigurationManager manager = Assert.IsType<CooldownAwareConfigurationManager>(options.ConfigurationManager);
         Assert.Equal(overrideLifetime, manager.LastKnownGoodLifetime);
     }
 }

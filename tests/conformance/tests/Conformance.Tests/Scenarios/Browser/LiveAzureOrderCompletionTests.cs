@@ -131,27 +131,27 @@ public sealed class LiveAzureOrderCompletionTests
     [Fact]
     public async Task Live_order_finishes_with_ticket_and_spoken_closing()
     {
-        var endpoint = Environment.GetEnvironmentVariable("LIVE_CSHARP_ORDER_ENDPOINT");
-        var audioPath = Environment.GetEnvironmentVariable("LIVE_CSHARP_ORDER_AUDIO");
+        string? endpoint = Environment.GetEnvironmentVariable("LIVE_CSHARP_ORDER_ENDPOINT");
+        string? audioPath = Environment.GetEnvironmentVariable("LIVE_CSHARP_ORDER_AUDIO");
         if (string.IsNullOrWhiteSpace(endpoint) || string.IsNullOrWhiteSpace(audioPath))
         {
             Assert.Skip("Set LIVE_CSHARP_ORDER_ENDPOINT and LIVE_CSHARP_ORDER_AUDIO to run the live Azure test.");
             return;
         }
 
-        Assert.True(Uri.TryCreate(endpoint, UriKind.Absolute, out var endpointUri)
+        Assert.True(Uri.TryCreate(endpoint, UriKind.Absolute, out Uri? endpointUri)
             && endpointUri.Scheme == Uri.UriSchemeHttps,
             "The live test endpoint must be an absolute HTTPS URL.");
         Assert.True(File.Exists(audioPath), "The prerecorded fake-microphone WAV file must exist.");
 
-        var edgePath = Environment.GetEnvironmentVariable("LIVE_CSHARP_EDGE_PATH")
+        string edgePath = Environment.GetEnvironmentVariable("LIVE_CSHARP_EDGE_PATH")
             ?? @"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe";
         Assert.True(File.Exists(edgePath), "The explicitly configured Microsoft Edge executable must exist.");
 
         // A persistent profile keeps the MSAL cache in the browser's own storage after an
         // interactive sign-in (LIVE_CSHARP_HEADED=1); tokens are never read by the test.
-        var profileDir = Environment.GetEnvironmentVariable("LIVE_CSHARP_PROFILE_DIR");
-        var headed = Environment.GetEnvironmentVariable("LIVE_CSHARP_HEADED") == "1";
+        string? profileDir = Environment.GetEnvironmentVariable("LIVE_CSHARP_PROFILE_DIR");
+        bool headed = Environment.GetEnvironmentVariable("LIVE_CSHARP_HEADED") == "1";
         string[] mediaArgs =
         [
             "--use-fake-ui-for-media-stream",
@@ -159,7 +159,7 @@ public sealed class LiveAzureOrderCompletionTests
             $"--use-file-for-fake-audio-capture={Path.GetFullPath(audioPath)}%noloop",
         ];
 
-        using var playwright = await Playwright.CreateAsync();
+        using IPlaywright playwright = await Playwright.CreateAsync();
         IBrowser? browser = null;
         IBrowserContext context;
         if (!string.IsNullOrWhiteSpace(profileDir))
@@ -192,16 +192,16 @@ public sealed class LiveAzureOrderCompletionTests
             try
             {
                 await context.AddInitScriptAsync(CaptureEventsScript);
-                var page = await context.NewPageAsync();
+                IPage page = await context.NewPageAsync();
                 await page.GotoAsync(endpoint, new PageGotoOptions { WaitUntil = WaitUntilState.DOMContentLoaded });
-                var controls = page.Locator("[data-testid='conversation-controls']");
-                var accountUpn = Environment.GetEnvironmentVariable("LIVE_CSHARP_ACCOUNT_UPN");
+                ILocator controls = page.Locator("[data-testid='conversation-controls']");
+                string? accountUpn = Environment.GetEnvironmentVariable("LIVE_CSHARP_ACCOUNT_UPN");
                 if (!string.IsNullOrWhiteSpace(accountUpn))
                 {
                     // Selects an account the dedicated profile is already signed in to on the
                     // Entra account picker; never types credentials.
-                    var tile = page.GetByRole(AriaRole.Button, new() { Name = $"Sign in with {accountUpn}" }).First;
-                    var deadline = DateTime.UtcNow.AddSeconds(60);
+                    ILocator tile = page.GetByRole(AriaRole.Button, new() { Name = $"Sign in with {accountUpn}" }).First;
+                    DateTime deadline = DateTime.UtcNow.AddSeconds(60);
                     while (DateTime.UtcNow < deadline && !await controls.IsVisibleAsync())
                     {
                         if (await tile.IsVisibleAsync())
@@ -225,8 +225,8 @@ public sealed class LiveAzureOrderCompletionTests
                     // The model's wording and turn segmentation vary between runs (for example
                     // it may offer a combo instead of asking "anything else", and "No, that'll be
                     // it" may arrive as two transcripts), so assert the turn structure instead.
-                    var rephrase = Environment.GetEnvironmentVariable("LIVE_CSHARP_ORDER_REPHRASE") == "1";
-                    var outcome = await (await page.WaitForFunctionAsync(OrderCompletedScript, rephrase,
+                    bool rephrase = Environment.GetEnvironmentVariable("LIVE_CSHARP_ORDER_REPHRASE") == "1";
+                    string outcome = await (await page.WaitForFunctionAsync(OrderCompletedScript, rephrase,
                         new PageWaitForFunctionOptions { Timeout = 180_000 })).JsonValueAsync<string>();
                     await page.EvaluateAsync("o => window.__liveOrderEvents.push({ type: 'harness.outcome', outcome: o })", outcome);
                     if (outcome.StartsWith("blocked:", StringComparison.Ordinal))
@@ -251,7 +251,7 @@ public sealed class LiveAzureOrderCompletionTests
                 }
                 finally
                 {
-                    await WriteDiagnosticsAsync(page, endpointUri!.Host);
+                    await WriteDiagnosticsAsync(page, endpointUri.Host);
                 }
             }
             finally
@@ -270,16 +270,16 @@ public sealed class LiveAzureOrderCompletionTests
 
     private static async Task WriteDiagnosticsAsync(IPage page, string host)
     {
-        var diagnosticsPath = Environment.GetEnvironmentVariable("LIVE_CSHARP_ORDER_DIAGNOSTICS");
+        string? diagnosticsPath = Environment.GetEnvironmentVariable("LIVE_CSHARP_ORDER_DIAGNOSTICS");
         if (string.IsNullOrWhiteSpace(diagnosticsPath))
         {
             return;
         }
 
-        var events = await page.EvaluateAsync<JsonElement>("() => window.__liveOrderEvents ?? []");
-        var ticket = await page.EvaluateAsync<string>(
+        JsonElement events = await page.EvaluateAsync<JsonElement>("() => window.__liveOrderEvents ?? []");
+        string ticket = await page.EvaluateAsync<string>(
             "() => document.querySelector('[data-testid=\"order-ticket\"]')?.innerText ?? ''");
-        var status = await page.EvaluateAsync<string>("() => document.body?.innerText?.slice(-2000) ?? ''");
+        string status = await page.EvaluateAsync<string>("() => document.body?.innerText?.slice(-2000) ?? ''");
         await File.WriteAllTextAsync(diagnosticsPath, JsonSerializer.Serialize(new
         {
             endpointHost = host,

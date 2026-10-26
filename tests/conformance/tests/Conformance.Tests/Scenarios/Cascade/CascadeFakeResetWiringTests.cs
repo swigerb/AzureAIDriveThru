@@ -44,14 +44,14 @@ public sealed class CascadeFakeResetWiringTests(CascadeConformanceFixture fixtur
     [Fact]
     public async Task A_throwing_scenario_that_leaked_a_queued_response_and_an_armed_gate_does_not_hang_the_next_scenario()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
         // Leak scenario: enqueues a response nobody will ever request, arms a gate nobody will
         // ever claim (HoldNextResponse(), same call the barge-in row itself uses), then throws
         // before issuing any request at all -- exactly Rick's reported shape ("the scenario body
         // throws before its first request lands").
         var marker = new DeliberateLeakScenarioException();
-        var thrown = await Record.ExceptionAsync(() => fixture.RunAsync(() =>
+        Exception? thrown = await Record.ExceptionAsync(() => fixture.RunAsync(() =>
         {
             fixture.Chat.EnqueueMessage(new JsonObject { ["role"] = "assistant", ["content"] = "never requested" });
             fixture.Chat.HoldNextResponse();
@@ -64,7 +64,7 @@ public sealed class CascadeFakeResetWiringTests(CascadeConformanceFixture fixtur
         // (see that method's own doc comment) -- asserting against the wrapper's InnerException,
         // not the wrapper itself, is what actually proves the original marker (and therefore this
         // specific scenario body) is what failed, not some unrelated RunAsync-internal check.
-        var wrapped = Assert.IsType<InvalidOperationException>(thrown);
+        InvalidOperationException wrapped = Assert.IsType<InvalidOperationException>(thrown);
         Assert.Same(marker, wrapped.InnerException);
 
         // Clean scenario, run immediately after: before Rick's fix, this scenario's own
@@ -80,7 +80,7 @@ public sealed class CascadeFakeResetWiringTests(CascadeConformanceFixture fixtur
         // either) was removed or broken.
         await fixture.RunAsync(async () =>
         {
-            var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(fixture, fixture.Chat, "gpt-5-mini", ct);
+            CascadeConnection connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(fixture, fixture.Chat, "gpt-5-mini", ct);
             await connection.Browser.DisposeAsync();
         });
     }

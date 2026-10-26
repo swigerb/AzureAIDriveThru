@@ -1,11 +1,8 @@
+// `Backend.Tests` does not implicitly see the root `Backend` namespace that
+// <see cref="ConformanceHooks"/> lives in.
 using Backend.Tests.Ordering;
 
 namespace Backend.Tests;
-
-// `Backend.Tests` does not implicitly see the root `Backend` namespace that
-// <see cref="ConformanceHooks"/> lives in.
-using Backend;
-
 /// <summary>Issue #13 Wave 4: port tests for conformance_hooks.py's <c>seconds(env_var, default)</c>
 /// -- <see cref="ConformanceHooks.Seconds"/>'s own doc comment explains why this is independent of
 /// <see cref="ConformanceHooks.Now"/>. Pinned to the shared <see cref="ClockHookTestCollection"/>
@@ -66,7 +63,7 @@ public sealed class ConformanceHooksSecondsTests : IDisposable
         Environment.SetEnvironmentVariable(EnabledEnv, "1");
         Environment.SetEnvironmentVariable(DurationEnv, "soon");
 
-        var ex = Assert.Throws<InvalidOperationException>(() => ConformanceHooks.Seconds(DurationEnv, 1.5));
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => ConformanceHooks.Seconds(DurationEnv, 1.5));
         Assert.Contains(DurationEnv, ex.Message);
     }
 

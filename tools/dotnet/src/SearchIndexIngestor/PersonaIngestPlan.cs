@@ -37,9 +37,9 @@ public static class PersonaIngestPlanBuilder
                 $"Persona '{persona.PersonaId}': menu data file not found at {persona.MenuPath}");
         }
 
-        var menuData = JsonNode.Parse(File.ReadAllText(persona.MenuPath)) ??
+        JsonNode menuData = JsonNode.Parse(File.ReadAllText(persona.MenuPath)) ??
             throw new InvalidOperationException($"'{persona.MenuPath}' did not parse to a JSON value.");
-        var prepared = MenuDocumentBuilder.Build(menuData);
+        List<MenuDocumentBuilder.PreparedDocument> prepared = MenuDocumentBuilder.Build(menuData);
 
         var documents = prepared.Select(p => p.Fields).ToList();
         var texts = prepared.Select(p => p.CombinedTextForEmbedding).ToList();

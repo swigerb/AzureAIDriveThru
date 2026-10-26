@@ -17,7 +17,6 @@ public sealed class WholeBundleSizeResizeTests
     private const decimal MealLargePrice = 6.99m;
     private const string Drink = "Epsilon Cola";
     private const decimal DrinkSmallPrice = 1.00m;
-    private const decimal DrinkMediumPrice = 1.50m;
     private const decimal DrinkLargePrice = 2.00m;
     private const string Fries = "Epsilon Fries";
     private const string StandardOnlyMeal = "Epsilon Standard Meal";
@@ -36,7 +35,7 @@ public sealed class WholeBundleSizeResizeTests
     {
         Assert.NotEmpty(meal.Components);
         Assert.All(meal.Components, component => Assert.Contains(expectedLabel, component));
-        foreach (var unexpected in unexpectedLabels)
+        foreach (string unexpected in unexpectedLabels)
         {
             Assert.All(meal.Components, component => Assert.DoesNotContain(unexpected, component));
         }
@@ -45,15 +44,15 @@ public sealed class WholeBundleSizeResizeTests
     [Fact]
     public void MakeItALargeMeal_ResizesFriesAndDrinkTogether()
     {
-        var order = NewOrder();
+        OrderState order = NewOrder();
         SeedMeal(order);
 
-        var meal = order.Items[0];
+        OrderItem meal = order.Items[0];
         Assert.Contains("Small Epsilon Fries", meal.Display);
         Assert.Contains("Small Epsilon Cola", meal.Display);
         Assert.Equal(MealSmallPrice, meal.Price);
 
-        var result = order.HandleOrderUpdate("modify", Meal, "large", 1, MealLargePrice);
+        OrderUpdateResult result = order.HandleOrderUpdate("modify", Meal, "large", 1, MealLargePrice);
         Assert.Equal("large", result.ModifiedToSize);
 
         meal = order.Items[0];
@@ -72,10 +71,10 @@ public sealed class WholeBundleSizeResizeTests
     [Fact]
     public void MakeItALargeMeal_IsANoop_WhenAlreadyThatSize()
     {
-        var order = NewOrder();
+        OrderState order = NewOrder();
         SeedMeal(order);
 
-        var result = order.HandleOrderUpdate("modify", Meal, "small", 1, MealSmallPrice);
+        OrderUpdateResult result = order.HandleOrderUpdate("modify", Meal, "small", 1, MealSmallPrice);
         Assert.Null(result.ModifiedToSize);
         Assert.Equal(MealSmallPrice, order.Items[0].Price);
     }
@@ -83,14 +82,14 @@ public sealed class WholeBundleSizeResizeTests
     [Fact]
     public void ModifyingTheAutofilledFries_ByTheirRealMenuName_IsFound()
     {
-        var order = NewOrder();
+        OrderState order = NewOrder();
         order.HandleOrderUpdate("add", Meal, "small", 1, MealSmallPrice);
 
-        var result = order.HandleOrderUpdate("modify", Fries, "medium", 1, 0m);
+        OrderUpdateResult result = order.HandleOrderUpdate("modify", Fries, "medium", 1, 0m);
         Assert.Null(result.ComboComponentResizeRejected);
         Assert.Equal("sides", result.ResizedComboComponent);
 
-        var meal = order.Items[0];
+        OrderItem meal = order.Items[0];
         Assert.Equal("medium", meal.Size);
         Assert.Equal(MealMediumPrice, meal.Price);
         Assert.Contains("Medium Epsilon Fries", meal.Display);
@@ -99,14 +98,14 @@ public sealed class WholeBundleSizeResizeTests
     [Fact]
     public void ComponentResize_IsRejectedCleanly_WhenThePackHasNoPriceAtThatSize()
     {
-        var order = NewOrder();
+        OrderState order = NewOrder();
         order.HandleOrderUpdate("add", StandardOnlyMeal, "standard", 1, StandardOnlyMealPrice);
 
-        var result = order.HandleOrderUpdate("modify", Fries, "large", 1, 0m);
+        OrderUpdateResult result = order.HandleOrderUpdate("modify", Fries, "large", 1, 0m);
         Assert.Equal("sides", result.ComboComponentResizeRejected);
         Assert.Null(result.ResizedComboComponent);
 
-        var meal = order.Items[0];
+        OrderItem meal = order.Items[0];
         Assert.Equal("standard", meal.Size);
         Assert.Equal(StandardOnlyMealPrice, meal.Price);
         Assert.Contains("Medium Epsilon Fries", meal.Display);
@@ -116,14 +115,14 @@ public sealed class WholeBundleSizeResizeTests
     [Fact]
     public void DownsizingAComponent_ResizesTheWholeMeal_NeverLeavesMixedSizes()
     {
-        var order = NewOrder();
+        OrderState order = NewOrder();
         SeedMeal(order);
         order.HandleOrderUpdate("modify", Meal, "large", 1, MealLargePrice);
 
-        var result = order.HandleOrderUpdate("modify", Drink, "medium", 1, 0m);
+        OrderUpdateResult result = order.HandleOrderUpdate("modify", Drink, "medium", 1, 0m);
         Assert.Equal("drinks", result.ResizedComboComponent);
 
-        var meal = order.Items[0];
+        OrderItem meal = order.Items[0];
         Assert.Equal("medium", meal.Size);
         Assert.Equal(MealMediumPrice, meal.Price);
         Assert.Contains("Medium Epsilon Fries", meal.Display);
@@ -137,14 +136,14 @@ public sealed class WholeBundleSizeResizeTests
     [Fact]
     public void ResizingTheMealBackDown_RelabelsEverySlot_NoStaleSize()
     {
-        var order = NewOrder();
+        OrderState order = NewOrder();
         SeedMeal(order);
         order.HandleOrderUpdate("modify", Meal, "large", 1, MealLargePrice);
 
-        var result = order.HandleOrderUpdate("modify", Meal, "small", 1, MealSmallPrice);
+        OrderUpdateResult result = order.HandleOrderUpdate("modify", Meal, "small", 1, MealSmallPrice);
         Assert.Equal("small", result.ModifiedToSize);
 
-        var meal = order.Items[0];
+        OrderItem meal = order.Items[0];
         Assert.Equal("small", meal.Size);
         Assert.Equal(MealSmallPrice, meal.Price);
         Assert.Contains("Small Epsilon Fries", meal.Display);
@@ -159,10 +158,10 @@ public sealed class WholeBundleSizeResizeTests
     [Fact]
     public void MakeItAMediumMeal_IsAcceptedDirectly_NotRejected()
     {
-        var order = NewOrder();
+        OrderState order = NewOrder();
         order.HandleOrderUpdate("add", Meal, "small", 1, MealSmallPrice);
 
-        var result = order.HandleOrderUpdate("modify", Meal, "medium", 1, MealMediumPrice);
+        OrderUpdateResult result = order.HandleOrderUpdate("modify", Meal, "medium", 1, MealMediumPrice);
         Assert.Equal("medium", result.ModifiedToSize);
         Assert.Equal(MealMediumPrice, order.Items[0].Price);
     }
@@ -170,15 +169,15 @@ public sealed class WholeBundleSizeResizeTests
     [Fact]
     public void ResizingOneUnitsFries_OnAQuantityTwoMeal_SplitsThatUnitOnly()
     {
-        var order = NewOrder();
+        OrderState order = NewOrder();
         order.HandleOrderUpdate("add", Meal, "small", 2, MealSmallPrice);
 
-        var result = order.HandleOrderUpdate("modify", Fries, "medium", 1, 0m);
+        OrderUpdateResult result = order.HandleOrderUpdate("modify", Fries, "medium", 1, 0m);
         Assert.Equal("sides", result.ResizedComboComponent);
 
         Assert.Equal(2, order.Items.Count);
-        var resized = order.Items.Single(i => i.Size == "medium");
-        var untouched = order.Items.Single(i => i.Size == "small");
+        OrderItem resized = order.Items.Single(i => i.Size == "medium");
+        OrderItem untouched = order.Items.Single(i => i.Size == "small");
         Assert.Equal(1, resized.Quantity);
         Assert.Equal(1, untouched.Quantity);
         Assert.Equal(MealMediumPrice, resized.Price);
@@ -194,14 +193,14 @@ public sealed class WholeBundleSizeResizeTests
     [InlineData("large", 2.00, "Large")]
     public void StandardOnlyBundle_AbsorbsSmallMediumOrLargeDrink(string drinkSize, decimal drinkPrice, string drinkLabel)
     {
-        var order = NewOrder();
+        OrderState order = NewOrder();
         order.HandleOrderUpdate("add", StandardOnlyMeal, "standard", 1, StandardOnlyMealPrice);
 
-        var result = order.HandleOrderUpdate("add", Drink, drinkSize, 1, drinkPrice);
+        OrderUpdateResult result = order.HandleOrderUpdate("add", Drink, drinkSize, 1, drinkPrice);
         Assert.True(result.AbsorbedIntoCombo);
 
         Assert.Single(order.Items);
-        var meal = order.Items[0];
+        OrderItem meal = order.Items[0];
         Assert.Equal("standard", meal.Size);
         Assert.Contains($"{drinkLabel} Epsilon Cola", meal.Display);
         Assert.True(order.GetComboRequirements().IsComplete);
@@ -214,20 +213,20 @@ public sealed class WholeBundleSizeResizeTests
         static (string Item, string Size, decimal Price, string Display, decimal Total) Snapshot(
             IEnumerable<(string Action, string Item, string Size, int Quantity, decimal Price)> steps)
         {
-            var order = NewOrder();
-            foreach (var step in steps)
+            OrderState order = NewOrder();
+            foreach ((string Action, string Item, string Size, int Quantity, decimal Price) step in steps)
             {
                 order.HandleOrderUpdate(step.Action, step.Item, step.Size, step.Quantity, step.Price);
             }
-            var meal = order.Items[0];
+            OrderItem meal = order.Items[0];
             return (meal.Item, meal.Size, meal.Price, meal.Display, order.Summary.Total);
         }
 
-        var mealThenDrink = Snapshot([
+        (string Item, string Size, decimal Price, string Display, decimal Total) mealThenDrink = Snapshot([
             ("add", Meal, "medium", 1, MealMediumPrice),
             ("add", Drink, "large", 1, DrinkLargePrice),
         ]);
-        var drinkThenMeal = Snapshot([
+        (string Item, string Size, decimal Price, string Display, decimal Total) drinkThenMeal = Snapshot([
             ("add", Drink, "large", 1, DrinkLargePrice),
             ("add", Meal, "medium", 1, MealMediumPrice),
         ]);
@@ -242,12 +241,12 @@ public sealed class WholeBundleSizeResizeTests
     [Fact]
     public void ComponentsList_IsRebuilt_WhenDefaultSizedMealIsResizedBeforeDrink()
     {
-        var order = NewOrder();
+        OrderState order = NewOrder();
         order.HandleOrderUpdate("add", Meal, "medium", 1, MealMediumPrice);
         order.HandleOrderUpdate("modify", Meal, "large", 1, MealLargePrice);
         order.HandleOrderUpdate("add", Drink, "large", 1, DrinkLargePrice);
 
-        var meal = order.Items[0];
+        OrderItem meal = order.Items[0];
         Assert.Equal("large", meal.Size);
         Assert.Contains("Large Epsilon Fries", meal.Display);
         Assert.Contains("Large Epsilon Cola", meal.Display);

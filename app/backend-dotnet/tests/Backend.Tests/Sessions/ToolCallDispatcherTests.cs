@@ -1,7 +1,6 @@
 using System.Net.WebSockets;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Backend.Configuration;
 using Backend.Realtime;
 using Backend.Sessions;
 using Backend.Tests.Realtime;
@@ -47,15 +46,14 @@ public sealed class ToolCallDispatcherTests
     }
 
     private static List<string> TextFrames(FakeWebSocket socket) =>
-        socket.SentMessages
+        [.. socket.SentMessages
             .Where(m => m.MessageType == WebSocketMessageType.Text)
-            .Select(m => System.Text.Encoding.UTF8.GetString(m.Data))
-            .ToList();
+            .Select(m => System.Text.Encoding.UTF8.GetString(m.Data))];
 
     [Fact]
     public async Task HandleToolCallDoneAsync_ignores_a_call_id_not_in_ToolsPending()
     {
-        var state = NewState(new StubToolExecutor(["get_order"]));
+        RealtimeProcessor.RealtimeSessionState state = NewState(new StubToolExecutor(["get_order"]));
         var upstream = new FakeWebSocket([]);
         var browser = new FakeWebSocket([]);
         var dispatcher = new ToolCallDispatcher(upstream, browser, state, sessionManager: null, "session-1", NullLogger.Instance, CancellationToken.None);
@@ -69,7 +67,7 @@ public sealed class ToolCallDispatcherTests
     [Fact]
     public async Task HandleToolCallDoneAsync_ignores_an_unregistered_tool_name()
     {
-        var state = NewState(new StubToolExecutor(["get_order"]));
+        RealtimeProcessor.RealtimeSessionState state = NewState(new StubToolExecutor(["get_order"]));
         state.ToolsPending["call-1"] = "prev-item";
         var upstream = new FakeWebSocket([]);
         var browser = new FakeWebSocket([]);
@@ -84,7 +82,7 @@ public sealed class ToolCallDispatcherTests
     [Fact]
     public async Task HandleToolCallDoneAsync_drops_the_call_when_this_connection_is_superseded()
     {
-        var state = NewState(new StubToolExecutor(["get_order"]));
+        RealtimeProcessor.RealtimeSessionState state = NewState(new StubToolExecutor(["get_order"]));
         state.ToolsPending["call-1"] = "prev-item";
         state.Superseded.MarkSuperseded();
         var upstream = new FakeWebSocket([]);
@@ -100,7 +98,7 @@ public sealed class ToolCallDispatcherTests
     [Fact]
     public async Task HandleToolCallDoneAsync_sends_function_call_output_and_client_response_on_success()
     {
-        var state = NewState(new StubToolExecutor(["get_order"]));
+        RealtimeProcessor.RealtimeSessionState state = NewState(new StubToolExecutor(["get_order"]));
         state.ToolsPending["call-1"] = "prev-item";
         var upstream = new FakeWebSocket([]);
         var browser = new FakeWebSocket([]);
@@ -113,12 +111,12 @@ public sealed class ToolCallDispatcherTests
             ["arguments"] = "{}",
         });
 
-        var upstreamFrame = JsonNode.Parse(Assert.Single(TextFrames(upstream)))!.AsObject();
+        JsonObject upstreamFrame = JsonNode.Parse(Assert.Single(TextFrames(upstream)))!.AsObject();
         Assert.Equal("conversation.item.create", (string?)upstreamFrame["type"]);
         Assert.Equal("function_call_output", (string?)upstreamFrame["item"]!["type"]);
         Assert.Equal("call-1", (string?)upstreamFrame["item"]!["call_id"]);
 
-        var browserFrame = JsonNode.Parse(Assert.Single(TextFrames(browser)))!.AsObject();
+        JsonObject browserFrame = JsonNode.Parse(Assert.Single(TextFrames(browser)))!.AsObject();
         Assert.Equal("extension.middle_tier_tool_response", (string?)browserFrame["type"]);
         Assert.Equal("prev-item", (string?)browserFrame["previous_item_id"]);
         Assert.Equal("get_order", (string?)browserFrame["tool_name"]);
@@ -128,7 +126,7 @@ public sealed class ToolCallDispatcherTests
     public async Task HandleToolCallDoneAsync_on_exception_sends_fallback_output_refreshes_ticket_and_counts_the_failure()
     {
         var executor = new ThrowingOrderTicketExecutor();
-        var state = NewState(executor);
+        RealtimeProcessor.RealtimeSessionState state = NewState(executor);
         state.ToolsPending["call-1"] = "prev-item";
         var upstream = new FakeWebSocket([]);
         var browser = new FakeWebSocket([]);
@@ -143,11 +141,11 @@ public sealed class ToolCallDispatcherTests
 
         // The ticket refresh (extension.middle_tier_tool_response for get_order) goes to the
         // browser BEFORE the function_call_output goes upstream -- same order as before extraction.
-        var browserFrame = JsonNode.Parse(Assert.Single(TextFrames(browser)))!.AsObject();
+        JsonObject browserFrame = JsonNode.Parse(Assert.Single(TextFrames(browser)))!.AsObject();
         Assert.Equal("get_order", (string?)browserFrame["tool_name"]);
         Assert.Equal(executor.CurrentOrderSummaryJson, (string?)browserFrame["tool_result"]);
 
-        var upstreamFrame = JsonNode.Parse(Assert.Single(TextFrames(upstream)))!.AsObject();
+        JsonObject upstreamFrame = JsonNode.Parse(Assert.Single(TextFrames(upstream)))!.AsObject();
         Assert.Equal("conversation.item.create", (string?)upstreamFrame["type"]);
         Assert.Equal("function_call_output", (string?)upstreamFrame["item"]!["type"]);
         Assert.Contains("did not complete", (string?)upstreamFrame["item"]!["output"]);

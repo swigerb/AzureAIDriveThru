@@ -13,14 +13,14 @@ namespace Backend.Personas;
 /// </summary>
 internal static class PersonaSchemaValidator
 {
-    private static readonly EvaluationOptions Options = new() { OutputFormat = OutputFormat.List };
+    private static readonly EvaluationOptions s_options = new() { OutputFormat = OutputFormat.List };
 
     /// <exception cref="PersonaValidationException">The instance violates the schema. The message
     /// names every violated instance location (JSON pointer) and the schema keyword that rejected
     /// it, e.g. "$.voice: required".</exception>
     public static void Validate(JsonSchema schema, JsonNode? instance, string personaId, string fileLabel)
     {
-        var results = schema.Evaluate(JsonSerializer.SerializeToElement(instance), Options);
+        EvaluationResults results = schema.Evaluate(JsonSerializer.SerializeToElement(instance), s_options);
         if (results.IsValid)
         {
             return;
@@ -29,7 +29,7 @@ internal static class PersonaSchemaValidator
         var failures = new List<string>();
         CollectFailures(results, failures);
 
-        var detail = failures.Count > 0
+        string detail = failures.Count > 0
             ? string.Join("; ", failures)
             : "schema validation failed";
 
@@ -41,9 +41,9 @@ internal static class PersonaSchemaValidator
     {
         if (results.Errors is { Count: > 0 } errors)
         {
-            var location = results.InstanceLocation.ToString();
-            var location_ = string.IsNullOrEmpty(location) ? "$" : $"${location}";
-            foreach (var (keyword, message) in errors)
+            string location = results.InstanceLocation.ToString();
+            string location_ = string.IsNullOrEmpty(location) ? "$" : $"${location}";
+            foreach ((string? keyword, string? message) in errors)
             {
                 failures.Add($"{location_} ({keyword}): {message}");
             }
@@ -54,7 +54,7 @@ internal static class PersonaSchemaValidator
             return;
         }
 
-        foreach (var detail in details)
+        foreach (EvaluationResults detail in details)
         {
             if (!detail.IsValid)
             {

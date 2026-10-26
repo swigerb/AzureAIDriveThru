@@ -16,10 +16,10 @@ internal static class AppSecretProvider
 
     public static byte[] Load(IConfiguration configuration, ILogger logger, bool runningInProduction)
     {
-        var configured = configuration["APP_SESSION_SECRET"];
+        string? configured = configuration["APP_SESSION_SECRET"];
         if (!string.IsNullOrEmpty(configured))
         {
-            var secretBytes = Encoding.UTF8.GetBytes(configured);
+            byte[] secretBytes = Encoding.UTF8.GetBytes(configured);
             if (secretBytes.Length < MinimumRecommendedLength)
             {
                 logger.LogWarning(

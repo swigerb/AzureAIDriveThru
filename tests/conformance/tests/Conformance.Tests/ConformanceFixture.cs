@@ -197,7 +197,7 @@ public class ConformanceFixture : IAsyncLifetime
         // known-in-advance ports -- see ExternalModePortPolicy's own docs for why -- and fails
         // fast with a clear message here (before either fake even starts) if they're missing
         // (PR #22 review item 16).
-        var (realtimePort, searchPort) = ExternalModePortPolicy.Resolve(
+        (int? realtimePort, int? searchPort) = ExternalModePortPolicy.Resolve(
             Environment.GetEnvironmentVariable("CONFORMANCE_BACKEND_URL"),
             Environment.GetEnvironmentVariable(ExternalModePortPolicy.RealtimePortEnvVar),
             Environment.GetEnvironmentVariable(ExternalModePortPolicy.SearchPortEnvVar));
@@ -217,11 +217,11 @@ public class ConformanceFixture : IAsyncLifetime
         // this fixture launches can actually query. A fixture that only enables a subset (e.g.
         // DisabledPersonaConformanceFixture) gets a fake that can't answer the disabled persona's
         // index at all, matching that persona being genuinely unreachable end to end.
-        var resolvedPersonas = Personas ?? ConformancePersonas.ResolveEnabled(
+        IReadOnlyList<string> resolvedPersonas = Personas ?? ConformancePersonas.ResolveEnabled(
             Environment.GetEnvironmentVariable("CONFORMANCE_PERSONAS"), ConformancePersonas.DiscoverFromDisk);
         resolvedPersonas = ConformancePersonas.EnsureIncluded(resolvedPersonas, Persona);
-        var personasDirForSearch = PersonasDirectory;
-        var indexPaths = MenuIndex.ResolveIndexPaths(personasDirForSearch, resolvedPersonas);
+        string personasDirForSearch = PersonasDirectory;
+        IReadOnlyDictionary<string, string> indexPaths = MenuIndex.ResolveIndexPaths(personasDirForSearch, resolvedPersonas);
 
         Search = new FakeSearchServer(indexPaths);
         await Search.StartAsync(fixedPort: searchPort).ConfigureAwait(false);
@@ -238,8 +238,8 @@ public class ConformanceFixture : IAsyncLifetime
             entraEnvironment = EntraModeEnvironment.Build(EntraIssuer);
         }
 
-        var extraFakeEnvironment = await StartExtraFakesAsync().ConfigureAwait(false);
-        var extraEnvironment = MergeEnvironment(
+        IReadOnlyDictionary<string, string> extraFakeEnvironment = await StartExtraFakesAsync().ConfigureAwait(false);
+        IReadOnlyDictionary<string, string> extraEnvironment = MergeEnvironment(
             MergeEnvironment(Profile.ExtraEnvironment, entraEnvironment), extraFakeEnvironment);
 
         // Issue #259: used to pre-reserve a port with NetworkUtils.GetFreeTcpPort() -- that probe
@@ -250,7 +250,7 @@ public class ConformanceFixture : IAsyncLifetime
         // free ephemeral port at bind time instead -- no reservation, no TOCTOU window, and no way
         // for two fixtures to ever collide on the same port. Each launcher reads the real bound
         // port back from the backend's own startup output and reports it via Backend.BaseUri.
-        var port = 0;
+        int port = 0;
         try
         {
             Backend = await BackendLauncherFactory.StartAsync(
@@ -312,7 +312,7 @@ public class ConformanceFixture : IAsyncLifetime
         IReadOnlyDictionary<string, string> baseEnvironment, IReadOnlyDictionary<string, string> overrides)
     {
         var merged = new Dictionary<string, string>(baseEnvironment);
-        foreach (var (key, value) in overrides)
+        foreach ((string? key, string? value) in overrides)
         {
             merged[key] = value;
         }
@@ -322,20 +322,20 @@ public class ConformanceFixture : IAsyncLifetime
     /// <summary>How long a scenario's connections get to finish closing before <see
     /// cref="RunAsync"/> gives up and fails with a clear message — matches the <c>FrameTimeout</c>
     /// convention used throughout the scenario tests themselves (PR #22 review item N3).</summary>
-    private static readonly TimeSpan ScenarioTeardownTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_scenarioTeardownTimeout = TimeSpan.FromSeconds(30);
 
     /// <summary>
     /// #62: how long the backend's captured stdout/stderr must stay quiet before an error count
     /// is trusted as a scenario boundary (both the pre-body baseline and, since #66 M1, the
     /// post-body "actual" read), and the safety cap on how long to wait for that quiet period at
     /// all. Kept short in the common case with the same generous upper bound used elsewhere in
-    /// this file for genuinely unusual contention (<see cref="ScenarioTeardownTimeout"/>) — #66
+    /// this file for genuinely unusual contention (<see cref="s_scenarioTeardownTimeout"/>) — #66
     /// S1's fast path in <see cref="CapturedProcessOutput.WaitForOutputQuiescenceAsync"/> means
     /// this window's cost is only ever paid when the backend was *not* already silent, not on
     /// every call regardless.
     /// </summary>
-    private static readonly TimeSpan BaselineQuiescenceWindow = TimeSpan.FromMilliseconds(250);
-    private static readonly TimeSpan BaselineQuiescenceMaxWait = ScenarioTeardownTimeout;
+    private static readonly TimeSpan s_baselineQuiescenceWindow = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan s_baselineQuiescenceMaxWait = s_scenarioTeardownTimeout;
 
     /// <summary>
     /// #66 M1: attributes an unhandled backend error that lands so late it survives even the
@@ -369,7 +369,7 @@ public class ConformanceFixture : IAsyncLifetime
     /// </summary>
     public Task RunAuthRowAsync(Func<Task> body)
     {
-        var skipReason = AuthRowCapability.ShouldSkipCurrentBackend();
+        string? skipReason = AuthRowCapability.ShouldSkipCurrentBackend();
         if (skipReason is not null)
         {
             Assert.Skip(skipReason);
@@ -428,9 +428,9 @@ public class ConformanceFixture : IAsyncLifetime
         // "socket already closing" outcome would otherwise get attributed to whichever scenario
         // happened to call AssertNoHandlerFaults first, not the one that actually caused it (PR
         // #22 review item N3).
-        var connectionWatermark = Realtime.ConnectionWatermark;
+        int connectionWatermark = Realtime.ConnectionWatermark;
 
-        var scenarioName = TestContext.Current.Test?.TestDisplayName ?? "<unnamed scenario>";
+        string scenarioName = TestContext.Current.Test?.TestDisplayName ?? "<unnamed scenario>";
 
         // Baseline captured BEFORE the scenario runs, not compared against zero: the backend
         // process is shared across every test in this collection (starting a fresh Python
@@ -468,19 +468,19 @@ public class ConformanceFixture : IAsyncLifetime
         // M1 fix took two separate reads back-to-back here, so a line landing in the gap between
         // them was neither charged to the previous scenario nor counted in this scenario's own
         // baseline (silently lost).
-        var preBaselineQuiesced = true;
-        var baselineUnhandledErrors = 0;
+        bool preBaselineQuiesced = true;
+        int baselineUnhandledErrors = 0;
         string? strandedMessage = null;
         if (Backend is not null)
         {
             preBaselineQuiesced = await Backend.WaitForOutputQuiescenceAsync(
-                BaselineQuiescenceWindow, BaselineQuiescenceMaxWait, TestContext.Current.CancellationToken)
+                s_baselineQuiescenceWindow, s_baselineQuiescenceMaxWait, TestContext.Current.CancellationToken)
                 .ConfigureAwait(false);
 
             (baselineUnhandledErrors, strandedMessage) = _errorAttribution.BeginScenario(Backend.UnhandledErrorCount);
         }
 
-        var postBodyRecorded = false;
+        bool postBodyRecorded = false;
 
         // Rick's PR #253 review (2nd follow-up): set true only once AssertNoPendingExtraFakeState
         // below has actually run -- i.e. the scenario body returned normally and the settle/fault
@@ -488,7 +488,7 @@ public class ConformanceFixture : IAsyncLifetime
         // false and the `finally` below calls ResetExtraFakeState() instead, so a throwing
         // scenario's leftover extra-fake state (see that method's own doc comment) still gets
         // cleared before the next scenario runs.
-        var extraFakeStateChecked = false;
+        bool extraFakeStateChecked = false;
         try
         {
             if (strandedMessage is not null)
@@ -505,7 +505,7 @@ public class ConformanceFixture : IAsyncLifetime
                 Assert.Fail(preBaselineQuiesced
                     ? strandedMessage
                     : strandedMessage + " (This scenario's own pre-body quiescence wait also hit " +
-                      $"its {BaselineQuiescenceMaxWait} cap without the backend ever going fully " +
+                      $"its {s_baselineQuiescenceMaxWait} cap without the backend ever going fully " +
                       "quiet, so there may be even more still in flight.)");
             }
 
@@ -520,13 +520,13 @@ public class ConformanceFixture : IAsyncLifetime
             // missing a fault that hadn't been recorded yet (this scenario would wrongly pass) and
             // then discovering it later, misattributed to whichever *next* scenario happened to
             // call AssertNoHandlerFaults first (PR #22 review item N3).
-            var settled = await Realtime.WaitForNoOpenConnectionsAsync(ScenarioTeardownTimeout).ConfigureAwait(false);
+            bool settled = await Realtime.WaitForNoOpenConnectionsAsync(s_scenarioTeardownTimeout).ConfigureAwait(false);
             if (!settled)
             {
-                var stillOpen = string.Join(", ", Realtime.OpenConnectionIds);
+                string stillOpen = string.Join(", ", Realtime.OpenConnectionIds);
                 throw new InvalidOperationException(
                     $"{Realtime.OpenConnectionIds.Count} upstream connection(s) were still open " +
-                    $"{ScenarioTeardownTimeout} after this scenario's body returned: [{stillOpen}]. " +
+                    $"{s_scenarioTeardownTimeout} after this scenario's body returned: [{stillOpen}]. " +
                     "A handler is still running (or a browser client this scenario opened was " +
                     "never closed) -- this must settle before handler faults can be checked " +
                     "reliably.");
@@ -564,8 +564,8 @@ public class ConformanceFixture : IAsyncLifetime
                 // not just before it -- so THIS scenario's own late output is checked against ITS
                 // OWN allowance here, instead of silently becoming whatever scenario runs next's
                 // problem to (potentially wrongly) absorb.
-                var postBodyQuiesced = await Backend.WaitForOutputQuiescenceAsync(
-                    BaselineQuiescenceWindow, BaselineQuiescenceMaxWait, TestContext.Current.CancellationToken)
+                bool postBodyQuiesced = await Backend.WaitForOutputQuiescenceAsync(
+                    s_baselineQuiescenceWindow, s_baselineQuiescenceMaxWait, TestContext.Current.CancellationToken)
                     .ConfigureAwait(false);
 
                 // #66 re-review, R2: EndScenario takes exactly ONE read too, reused both for the
@@ -574,14 +574,14 @@ public class ConformanceFixture : IAsyncLifetime
                 // second time in this method's own `finally` for exactly that record, which could
                 // observe one more stray line than this check saw and silently drop it (neither
                 // charged nor checked).
-                var (actual, withinBound) = _errorAttribution.EndScenario(
+                (int actual, bool withinBound) = _errorAttribution.EndScenario(
                     scenarioName, Backend.UnhandledErrorCount, baselineUnhandledErrors, allowedNewBackendErrors);
                 postBodyRecorded = true;
                 Assert.True(withinBound,
                     $"Expected at most {allowedNewBackendErrors} new backend error(s) above the " +
                     $"baseline of {baselineUnhandledErrors}, but observed {actual}." +
                     (postBodyQuiesced ? "" : " (This scenario's own post-body quiescence wait hit " +
-                      $"its {BaselineQuiescenceMaxWait} cap without the backend ever going fully " +
+                      $"its {s_baselineQuiescenceMaxWait} cap without the backend ever going fully " +
                       "quiet, so there may be even more still in flight.)"));
             }
         }

@@ -12,7 +12,7 @@ namespace Conformance.Tests.Scenarios.Browser;
 [Trait("Dotnet", "ready")]
 public sealed class TacoBellCustomizationBrowserTests(BrowserConformanceFixture fixture)
 {
-    private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_timeout = TimeSpan.FromSeconds(30);
 
     private const string Capture = """
         (() => {
@@ -34,16 +34,17 @@ public sealed class TacoBellCustomizationBrowserTests(BrowserConformanceFixture 
     [Fact]
     public Task Shell_change_omissions_meal_drink_late_sweet_and_free_reward_render_exactly() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        await using var context = await fixture.Browser!.NewContextAsync(new()
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using IBrowserContext context = await fixture.Browser!.NewContextAsync(new()
         {
-            ViewportSize = new() { Width = 1440, Height = 1100 }, Permissions = ["microphone"],
+            ViewportSize = new() { Width = 1440, Height = 1100 },
+            Permissions = ["microphone"],
         });
         await context.AddInitScriptAsync(Capture);
-        var page = await context.NewPageAsync();
-        var next = fixture.Realtime.WaitForNextConnectionAsync(Timeout, ct);
+        IPage page = await context.NewPageAsync();
+        Task<FakeRealtimeConnection?> next = fixture.Realtime.WaitForNextConnectionAsync(s_timeout, ct);
         await page.GotoAsync(new Uri(fixture.Backend!.BaseUri, "?persona=tacobell").ToString());
-        var upstream = await next;
+        FakeRealtimeConnection? upstream = await next;
         Assert.NotNull(upstream);
         upstream.Script.RemoveVadSpeechDefaultRule();
         upstream.Script.Enqueue(new ResponseScript([new DoneEvent()]));
@@ -57,30 +58,35 @@ public sealed class TacoBellCustomizationBrowserTests(BrowserConformanceFixture 
             await upstream.SendAsync(new JsonObject
             {
                 ["type"] = "conversation.item.input_audio_transcription.completed",
-                ["item_id"] = $"guest_{Guid.NewGuid():N}", ["transcript"] = text,
+                ["item_id"] = $"guest_{Guid.NewGuid():N}",
+                ["transcript"] = text,
             }, ct);
         }
 
         async Task<JsonElement?> Tool(string name, object arguments)
         {
-            var id = $"custom_{Guid.NewGuid():N}";
-            var watermark = await page.EvaluateAsync<int>("window.__customFrames.length");
+            string id = $"custom_{Guid.NewGuid():N}";
+            int watermark = await page.EvaluateAsync<int>("window.__customFrames.length");
             upstream.Script.Enqueue(new ResponseScript([
                 new FunctionCallEvent(name, JsonSerializer.Serialize(arguments), id), new DoneEvent(),
             ]));
             // This is a synthetic model turn, not a direct mutation of the ticket or final state.
             await page.EvaluateAsync("window.__customSocket.send(JSON.stringify({type:'response.create'}))");
-            var output = await upstream.ReceivedFrames.WaitForAsync(f =>
-                f.Type == "conversation.item.create" && f.Json.TryGetProperty("item", out var item) &&
-                item.TryGetProperty("call_id", out var call) && call.GetString() == id, Timeout, ct);
+            RecordedFrame? output = await upstream.ReceivedFrames.WaitForAsync(f =>
+                f.Type == "conversation.item.create" && f.Json.TryGetProperty("item", out JsonElement item) &&
+                item.TryGetProperty("call_id", out JsonElement call) && call.GetString() == id, s_timeout, ct);
             Assert.NotNull(output);
-            var text = output.Json.GetProperty("item").GetProperty("output").GetString()!;
+            string text = output.Json.GetProperty("item").GetProperty("output").GetString()!;
             Assert.DoesNotContain("\"status\": \"rejected\"", text);
             Assert.DoesNotContain("\"status\":\"rejected\"", text);
             await page.WaitForFunctionAsync(
                 "n => window.__customFrames.slice(n).some(f=>f.type==='extension.round_trip_token')", watermark);
             evidence.Add(new { tool = name, arguments, output = text });
-            if (name == "search") return JsonSerializer.SerializeToElement(text);
+            if (name == "search")
+            {
+                return JsonSerializer.SerializeToElement(text);
+            }
+
             return await page.EvaluateAsync<JsonElement>(
                 "n => JSON.parse(window.__customFrames.slice(n).filter(f=>f.type==='extension.middle_tier_tool_response').at(-1).tool_result)",
                 watermark);
@@ -90,9 +96,9 @@ public sealed class TacoBellCustomizationBrowserTests(BrowserConformanceFixture 
         {
             if (action == "add")
             {
-                var query = item.Contains("Combo") ? "3" :
+                string query = item.Contains("Combo") ? "3" :
                     item.Contains("Baja Blast") ? "Baja" : item.Split(' ')[0];
-                var search = await Tool("search", new { query });
+                JsonElement? search = await Tool("search", new { query });
                 Assert.Contains(item.Split('(')[0].Trim(), search!.Value.GetString());
             }
             await Tool("update_order", new { action, item_name = item, size, quantity = 1 });
@@ -100,18 +106,20 @@ public sealed class TacoBellCustomizationBrowserTests(BrowserConformanceFixture 
 
         async Task<JsonElement> ReadBack()
         {
-            var ticket = (await Tool("get_order", new { }))!.Value;
-            var spoken = ticket.GetProperty("spokenReadBack").GetString()!;
+            JsonElement ticket = (await Tool("get_order", new { }))!.Value;
+            string spoken = ticket.GetProperty("spokenReadBack").GetString()!;
             evidence.Add(new { assistant = spoken, ticket });
             await upstream.SendAsync(new JsonObject
             {
                 ["type"] = "response.done",
                 ["response"] = new JsonObject
                 {
-                    ["id"] = $"readback_{Guid.NewGuid():N}", ["status"] = "completed",
+                    ["id"] = $"readback_{Guid.NewGuid():N}",
+                    ["status"] = "completed",
                     ["output"] = new JsonArray(new JsonObject
                     {
-                        ["type"] = "message", ["role"] = "assistant",
+                        ["type"] = "message",
+                        ["role"] = "assistant",
                         ["content"] = new JsonArray(new JsonObject { ["type"] = "audio", ["transcript"] = spoken }),
                     }),
                 },
@@ -119,7 +127,7 @@ public sealed class TacoBellCustomizationBrowserTests(BrowserConformanceFixture 
             return ticket;
         }
 
-        var code = page.GetByLabel("Demo rewards / check-in code", new() { Exact = true });
+        ILocator code = page.GetByLabel("Demo rewards / check-in code", new() { Exact = true });
         await code.FillAsync("DEMO-PLUS");
         await page.GetByRole(AriaRole.Button, new() { Name = "Check in", Exact = true }).ClickAsync();
         await Expect(page.GetByText("Demo check-in linked to this order", new() { Exact = true })).ToBeVisibleAsync();
@@ -138,10 +146,10 @@ public sealed class TacoBellCustomizationBrowserTests(BrowserConformanceFixture 
         await Guest("Add nachos and cheese, and a large Mountain Dew Baja Blast with the meal.");
         await Update("add", "Chips and Nacho Cheese Sauce");
         await Update("add", "Mountain Dew Baja Blast", "large");
-        var initial = await ReadBack();
-        var items = initial.GetProperty("items").EnumerateArray().ToArray();
+        JsonElement initial = await ReadBack();
+        JsonElement[] items = [.. initial.GetProperty("items").EnumerateArray()];
         Assert.Equal(2, items.Length);
-        var meal = items.Single(i => i.GetProperty("item").GetString() == "3 Soft Tacos Combo (No Tomatoes)");
+        JsonElement meal = items.Single(i => i.GetProperty("item").GetString() == "3 Soft Tacos Combo (No Tomatoes)");
         Assert.Equal(1, meal.GetProperty("quantity").GetInt32());
         Assert.Equal(9.49m, meal.GetProperty("price").GetDecimal());
         Assert.Equal(["Large Mountain Dew Baja Blast"], meal.GetProperty("components").EnumerateArray().Select(c => c.GetString()).ToArray());
@@ -150,7 +158,7 @@ public sealed class TacoBellCustomizationBrowserTests(BrowserConformanceFixture 
         Assert.Equal("$0.96", initial.GetProperty("taxDisplay").GetString());
         Assert.Equal("$12.94", initial.GetProperty("finalTotalDisplay").GetString());
         Assert.False(initial.GetProperty("rewardsDemo").GetProperty("completed").GetBoolean());
-        var ticketUi = page.GetByTestId("order-ticket");
+        ILocator ticketUi = page.GetByTestId("order-ticket");
         await Expect(ticketUi).ToContainTextAsync("No Tomatoes");
         await Expect(ticketUi).ToContainTextAsync("Large Mountain Dew Baja Blast");
         await Expect(ticketUi).ToContainTextAsync("+$0.50");
@@ -158,7 +166,7 @@ public sealed class TacoBellCustomizationBrowserTests(BrowserConformanceFixture 
 
         await Guest("I forgot Cinnamon Twists. Add those after that total, please.");
         await Update("add", "Cinnamon Twists");
-        var amended = await ReadBack();
+        JsonElement amended = await ReadBack();
         Assert.Equal(3, amended.GetProperty("items").GetArrayLength());
         Assert.Equal("$13.47", amended.GetProperty("totalDisplay").GetString());
         Assert.Equal("$1.08", amended.GetProperty("taxDisplay").GetString());
@@ -170,13 +178,13 @@ public sealed class TacoBellCustomizationBrowserTests(BrowserConformanceFixture 
         await Guest("Use my demo reward to make the Cinnamon Twists free.");
         await page.GetByRole(AriaRole.Button, new() { Name = "Use reward", Exact = true }).ClickAsync();
         await Expect(ticketUi).ToContainTextAsync("-$1.49");
-        var rewardsPanel = page.GetByRole(AriaRole.Region, new() { Name = "Simulated rewards" });
+        ILocator rewardsPanel = page.GetByRole(AriaRole.Region, new() { Name = "Simulated rewards" });
         await Expect(rewardsPanel.GetByRole(AriaRole.Button)).ToHaveCountAsync(2);
         await page.GetByRole(AriaRole.Button, new() { Name = "Undo reward", Exact = true }).ClickAsync();
         await Expect(ticketUi).Not.ToContainTextAsync("-$1.49");
         await page.GetByRole(AriaRole.Button, new() { Name = "Use reward", Exact = true }).ClickAsync();
         await Expect(ticketUi).ToContainTextAsync("-$1.49");
-        var free = await ReadBack();
+        JsonElement free = await ReadBack();
         Assert.Equal("$12.94", free.GetProperty("finalTotalDisplay").GetString());
         Assert.Equal(1.49m, free.GetProperty("rewardsDemo").GetProperty("discount").GetDecimal());
         Assert.Equal(500, free.GetProperty("rewardsDemo").GetProperty("balance").GetInt32());
@@ -186,16 +194,16 @@ public sealed class TacoBellCustomizationBrowserTests(BrowserConformanceFixture 
         await Expect(rewardsPanel.GetByRole(AriaRole.Button, new() { Name = "Next order", Exact = true })).ToBeVisibleAsync();
         await Expect(page.GetByRole(AriaRole.Region, new() { Name = "Simulated rewards" })).ToContainTextAsync("369");
         await page.EvaluateAsync("window.__customSocket.send(JSON.stringify({type:'extension.demo_rewards',action:'complete'}))");
-        var final = await Tool("get_order", new { });
+        JsonElement? final = await Tool("get_order", new { });
         Assert.Equal(369, final!.Value.GetProperty("rewardsDemo").GetProperty("balance").GetInt32());
-        var conversation = page.GetByTestId("transcript-panel-card");
+        ILocator conversation = page.GetByTestId("transcript-panel-card");
         await Expect(conversation).ToContainTextAsync("Actually make all three tacos soft, not hard shell.");
         await Expect(conversation).ToContainTextAsync("Remove tomatoes from all three tacos.");
         await Expect(conversation).ToContainTextAsync("I forgot Cinnamon Twists. Add those after that total, please.");
         await Expect(conversation).ToContainTextAsync("fourteen dollars and fifty-five cents");
         await Expect(conversation).ToContainTextAsync("twelve dollars and ninety-four cents");
         evidence.Add(new { finalTicket = final.Value });
-        var folder = Environment.GetEnvironmentVariable("TACO_BELL_EVIDENCE_DIR");
+        string? folder = Environment.GetEnvironmentVariable("TACO_BELL_EVIDENCE_DIR");
         if (!string.IsNullOrEmpty(folder))
         {
             Directory.CreateDirectory(folder);
@@ -211,7 +219,9 @@ public sealed class TacoBellCustomizationBrowserTests(BrowserConformanceFixture 
         await Expect(rewardsPanel).Not.ToContainTextAsync("369");
         await Expect(rewardsPanel).Not.ToContainTextAsync("Order complete");
         if (!string.IsNullOrEmpty(folder))
+        {
             await page.ScreenshotAsync(new() { Path = Path.Combine(folder, "completed-expired-mobile.png"), FullPage = true });
+        }
     });
 
     [Theory]
@@ -219,13 +229,13 @@ public sealed class TacoBellCustomizationBrowserTests(BrowserConformanceFixture 
     [InlineData(false)]
     public Task Expired_rewards_disable_checkin_and_reconnect_to_a_fresh_ledger(bool checkedIn) => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        await using var context = await fixture.Browser!.NewContextAsync(new() { Permissions = ["microphone"] });
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using IBrowserContext context = await fixture.Browser!.NewContextAsync(new() { Permissions = ["microphone"] });
         await context.AddInitScriptAsync(Capture);
-        var page = await context.NewPageAsync();
-        var next = fixture.Realtime.WaitForNextConnectionAsync(Timeout, ct);
+        IPage page = await context.NewPageAsync();
+        Task<FakeRealtimeConnection?> next = fixture.Realtime.WaitForNextConnectionAsync(s_timeout, ct);
         await page.GotoAsync(new Uri(fixture.Backend!.BaseUri, "?persona=tacobell").ToString());
-        var upstream = await next;
+        FakeRealtimeConnection? upstream = await next;
         Assert.NotNull(upstream);
         upstream.Script.RemoveVadSpeechDefaultRule();
         await Expect(page.GetByLabel("Demo rewards / check-in code", new() { Exact = true })).ToBeEnabledAsync();
@@ -238,14 +248,14 @@ public sealed class TacoBellCustomizationBrowserTests(BrowserConformanceFixture 
         await Expect(page.GetByRole(AriaRole.Button, new() { Name = "Reconnect", Exact = true })).ToBeVisibleAsync(new() { Timeout = 20000 });
         await Expect(page.GetByRole(AriaRole.Region, new() { Name = "Simulated rewards" }).GetByRole(AriaRole.Button)).ToHaveCountAsync(1);
         await Expect(page.GetByLabel("Demo rewards / check-in code", new() { Exact = true })).ToHaveCountAsync(0);
-        var fresh = fixture.Realtime.WaitForNextConnectionAsync(Timeout, ct);
+        Task<FakeRealtimeConnection?> fresh = fixture.Realtime.WaitForNextConnectionAsync(s_timeout, ct);
         await page.GetByRole(AriaRole.Button, new() { Name = "Reconnect", Exact = true }).ClickAsync();
         Assert.NotNull(await fresh);
         await Expect(page.GetByLabel("Demo rewards / check-in code", new() { Exact = true })).ToBeEnabledAsync();
         await page.GetByLabel("Demo rewards / check-in code", new() { Exact = true }).FillAsync("DEMO-NEW");
         await page.GetByRole(AriaRole.Button, new() { Name = "Check in", Exact = true }).ClickAsync();
         await Expect(page.GetByText("Demo check-in linked to this order", new() { Exact = true })).ToBeVisibleAsync();
-        var reward = page.GetByRole(AriaRole.Region, new() { Name = "Simulated rewards" });
+        ILocator reward = page.GetByRole(AriaRole.Region, new() { Name = "Simulated rewards" });
         await Expect(reward).ToContainTextAsync("0 demo points");
         await Expect(page.GetByRole(AriaRole.Button, new() { Name = "Use reward", Exact = true })).ToHaveCountAsync(0);
         await Expect(page.GetByTestId("order-ticket")).ToContainTextAsync("$0.00");

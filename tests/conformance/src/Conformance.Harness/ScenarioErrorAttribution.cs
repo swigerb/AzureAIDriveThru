@@ -92,7 +92,7 @@ public sealed class ScenarioErrorAttribution
             return null;
         }
 
-        var stranded = currentCount - _lastCheckedCount;
+        int stranded = currentCount - _lastCheckedCount;
         if (stranded <= 0)
         {
             return null;
@@ -111,9 +111,9 @@ public sealed class ScenarioErrorAttribution
             return null;
         }
 
-        var absorbedByAllowance = _lastUnusedAllowance;
-        var unaccountedFor = stranded - absorbedByAllowance;
-        var previousScenario = _lastScenarioName ?? UnknownScenarioName;
+        int absorbedByAllowance = _lastUnusedAllowance;
+        int unaccountedFor = stranded - absorbedByAllowance;
+        string previousScenario = _lastScenarioName ?? UnknownScenarioName;
         _lastUnusedAllowance = 0;
         return $"{stranded} unhandled backend error(s) landed after scenario '{previousScenario}' " +
                $"finished its own check ({absorbedByAllowance} of its unused allowance covers some " +
@@ -152,7 +152,7 @@ public sealed class ScenarioErrorAttribution
     /// </summary>
     public (int Baseline, string? StrandedMessage) BeginScenario(Func<int> readUnhandledErrorCount)
     {
-        var currentCount = readUnhandledErrorCount();
+        int currentCount = readUnhandledErrorCount();
         return (currentCount, ChargeStrandedErrorsToPreviousScenario(currentCount));
     }
 
@@ -173,9 +173,9 @@ public sealed class ScenarioErrorAttribution
     public (int Actual, bool WithinBound) EndScenario(
         string scenarioName, Func<int> readUnhandledErrorCount, int baseline, int allowedNewBackendErrors)
     {
-        var actual = readUnhandledErrorCount();
-        var withinBound = actual <= baseline + allowedNewBackendErrors;
-        var unusedAllowance = withinBound ? allowedNewBackendErrors - (actual - baseline) : 0;
+        int actual = readUnhandledErrorCount();
+        bool withinBound = actual <= baseline + allowedNewBackendErrors;
+        int unusedAllowance = withinBound ? allowedNewBackendErrors - (actual - baseline) : 0;
         RecordScenarioChecked(scenarioName, actual, unusedAllowance);
         return (actual, withinBound);
     }
@@ -192,7 +192,7 @@ public sealed class ScenarioErrorAttribution
     /// </summary>
     public int RecordScenarioFailed(string scenarioName, Func<int> readUnhandledErrorCount)
     {
-        var countNow = readUnhandledErrorCount();
+        int countNow = readUnhandledErrorCount();
         RecordScenarioChecked(scenarioName, countNow, unusedAllowance: 0);
         return countNow;
     }

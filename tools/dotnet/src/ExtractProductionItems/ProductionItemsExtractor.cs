@@ -28,7 +28,7 @@ public sealed record UiItem(string Name, string Category);
 /// </summary>
 public static class ProductionItemsExtractor
 {
-    private static readonly (string Prefix, string Label)[] SizePrefixes =
+    private static readonly (string Prefix, string Label)[] s_sizePrefixes =
     [
         ("Mini ", "Mini"),
         ("Sm ", "Small"),
@@ -38,7 +38,7 @@ public static class ProductionItemsExtractor
         ("Rt. 44", "RT 44"),
     ];
 
-    private static readonly Regex NonAlphanumericSpace = new("[^a-z0-9 ]", RegexOptions.Compiled);
+    private static readonly Regex s_nonAlphanumericSpace = new("[^a-z0-9 ]", RegexOptions.Compiled);
 
     /// <summary>
     /// Port of <c>extract_production_items()</c>: walks the production POS export's category tree
@@ -47,14 +47,14 @@ public static class ProductionItemsExtractor
     /// </summary>
     public static IReadOnlyList<ProductionItem> ExtractProductionItems(string productionPath)
     {
-        using var stream = File.OpenRead(productionPath);
+        using FileStream stream = File.OpenRead(productionPath);
         using var doc = JsonDocument.Parse(stream);
 
         // list(raw_data["menus"].values())[0] -- the FIRST value in the "menus" object's
         // document order, not a specific named key.
         JsonElement menu = default;
-        var foundMenu = false;
-        foreach (var menuProp in doc.RootElement.GetProperty("menus").EnumerateObject())
+        bool foundMenu = false;
+        foreach (JsonProperty menuProp in doc.RootElement.GetProperty("menus").EnumerateObject())
         {
             menu = menuProp.Value;
             foundMenu = true;
@@ -65,17 +65,17 @@ public static class ProductionItemsExtractor
             throw new InvalidOperationException($"'{productionPath}' has no entries under \"menus\".");
         }
 
-        var products = BuildLookup(menu.GetProperty("products"));
-        var categoriesElement = menu.GetProperty("categories");
-        var categories = BuildLookup(categoriesElement);
-        var productGroups = BuildLookup(menu.GetProperty("productGroups"));
+        Dictionary<string, JsonElement> products = BuildLookup(menu.GetProperty("products"));
+        JsonElement categoriesElement = menu.GetProperty("categories");
+        Dictionary<string, JsonElement> categories = BuildLookup(categoriesElement);
+        Dictionary<string, JsonElement> productGroups = BuildLookup(menu.GetProperty("productGroups"));
 
         // Find top-level categories: categories.keys() filtered by set membership, preserving
         // categories.keys()'s own document order (the filter itself is order-irrelevant).
         var childCatIds = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var catProp in categoriesElement.EnumerateObject())
+        foreach (JsonProperty catProp in categoriesElement.EnumerateObject())
         {
-            foreach (var childRef in EnumerateChildRefs(catProp.Value))
+            foreach (string childRef in EnumerateChildRefs(catProp.Value))
             {
                 if (childRef.StartsWith("categories.", StringComparison.Ordinal))
                 {
@@ -84,7 +84,7 @@ public static class ProductionItemsExtractor
             }
         }
         var topLevelCats = new List<string>();
-        foreach (var catProp in categoriesElement.EnumerateObject())
+        foreach (JsonProperty catProp in categoriesElement.EnumerateObject())
         {
             if (!childCatIds.Contains(catProp.Name))
             {
@@ -97,9 +97,9 @@ public static class ProductionItemsExtractor
         // becomes both the de-duplication rule AND the final list's order.
         var productCategoryMap = new List<(string ProductId, string CategoryName)>();
         var seenProductIds = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var catId in topLevelCats)
+        foreach (string catId in topLevelCats)
         {
-            foreach (var (productId, leafCategoryName) in CollectProductsFromCategory(catId, categories))
+            foreach ((string? productId, string? leafCategoryName) in CollectProductsFromCategory(catId, categories))
             {
                 if (seenProductIds.Add(productId))
                 {
@@ -109,21 +109,21 @@ public static class ProductionItemsExtractor
         }
 
         var structured = new List<ProductionItem>();
-        foreach (var (productId, categoryName) in productCategoryMap)
+        foreach ((string? productId, string? categoryName) in productCategoryMap)
         {
             // `product = products.get(prod_id); if not product: continue` -- Python's falsy check
             // skips not just a MISSING product, but also one present as an empty object `{}`
             // (bool({}) is False), unlike a bare "does the key exist" lookup.
-            if (!products.TryGetValue(productId, out var product) || !IsTruthy(product))
+            if (!products.TryGetValue(productId, out JsonElement product) || !IsTruthy(product))
             {
                 continue;
             }
-            if (product.TryGetProperty("isRecipe", out var isRecipe) && IsTruthy(isRecipe))
+            if (product.TryGetProperty("isRecipe", out JsonElement isRecipe) && IsTruthy(isRecipe))
             {
                 continue;
             }
 
-            var sizeVariants = GetSizeVariants(product, products, productGroups);
+            List<SizeVariant> sizeVariants = GetSizeVariants(product, products, productGroups);
             if (sizeVariants.Count == 0)
             {
                 sizeVariants = [new SizeVariant("Standard", PriceOrZero(product))];
@@ -149,16 +149,16 @@ public static class ProductionItemsExtractor
     /// </summary>
     public static IReadOnlyList<UiItem> LoadUiItems(string menuPath)
     {
-        using var stream = File.OpenRead(menuPath);
+        using FileStream stream = File.OpenRead(menuPath);
         using var doc = JsonDocument.Parse(stream);
 
         var items = new List<UiItem>();
-        if (doc.RootElement.TryGetProperty("menuItems", out var menuItems) && menuItems.ValueKind == JsonValueKind.Array)
+        if (doc.RootElement.TryGetProperty("menuItems", out JsonElement menuItems) && menuItems.ValueKind == JsonValueKind.Array)
         {
-            foreach (var group in menuItems.EnumerateArray())
+            foreach (JsonElement group in menuItems.EnumerateArray())
             {
-                var category = group.GetProperty("category").GetString()!;
-                foreach (var item in group.GetProperty("items").EnumerateArray())
+                string category = group.GetProperty("category").GetString()!;
+                foreach (JsonElement item in group.GetProperty("items").EnumerateArray())
                 {
                     items.Add(new UiItem(item.GetProperty("name").GetString()!, category));
                 }
@@ -177,7 +177,7 @@ public static class ProductionItemsExtractor
     /// </summary>
     public static string NormalizeSizeName(string childDisplayName, string parentDisplayName)
     {
-        foreach (var (prefix, label) in SizePrefixes)
+        foreach ((string? prefix, string? label) in s_sizePrefixes)
         {
             if (childDisplayName.StartsWith(prefix, StringComparison.Ordinal))
             {
@@ -185,7 +185,7 @@ public static class ProductionItemsExtractor
             }
         }
 
-        var stripped = string.IsNullOrEmpty(parentDisplayName)
+        string stripped = string.IsNullOrEmpty(parentDisplayName)
             ? childDisplayName
             : childDisplayName.Replace(parentDisplayName, "");
         stripped = stripped.Trim();
@@ -204,9 +204,9 @@ public static class ProductionItemsExtractor
     /// </summary>
     public static string Normalize(string name)
     {
-        var lowered = name.ToLowerInvariant().Replace("\u00ae", "").Replace("\u2122", "");
-        var scrubbed = NonAlphanumericSpace.Replace(lowered, " ");
-        var tokens = scrubbed.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        string lowered = name.ToLowerInvariant().Replace("\u00ae", "").Replace("\u2122", "");
+        string scrubbed = s_nonAlphanumericSpace.Replace(lowered, " ");
+        string[] tokens = scrubbed.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         return string.Join(" ", tokens);
     }
 
@@ -235,16 +235,16 @@ public static class ProductionItemsExtractor
         var byCategory = new Dictionary<string, List<ProductionItem>>(StringComparer.Ordinal);
         var catCounts = new List<(string Category, int Count)>();
         var catCountIndex = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var item in production)
+        foreach (ProductionItem item in production)
         {
-            if (!byCategory.TryGetValue(item.Category, out var itemsInCategory))
+            if (!byCategory.TryGetValue(item.Category, out List<ProductionItem>? itemsInCategory))
             {
                 itemsInCategory = [];
                 byCategory[item.Category] = itemsInCategory;
             }
             itemsInCategory.Add(item);
 
-            if (catCountIndex.TryGetValue(item.Category, out var index))
+            if (catCountIndex.TryGetValue(item.Category, out int index))
             {
                 catCounts[index] = (item.Category, catCounts[index].Count + 1);
             }
@@ -263,7 +263,7 @@ public static class ProductionItemsExtractor
         // own (first-occurrence-in-`production`) relative order. LINQ's OrderByDescending is also
         // a stable sort, so sorting catCounts (itself built in first-occurrence order above)
         // reproduces the same tie-break exactly.
-        foreach (var (category, count) in catCounts.OrderByDescending(c => c.Count))
+        foreach ((string? category, int count) in catCounts.OrderByDescending(c => c.Count))
         {
             Append($"\n{new string('─', 60)}");
             Append($"  {category}  ({count} items)");
@@ -273,9 +273,9 @@ public static class ProductionItemsExtractor
             // actual Unicode CODE POINTS, not culture-aware, and (for an astral character such as
             // an emoji) not the same as .NET's StringComparer.Ordinal either -- see
             // CodePointComparer's remarks.
-            foreach (var item in byCategory[category].OrderBy(i => i.Name, CodePointComparer.Instance))
+            foreach (ProductionItem? item in byCategory[category].OrderBy(i => i.Name, CodePointComparer.Instance))
             {
-                var sizesStr = string.Join(", ", item.Sizes.Select(FormatSize));
+                string sizesStr = string.Join(", ", item.Sizes.Select(FormatSize));
                 Append($"  • {item.Name}");
                 Append($"    Sizes: {sizesStr}");
             }
@@ -297,7 +297,7 @@ public static class ProductionItemsExtractor
         Append($"\n  ⛔ In UI but NOT in production ({inUiNotProd.Count}):");
         if (inUiNotProd.Count > 0)
         {
-            foreach (var n in inUiNotProd)
+            foreach (string? n in inUiNotProd)
             {
                 Append($"     • {n}");
             }
@@ -313,7 +313,7 @@ public static class ProductionItemsExtractor
         Append($"\n  ✅ In production but NOT in UI ({inProdNotUi.Count}):");
         if (inProdNotUi.Count > 0)
         {
-            foreach (var n in inProdNotUi)
+            foreach (string? n in inProdNotUi)
             {
                 Append($"     • {n}");
             }
@@ -339,19 +339,19 @@ public static class ProductionItemsExtractor
     {
         // `cat = categories.get(cat_id); if not cat: return []` -- Python treats a present-but-
         // empty `{}` category the same as a missing one.
-        if (!categories.TryGetValue(categoryId, out var category) || !IsTruthy(category))
+        if (!categories.TryGetValue(categoryId, out JsonElement category) || !IsTruthy(category))
         {
             return [];
         }
 
-        var currentName = !string.IsNullOrEmpty(leafName) ? leafName! : StringOrDefault(category, "displayName", categoryId);
+        string currentName = !string.IsNullOrEmpty(leafName) ? leafName : StringOrDefault(category, "displayName", categoryId);
         var result = new List<(string, string)>();
-        foreach (var childRef in EnumerateChildRefs(category))
+        foreach (string childRef in EnumerateChildRefs(category))
         {
             if (childRef.StartsWith("categories.", StringComparison.Ordinal))
             {
-                var subCategoryId = childRef["categories.".Length..];
-                var subName = categories.TryGetValue(subCategoryId, out var subCategory)
+                string subCategoryId = childRef["categories.".Length..];
+                string subName = categories.TryGetValue(subCategoryId, out JsonElement subCategory)
                     ? StringOrDefault(subCategory, "displayName", subCategoryId)
                     : subCategoryId;
                 result.AddRange(CollectProductsFromCategory(subCategoryId, categories, subName));
@@ -373,45 +373,45 @@ public static class ProductionItemsExtractor
         Dictionary<string, JsonElement> productGroups)
     {
         var sizes = new List<SizeVariant>();
-        if (!product.TryGetProperty("relatedProducts", out var relatedProducts) ||
+        if (!product.TryGetProperty("relatedProducts", out JsonElement relatedProducts) ||
             relatedProducts.ValueKind != JsonValueKind.Object ||
-            !relatedProducts.TryGetProperty("alternatives", out var alternatives) ||
+            !relatedProducts.TryGetProperty("alternatives", out JsonElement alternatives) ||
             alternatives.ValueKind != JsonValueKind.Object)
         {
             return sizes;
         }
 
-        var parentDisplayName = StringOrDefault(product, "displayName", "");
-        foreach (var groupRefProp in alternatives.EnumerateObject())
+        string parentDisplayName = StringOrDefault(product, "displayName", "");
+        foreach (JsonProperty groupRefProp in alternatives.EnumerateObject())
         {
-            var groupRef = groupRefProp.Name;
+            string groupRef = groupRefProp.Name;
             if (!groupRef.StartsWith("productGroups.", StringComparison.Ordinal))
             {
                 continue;
             }
-            var groupId = groupRef["productGroups.".Length..];
+            string groupId = groupRef["productGroups.".Length..];
             // `group = product_groups.get(group_id); if not group: continue`.
-            if (!productGroups.TryGetValue(groupId, out var group) || !IsTruthy(group))
+            if (!productGroups.TryGetValue(groupId, out JsonElement group) || !IsTruthy(group))
             {
                 continue;
             }
-            foreach (var childRef in EnumerateChildRefs(group))
+            foreach (string childRef in EnumerateChildRefs(group))
             {
                 if (!childRef.StartsWith("products.", StringComparison.Ordinal))
                 {
                     continue;
                 }
-                var childId = childRef["products.".Length..];
+                string childId = childRef["products.".Length..];
                 // `child_product = products.get(child_id); if child_product: sizes.append(...)` --
                 // a present-but-empty `{}` child product is falsy and silently contributes NO size
                 // variant, same as a missing one; it must not fall through to a bogus
                 // "<id>=$0.00" entry built from StringOrDefault/GetDoubleOrDefault's fallbacks.
-                if (!products.TryGetValue(childId, out var childProduct) || !IsTruthy(childProduct))
+                if (!products.TryGetValue(childId, out JsonElement childProduct) || !IsTruthy(childProduct))
                 {
                     continue;
                 }
-                var childDisplayName = StringOrDefault(childProduct, "displayName", childId);
-                var price = GetDoubleOrDefault(childProduct, "price", 0.0);
+                string childDisplayName = StringOrDefault(childProduct, "displayName", childId);
+                double price = GetDoubleOrDefault(childProduct, "price", 0.0);
                 sizes.Add(new SizeVariant(NormalizeSizeName(childDisplayName, parentDisplayName), price));
             }
         }
@@ -422,9 +422,9 @@ public static class ProductionItemsExtractor
     /// in document order, or empty when absent/not an object.</summary>
     private static IEnumerable<string> EnumerateChildRefs(JsonElement obj)
     {
-        if (obj.TryGetProperty("childRefs", out var childRefs) && childRefs.ValueKind == JsonValueKind.Object)
+        if (obj.TryGetProperty("childRefs", out JsonElement childRefs) && childRefs.ValueKind == JsonValueKind.Object)
         {
-            foreach (var prop in childRefs.EnumerateObject())
+            foreach (JsonProperty prop in childRefs.EnumerateObject())
             {
                 yield return prop.Name;
             }
@@ -439,7 +439,7 @@ public static class ProductionItemsExtractor
     /// value" edge case exactly.
     /// </summary>
     private static string StringOrDefault(JsonElement obj, string propertyName, string fallback) =>
-        obj.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
+        obj.TryGetProperty(propertyName, out JsonElement value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()!
             : fallback;
 
@@ -456,7 +456,7 @@ public static class ProductionItemsExtractor
     /// this fallback already produces.
     /// </summary>
     private static double GetDoubleOrDefault(JsonElement obj, string propertyName, double fallback) =>
-        obj.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.Number
+        obj.TryGetProperty(propertyName, out JsonElement value) && value.ValueKind == JsonValueKind.Number
             ? value.GetDouble()
             : fallback;
 
@@ -470,7 +470,7 @@ public static class ProductionItemsExtractor
     /// </summary>
     private static double PriceOrZero(JsonElement product)
     {
-        var raw = GetDoubleOrDefault(product, "price", 0.0);
+        double raw = GetDoubleOrDefault(product, "price", 0.0);
         return raw == 0.0 ? 0.0 : raw;
     }
 
@@ -503,7 +503,7 @@ public static class ProductionItemsExtractor
     private static Dictionary<string, JsonElement> BuildLookup(JsonElement obj)
     {
         var lookup = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
-        foreach (var prop in obj.EnumerateObject())
+        foreach (JsonProperty prop in obj.EnumerateObject())
         {
             lookup[prop.Name] = prop.Value;
         }

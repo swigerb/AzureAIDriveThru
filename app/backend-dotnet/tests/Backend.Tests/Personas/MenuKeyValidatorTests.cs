@@ -52,7 +52,7 @@ public sealed class MenuKeyValidatorTests
     [Fact]
     public void ValidateNoCollisions_CleanMenu_DoesNotThrow()
     {
-        var menu = MakeMenu(
+        PersonaMenu menu = MakeMenu(
             MakeItem("Tots", aliases: ["tater tots"]),
             MakeItem("Fries"));
 
@@ -62,9 +62,9 @@ public sealed class MenuKeyValidatorTests
     [Fact]
     public void ValidateNoCollisions_TwoItemKeysCollide_Throws()
     {
-        var menu = MakeMenu(MakeItem("Tots"), MakeItem("Tots (Extra Crispy)"));
+        PersonaMenu menu = MakeMenu(MakeItem("Tots"), MakeItem("Tots (Extra Crispy)"));
 
-        var exc = Assert.Throws<PersonaValidationException>(
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(
             () => MenuKeyValidator.ValidateNoCollisions(menu, "test-pack", ""));
         Assert.Contains("Tots", exc.Message);
         Assert.Contains("Tots (Extra Crispy)", exc.Message);
@@ -75,11 +75,11 @@ public sealed class MenuKeyValidatorTests
     [Fact]
     public void ValidateNoCollisions_AliasCollidesWithAnotherItemsAlias_Throws()
     {
-        var menu = MakeMenu(
+        PersonaMenu menu = MakeMenu(
             MakeItem("Tots", aliases: ["snack"]),
             MakeItem("Fries", aliases: ["snack"]));
 
-        var exc = Assert.Throws<PersonaValidationException>(
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(
             () => MenuKeyValidator.ValidateNoCollisions(menu, "test-pack", ""));
         Assert.Contains("snack", exc.Message);
         Assert.Contains("Tots", exc.Message);
@@ -89,11 +89,11 @@ public sealed class MenuKeyValidatorTests
     [Fact]
     public void ValidateNoCollisions_AliasCollidesWithAnotherItemsOwnKey_Throws()
     {
-        var menu = MakeMenu(
+        PersonaMenu menu = MakeMenu(
             MakeItem("Tots", aliases: ["Fries"]),
             MakeItem("Fries"));
 
-        var exc = Assert.Throws<PersonaValidationException>(
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(
             () => MenuKeyValidator.ValidateNoCollisions(menu, "test-pack", ""));
         Assert.Contains("Tots", exc.Message);
         Assert.Contains("Fries", exc.Message);
@@ -106,7 +106,7 @@ public sealed class MenuKeyValidatorTests
         // The alias is declared on the FIRST item but only collides with the SECOND item's own
         // key, which is declared later in the file -- pass 1 must finish building every item's
         // key before pass 2 checks any alias, or this forward reference would be missed.
-        var menu = MakeMenu(
+        PersonaMenu menu = MakeMenu(
             MakeItem("Tots", aliases: ["Fries"]),
             MakeItem("Fries"));
 
@@ -120,7 +120,7 @@ public sealed class MenuKeyValidatorTests
         // An item's own alias normalizing to its own key (e.g. "Tots" aliased to "tots (large)")
         // must not raise -- only a DIFFERENT item's key/alias sharing the same normalized form is
         // a collision.
-        var menu = MakeMenu(MakeItem("Tots", aliases: ["Tots", "tots (large)"]));
+        PersonaMenu menu = MakeMenu(MakeItem("Tots", aliases: ["Tots", "tots (large)"]));
 
         MenuKeyValidator.ValidateNoCollisions(menu, "test-pack", "");
     }
@@ -128,9 +128,9 @@ public sealed class MenuKeyValidatorTests
     [Fact]
     public void ValidateNoCollisions_MenuPathIsFoldedIntoTheMessage()
     {
-        var menu = MakeMenu(MakeItem("Tots"), MakeItem("Tots (Extra Crispy)"));
+        PersonaMenu menu = MakeMenu(MakeItem("Tots"), MakeItem("Tots (Extra Crispy)"));
 
-        var exc = Assert.Throws<PersonaValidationException>(
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(
             () => MenuKeyValidator.ValidateNoCollisions(menu, "test-pack", "some/path/menuItems.json"));
         Assert.Contains("some/path/menuItems.json", exc.Message);
     }
@@ -144,10 +144,10 @@ public sealed class MenuKeyValidatorTests
     // cross-backend behavior difference nobody wrote a test for.
     public static IEnumerable<object[]> SharedMenuKeyVectors()
     {
-        var path = Path.Combine(
+        string path = Path.Combine(
             RepoRootLocator.Find(), "app", "backend", "tests", "fixtures", "menu_key_vectors.json");
         using var doc = JsonDocument.Parse(File.ReadAllText(path));
-        foreach (var vector in doc.RootElement.EnumerateArray())
+        foreach (JsonElement vector in doc.RootElement.EnumerateArray())
         {
             yield return [vector.GetProperty("input").GetString()!, vector.GetProperty("key").GetString()!];
         }

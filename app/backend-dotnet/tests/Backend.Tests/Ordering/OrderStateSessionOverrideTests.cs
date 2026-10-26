@@ -24,7 +24,7 @@ public sealed class OrderStateSessionOverrideTests : IDisposable
     [Fact]
     public void SetMachineOverride_accepts_a_known_machine_and_applies_it_immediately()
     {
-        var order = PersonaOrderFactory.CreateOrderState(DeltaFixture.Load("test-alpha"));
+        OrderState order = PersonaOrderFactory.CreateOrderState(DeltaFixture.Load("test-alpha"));
 
         Assert.Equal("down", order.EffectiveMachineStatus("soda_machine"));
 
@@ -36,7 +36,7 @@ public sealed class OrderStateSessionOverrideTests : IDisposable
     [Fact]
     public void SetMachineOverride_rejects_unknown_machine_and_invalid_status_without_mutation()
     {
-        var order = PersonaOrderFactory.CreateOrderState(DeltaFixture.Load("test-alpha"));
+        OrderState order = PersonaOrderFactory.CreateOrderState(DeltaFixture.Load("test-alpha"));
 
         Assert.False(order.SetMachineOverride("unknown_machine", "up"));
         Assert.False(order.SetMachineOverride("soda_machine", "operational"));
@@ -49,7 +49,7 @@ public sealed class OrderStateSessionOverrideTests : IDisposable
     public void HappyHourMode_on_and_off_override_the_window_and_auto_restores_it()
     {
         FreezeAt("2026-01-15T19:00:00Z"); // 13:00 America/Chicago, outside 14:00-16:00.
-        var forcedOn = PersonaOrderFactory.CreateOrderState(DeltaFixture.Load("test-alpha"));
+        OrderState forcedOn = PersonaOrderFactory.CreateOrderState(DeltaFixture.Load("test-alpha"));
         Assert.False(forcedOn.IsHappyHour());
         Assert.True(forcedOn.SetHappyHourMode("on"));
         forcedOn.HandleOrderUpdate("add", "Alpha Cola", "small", 2, 1.99m);
@@ -57,7 +57,7 @@ public sealed class OrderStateSessionOverrideTests : IDisposable
         Assert.True(forcedOn.IsHappyHour());
         Assert.Equal(1.99m, forcedOn.Summary.Total);
 
-        var auto = PersonaOrderFactory.CreateOrderState(DeltaFixture.Load("test-alpha"));
+        OrderState auto = PersonaOrderFactory.CreateOrderState(DeltaFixture.Load("test-alpha"));
         Assert.True(auto.SetHappyHourMode("on"));
         Assert.True(auto.SetHappyHourMode("auto"));
         auto.HandleOrderUpdate("add", "Alpha Cola", "small", 2, 1.99m);
@@ -66,7 +66,7 @@ public sealed class OrderStateSessionOverrideTests : IDisposable
         Assert.Equal(3.98m, auto.Summary.Total);
 
         FreezeAt("2026-01-15T21:00:00Z"); // 15:00 America/Chicago, inside the window.
-        var forcedOff = PersonaOrderFactory.CreateOrderState(DeltaFixture.Load("test-alpha"));
+        OrderState forcedOff = PersonaOrderFactory.CreateOrderState(DeltaFixture.Load("test-alpha"));
         Assert.True(forcedOff.SetHappyHourMode("off"));
         forcedOff.HandleOrderUpdate("add", "Alpha Cola", "small", 2, 1.99m);
         Assert.Equal("off", forcedOff.GetHappyHourMode());
@@ -77,7 +77,7 @@ public sealed class OrderStateSessionOverrideTests : IDisposable
     [Fact]
     public void SetHappyHourMode_is_rejected_for_a_persona_without_happy_hour()
     {
-        var order = PersonaOrderFactory.CreateOrderState(DeltaFixture.Load("test-delta"));
+        OrderState order = PersonaOrderFactory.CreateOrderState(DeltaFixture.Load("test-delta"));
 
         Assert.False(order.SetHappyHourMode("on"));
         Assert.Equal("auto", order.GetHappyHourMode());
@@ -97,7 +97,7 @@ public sealed class OrderStateSessionOverrideTests : IDisposable
     public void SetHappyHourMode_RecomputesTheCachedSummaryImmediately_SoTotalAndBannerAgree()
     {
         FreezeAt("2026-01-15T19:00:00Z"); // 13:00 America/Chicago, outside 14:00-16:00.
-        var order = PersonaOrderFactory.CreateOrderState(DeltaFixture.Load("test-alpha"));
+        OrderState order = PersonaOrderFactory.CreateOrderState(DeltaFixture.Load("test-alpha"));
         order.HandleOrderUpdate("add", "Alpha Cola", "small", 2, 1.99m);
         Assert.Equal(3.98m, order.Summary.Total); // full price -- outside the window
 

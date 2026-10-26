@@ -33,12 +33,12 @@ public sealed class PersonaSearchIsolationConformanceTests(TwoPersonaConformance
     [Trait("Dotnet", "ready")]
     public Task Test_alpha_session_search_returns_only_test_alpha_items_never_test_beta() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
             fixture, ct, persona: TwoPersonaConformanceFixture.PersonaA);
-        await using var _ = browser;
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult result = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "search", """{"query":"*"}""",
             "call_isolation_alpha", roundTripIndex, ct, toClient: false);
 
@@ -52,12 +52,12 @@ public sealed class PersonaSearchIsolationConformanceTests(TwoPersonaConformance
     [Trait("Dotnet", "ready")]
     public Task Test_beta_session_search_returns_only_test_beta_items_never_test_alpha() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
             fixture, ct, persona: TwoPersonaConformanceFixture.PersonaB);
-        await using var _ = browser;
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult result = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "search", """{"query":"*"}""",
             "call_isolation_beta", roundTripIndex, ct, toClient: false);
 

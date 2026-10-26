@@ -1,5 +1,4 @@
 using System.Text.Json.Nodes;
-using Backend.Cascade;
 using Backend.Realtime;
 
 namespace Backend.Sessions;
@@ -26,7 +25,7 @@ internal sealed class CascadeClientMessageHandler(CascadeSessionContext context)
 
     private async Task HandleAudioAppendAsync(JsonObject data)
     {
-        var audioB64 = CascadeProcessor.GetString(data, "audio");
+        string? audioB64 = CascadeProcessor.GetString(data, "audio");
         if (string.IsNullOrEmpty(audioB64))
         {
             return;
@@ -40,13 +39,13 @@ internal sealed class CascadeClientMessageHandler(CascadeSessionContext context)
         {
             return;
         }
-        var state = context.State;
+        CascadeProcessor.CascadeSessionState state = context.State;
         if (state.NudgeEligible && !state.NudgeArmed)
         {
             state.NudgeArmed = true;
             context.TurnCoordinator.ScheduleNudge();
         }
-        var vadEvent = context.Detector.Feed(pcm, context.NowSeconds());
+        string? vadEvent = context.Detector.Feed(pcm, context.NowSeconds());
         if (vadEvent == "speech_started")
         {
             context.SessionManager?.TouchActivity(context.SessionId);
@@ -56,13 +55,13 @@ internal sealed class CascadeClientMessageHandler(CascadeSessionContext context)
         else if (vadEvent == "speech_stopped")
         {
             context.TurnCoordinator.CancelNudge("guest turn started");
-            var fragment = context.Detector.TakeBuffer();
+            byte[] fragment = context.Detector.TakeBuffer();
             context.Detector.Reset();
             byte[] turnAudio;
             int dropped;
             lock (context.TurnRegistryLock)
             {
-                var carried = context.State.UntranscribedAudio;
+                byte[] carried = context.State.UntranscribedAudio;
                 dropped = carried.Length == 0 ? 0 : Math.Max(0, carried.Length + fragment.Length - MaxCarriedTurnAudioBytes);
                 turnAudio = CarryForward(carried, fragment);
                 context.State.UntranscribedAudio = turnAudio;
@@ -85,7 +84,7 @@ internal sealed class CascadeClientMessageHandler(CascadeSessionContext context)
         {
             return fragment;
         }
-        var combined = new byte[carried.Length + fragment.Length];
+        byte[] combined = new byte[carried.Length + fragment.Length];
         carried.CopyTo(combined, 0);
         fragment.CopyTo(combined, carried.Length);
         return combined.Length <= MaxCarriedTurnAudioBytes
@@ -95,8 +94,8 @@ internal sealed class CascadeClientMessageHandler(CascadeSessionContext context)
 
     private void ScheduleTurn(byte[] turnAudio)
     {
-        var bargeInTail = context.State.BargeInTail;
-        var (cts, task) = context.TurnCoordinator.Spawn(async turnCt =>
+        Task? bargeInTail = context.State.BargeInTail;
+        (CancellationTokenSource? cts, Task? task) = context.TurnCoordinator.Spawn(async turnCt =>
         {
             if (bargeInTail is not null)
             {
@@ -120,8 +119,8 @@ internal sealed class CascadeClientMessageHandler(CascadeSessionContext context)
 
     private Task SetVoiceAsync(JsonObject data)
     {
-        var candidate = CascadeProcessor.GetString(data, "voice");
-        var voice = ClientServerFilter.SanitizeVoice(candidate, context.AllowedVoices);
+        string? candidate = CascadeProcessor.GetString(data, "voice");
+        string? voice = ClientServerFilter.SanitizeVoice(candidate, context.AllowedVoices);
         if (voice is null)
         {
             context.Logger.CascadeSetVoiceDropped(candidate, context.SessionId);

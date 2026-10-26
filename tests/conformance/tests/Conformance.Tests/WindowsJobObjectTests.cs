@@ -26,14 +26,14 @@ public sealed class WindowsJobObjectTests
             return;
         }
 
-        using var process = StartLongRunningPythonProcess();
+        using Process process = StartLongRunningPythonProcess();
         var jobObject = WindowsJobObject.TryCreateAndAssign(process.Id);
         Assert.NotNull(jobObject);
         Assert.False(process.HasExited);
 
-        jobObject!.Dispose();
+        jobObject.Dispose();
 
-        var exited = await WaitForExitWithTimeoutAsync(process, TimeSpan.FromSeconds(10));
+        bool exited = await WaitForExitWithTimeoutAsync(process, TimeSpan.FromSeconds(10));
         Assert.True(exited, "closing the job object's last handle should kill the assigned process (KILL_ON_JOB_CLOSE).");
     }
 
@@ -55,8 +55,8 @@ public sealed class WindowsJobObjectTests
 
     private static Process StartLongRunningPythonProcess()
     {
-        var repoRoot = RepoPaths.FindRepoRoot();
-        var pythonExe = RepoPaths.PythonExecutable(repoRoot);
+        string repoRoot = RepoPaths.FindRepoRoot();
+        string pythonExe = RepoPaths.PythonExecutable(repoRoot);
         var startInfo = new ProcessStartInfo(pythonExe, "-c \"import time; time.sleep(60)\"")
         {
             UseShellExecute = false,
@@ -65,7 +65,7 @@ public sealed class WindowsJobObjectTests
             RedirectStandardError = true,
         };
 
-        var process = Process.Start(startInfo)!;
+        Process process = Process.Start(startInfo)!;
         return process;
     }
 

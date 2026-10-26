@@ -3,7 +3,6 @@ using System.Text.Json.Nodes;
 using Backend.Ordering;
 using Backend.Personas;
 using Backend.Sessions;
-using Backend.Tests.TestSupport;
 using Backend.Tools;
 
 namespace Backend.Tests.Ordering;
@@ -13,28 +12,31 @@ public sealed class RewardsDemoTests
     [Fact]
     public async Task NaturalAcknowledgementsUseActualRemovalAndLimitsRejectBeforeMutation()
     {
-        var persona = PersonaCatalog.Load().Get("tacobell");
-        var order = NewOrder();
+        Persona persona = PersonaCatalog.Load().Get("tacobell");
+        OrderState order = NewOrder();
         var executor = new OrderToolExecutor(order, MenuCatalog.FromPersona(persona), null, 10, 25);
         Task<ToolResult> Update(string action, string item, int quantity, string size = "Standard") =>
             executor.ExecuteAsync("update_order", JsonSerializer.SerializeToElement(new
             {
-                action, item_name = item, size, quantity,
+                action,
+                item_name = item,
+                size,
+                quantity,
             }), TestContext.Current.CancellationToken);
         await Update("add", "Fire Sauce Packet", 2);
-        var removed = await Update("remove", "Fire Sauce Packet", 8);
+        ToolResult removed = await Update("remove", "Fire Sauce Packet", 8);
         Assert.StartsWith("Removed two Fire Sauce Packet.", removed.ToText());
         Assert.Empty(order.Items);
-        var missing = await Update("remove", "Fire Sauce Packet", 8);
+        ToolResult missing = await Update("remove", "Fire Sauce Packet", 8);
         Assert.StartsWith("No Fire Sauce Packet were removed; none matched your order.", missing.ToText());
         await Update("add", "3 Soft Tacos Combo", 1);
         await Update("add", "Mountain Dew Baja Blast", 1, "Large");
-        var component = await Update("remove", "Mountain Dew Baja Blast", 8, "Large");
+        ToolResult component = await Update("remove", "Mountain Dew Baja Blast", 8, "Large");
         Assert.StartsWith("Removed one Large Mountain Dew Baja Blast.", component.ToText());
         Assert.Empty(Assert.Single(order.Items).Components);
         await Update("add", "Fire Sauce Packet", 9);
-        var before = executor.CurrentOrderSummaryJson;
-        var limited = await Update("add", "Fire Sauce Packet", 2);
+        string before = executor.CurrentOrderSummaryJson;
+        ToolResult limited = await Update("add", "Fire Sauce Packet", 2);
         Assert.Equal(ToolResultDirection.ToServer, limited.Destination);
         Assert.DoesNotContain("Confirmed", limited.ToText());
         Assert.Equal(before, executor.CurrentOrderSummaryJson);
@@ -50,20 +52,20 @@ public sealed class RewardsDemoTests
     [Fact]
     public async Task NaturalTurnsKeepTotalsPrivateAndSaveSauceQuantitiesWithoutChangingRewardsMath()
     {
-        var persona = PersonaCatalog.Load().Get("tacobell");
-        var order = NewOrder();
+        Persona persona = PersonaCatalog.Load().Get("tacobell");
+        OrderState order = NewOrder();
         var executor = new OrderToolExecutor(order, MenuCatalog.FromPersona(persona), null, 10, 25);
         Task<ToolResult> GetOrder() => executor.ExecuteAsync("get_order",
             JsonSerializer.SerializeToElement(new { }), TestContext.Current.CancellationToken);
-        var initial = await GetOrder();
+        ToolResult initial = await GetOrder();
         Assert.False(ModelRewards(initial)["checkedIn"]!.GetValue<bool>());
         Assert.Contains("only when checkedIn is true", initial.ToText());
         order.RewardsAction("check_in", "DEMO-PLUS");
-        var checkedIn = ModelRewards(await GetOrder());
+        JsonObject checkedIn = ModelRewards(await GetOrder());
         Assert.True(checkedIn["checkedIn"]!.GetValue<bool>());
         Assert.Equal(500, checkedIn["balance"]!.GetValue<int>());
 
-        foreach (var (action, item, size, quantity) in new[]
+        foreach ((string? action, string? item, string? size, int quantity) in new[]
         {
             ("add", "3 Crunchy Tacos Combo", "Standard", 1),
             ("remove", "3 Crunchy Tacos Combo", "Standard", 1),
@@ -73,25 +75,28 @@ public sealed class RewardsDemoTests
             ("add", "Fire Sauce Packet", "Standard", 2),
         })
         {
-            var result = await executor.ExecuteAsync("update_order", JsonSerializer.SerializeToElement(new
+            ToolResult result = await executor.ExecuteAsync("update_order", JsonSerializer.SerializeToElement(new
             {
-                action, item_name = item, size, quantity,
+                action,
+                item_name = item,
+                size,
+                quantity,
             }), TestContext.Current.CancellationToken);
-            var text = result.ToText();
+            string text = result.ToText();
             Assert.Contains("PRIVATE ORDER CONTEXT", text);
-            var acknowledgement = text.Split("PRIVATE ORDER CONTEXT")[0];
+            string acknowledgement = text.Split("PRIVATE ORDER CONTEXT")[0];
             Assert.DoesNotMatch(@"(?i)demo|server|ticket|tool|read.?back|total|\$\d", acknowledgement);
             Assert.Contains("Do not announce totals or the full order after routine changes", text);
             Assert.DoesNotContain("The preceding order read-back is the guest-facing text.", text);
             Assert.Equal(executor.CurrentOrderSummaryJson, result.ToClientText());
             AssertNoCodes(result);
         }
-        var sauce = Assert.Single(order.Items, i => i.Item == "Fire Sauce Packet");
+        OrderItem sauce = Assert.Single(order.Items, i => i.Item == "Fire Sauce Packet");
         Assert.Equal(2, sauce.Quantity);
         Assert.Equal(0m, sauce.Price);
         Assert.Equal("$12.94", order.Summary.FinalTotalDisplay);
         Assert.False(Rewards(order)["canRedeem"]!.GetValue<bool>());
-        var final = await GetOrder();
+        ToolResult final = await GetOrder();
         Assert.StartsWith("\n\nPRIVATE ORDER CONTEXT:", final.ToText());
         Assert.Contains("\"finalTotalDisplay\":\"$12.94\"", final.ToText());
         Add(order, "Cinnamon Twists");
@@ -102,7 +107,7 @@ public sealed class RewardsDemoTests
         order.RewardsAction("complete", null);
         Assert.Equal(119, Rewards(order)["pointsAwarded"]!.GetValue<int>());
         Assert.Equal(369, Rewards(order)["balance"]!.GetValue<int>());
-        var reset = await executor.ExecuteAsync("reset_order", JsonSerializer.SerializeToElement(new { }),
+        ToolResult reset = await executor.ExecuteAsync("reset_order", JsonSerializer.SerializeToElement(new { }),
             TestContext.Current.CancellationToken);
         Assert.StartsWith("Order cleared.", reset.ToText());
         AssertNoCodes(reset);
@@ -116,7 +121,7 @@ public sealed class RewardsDemoTests
     [InlineData("Diablo Sauce Packet")]
     public void ZeroPriceSaucesCannotEarnOrRedeemRewards(string item)
     {
-        var order = NewOrder();
+        OrderState order = NewOrder();
         Add(order, item, quantity: 2);
         order.RewardsAction("check_in", "DEMO-PLUS");
         order.RewardsAction("redeem", null);
@@ -142,7 +147,7 @@ public sealed class RewardsDemoTests
     [InlineData("")]
     public void OnlyExactFictionalCodesAreAccepted(string? code)
     {
-        var order = NewOrder();
+        OrderState order = NewOrder();
         order.RewardsAction("check_in", code);
         Assert.False(Rewards(order)["checkedIn"]!.GetValue<bool>());
         Assert.Equal(0, Rewards(order)["balance"]!.GetValue<int>());
@@ -152,7 +157,7 @@ public sealed class RewardsDemoTests
     [Fact]
     public void DiscountTaxAndAwardsAreServerAuthoritativeAndIdempotent()
     {
-        var order = NewOrder();
+        OrderState order = NewOrder();
         Add(order, quantity: 2);
         Add(order, "Crunchwrap Supreme");
         order.RewardsAction("check_in", "DEMO-PLUS");
@@ -166,7 +171,7 @@ public sealed class RewardsDemoTests
         order.RewardsAction("redeem", null);
         order.RewardsAction("complete", null);
         Assert.Equal(329, Rewards(order)["balance"]!.GetValue<int>());
-        foreach (var action in new[] { "redeem", "complete", "check_in", "unredeem" })
+        foreach (string? action in new[] { "redeem", "complete", "check_in", "unredeem" })
         {
             order.RewardsAction(action, "DEMO-PLUS");
             Assert.Equal(329, Rewards(order)["balance"]!.GetValue<int>());
@@ -177,13 +182,13 @@ public sealed class RewardsDemoTests
     [Fact]
     public void FutureEarningsCannotBeSpentAndRemovingAnItemReleasesReservation()
     {
-        var order = NewOrder();
+        OrderState order = NewOrder();
         Add(order, quantity: 10);
         order.RewardsAction("check_in", "DEMO-NEW");
         order.RewardsAction("redeem", null);
         Assert.False(Rewards(order)["redeemed"]!.GetValue<bool>());
         Assert.Equal(199, Rewards(order)["pointsToEarn"]!.GetValue<int>());
-        var other = NewOrder();
+        OrderState other = NewOrder();
         Add(other);
         other.RewardsAction("check_in", "DEMO-PLUS");
         other.RewardsAction("redeem", null);
@@ -196,7 +201,7 @@ public sealed class RewardsDemoTests
     [Fact]
     public void ResetKeepsCheckinAndBalanceButClearsAwardAndOrder()
     {
-        var order = NewOrder();
+        OrderState order = NewOrder();
         Add(order);
         order.RewardsAction("check_in", "DEMO-PLUS");
         order.RewardsAction("complete", null);
@@ -213,7 +218,7 @@ public sealed class RewardsDemoTests
     [Fact]
     public void EmptyUncheckedAndModifiedOrdersCannotClaimReward()
     {
-        var order = NewOrder();
+        OrderState order = NewOrder();
         order.RewardsAction("complete", null);
         Assert.False(Rewards(order)["completed"]!.GetValue<bool>());
         Add(order, "Crunchy Taco (No Lettuce)");
@@ -227,7 +232,7 @@ public sealed class RewardsDemoTests
     [Fact]
     public async Task ConcurrentCompletionSpendsAndAwardsOnlyOnce()
     {
-        var order = NewOrder();
+        OrderState order = NewOrder();
         Add(order, quantity: 2);
         order.RewardsAction("check_in", "DEMO-PLUS");
         order.RewardsAction("redeem", null);
@@ -238,7 +243,7 @@ public sealed class RewardsDemoTests
     [Fact]
     public void CustomizedMealLateSweetRewardAndExactTotals()
     {
-        var order = NewOrder();
+        OrderState order = NewOrder();
         order.RewardsAction("check_in", "DEMO-PLUS");
         order.HandleOrderUpdate("add", "3 Crunchy Tacos Combo", "standard", 1, 999m);
         order.HandleOrderUpdate("remove", "3 Crunchy Tacos Combo", "standard", 1, null);
@@ -246,7 +251,7 @@ public sealed class RewardsDemoTests
         Add(order, "Chips and Nacho Cheese Sauce");
         order.HandleOrderUpdate("add", "Mountain Dew Baja Blast", "large", 1, 999m);
         Assert.Equal(2, order.Items.Count);
-        var meal = order.Items[0];
+        OrderItem meal = order.Items[0];
         Assert.Equal("3 Soft Tacos Combo (No Tomatoes)", meal.Item);
         Assert.Equal("standard", meal.Size);
         Assert.Equal(9.49m, meal.Price);
@@ -274,19 +279,26 @@ public sealed class RewardsDemoTests
     [InlineData(true, 2)]
     public async Task RealToolsReplaceOmissionsInsteadOfRenamingWithModify(bool drinkBeforeOmission, int quantity)
     {
-        var persona = PersonaCatalog.Load().Get("tacobell");
-        var order = NewOrder();
+        Persona persona = PersonaCatalog.Load().Get("tacobell");
+        OrderState order = NewOrder();
         var executor = new OrderToolExecutor(order, PersonaOrderFactory.GetMenuCatalog(persona), null, 10, 25);
         Task<ToolResult> Update(string action, string item, string size = "Standard") =>
             executor.ExecuteAsync("update_order", JsonSerializer.SerializeToElement(new
             {
-                action, item_name = item, size, quantity,
+                action,
+                item_name = item,
+                size,
+                quantity,
             }), TestContext.Current.CancellationToken);
         await Update("add", "3 Crunchy Tacos Combo");
         await Update("remove", "3 Crunchy Tacos Combo");
         await Update("add", "3 Soft Tacos Combo");
-        if (drinkBeforeOmission) await Update("add", "Mountain Dew Baja Blast", "Large");
-        var rejected = await Update("modify", "3 Soft Tacos Combo (No Tomatoes)");
+        if (drinkBeforeOmission)
+        {
+            await Update("add", "Mountain Dew Baja Blast", "Large");
+        }
+
+        ToolResult rejected = await Update("modify", "3 Soft Tacos Combo (No Tomatoes)");
         using var payload = JsonDocument.Parse(rejected.ToText());
         Assert.Equal("not_in_order", payload.RootElement.GetProperty("reason").GetString());
         Assert.All(order.Items, meal => Assert.Equal("3 Soft Tacos Combo", meal.Item));
@@ -309,20 +321,23 @@ public sealed class RewardsDemoTests
     [Fact]
     public async Task RealToolTextExposesOnlyCurrentRewardsStateAndKeepsClientTicketUnchanged()
     {
-        var persona = PersonaCatalog.Load().Get("tacobell");
-        var order = NewOrder();
+        Persona persona = PersonaCatalog.Load().Get("tacobell");
+        OrderState order = NewOrder();
         var executor = new OrderToolExecutor(order, PersonaOrderFactory.GetMenuCatalog(persona), null, 10, 25);
         Task<ToolResult> Update(string action, string item) =>
             executor.ExecuteAsync("update_order", JsonSerializer.SerializeToElement(new
             {
-                action, item_name = item, size = "Standard", quantity = 1,
+                action,
+                item_name = item,
+                size = "Standard",
+                quantity = 1,
             }), TestContext.Current.CancellationToken);
         Task<ToolResult> GetOrder() =>
             executor.ExecuteAsync("get_order", JsonSerializer.SerializeToElement(new { }),
                 TestContext.Current.CancellationToken);
 
-        var uncheckedResult = await GetOrder();
-        var uncheckedSnapshot = ModelRewards(uncheckedResult);
+        ToolResult uncheckedResult = await GetOrder();
+        JsonObject uncheckedSnapshot = ModelRewards(uncheckedResult);
         Assert.False(uncheckedSnapshot["checkedIn"]!.GetValue<bool>());
         Assert.False(uncheckedSnapshot["canRedeem"]!.GetValue<bool>());
         Assert.False(uncheckedSnapshot["eligibleItemInOrder"]!.GetValue<bool>());
@@ -330,26 +345,32 @@ public sealed class RewardsDemoTests
 
         await Update("add", "Cinnamon Twists");
         executor.RewardsAction("check_in", "DEMO-NEW");
-        var insufficient = await GetOrder();
-        var insufficientSnapshot = ModelRewards(insufficient);
+        ToolResult insufficient = await GetOrder();
+        JsonObject insufficientSnapshot = ModelRewards(insufficient);
         Assert.True(insufficientSnapshot["eligibleItemInOrder"]!.GetValue<bool>());
         Assert.False(insufficientSnapshot["canRedeem"]!.GetValue<bool>());
         Assert.Equal(0, insufficientSnapshot["balance"]!.GetValue<int>());
         AssertNoCodes(insufficient);
 
-        var eligibleOrder = NewOrder();
+        OrderState eligibleOrder = NewOrder();
         var eligibleExecutor = new OrderToolExecutor(
             eligibleOrder, PersonaOrderFactory.GetMenuCatalog(persona), null, 10, 25);
         eligibleExecutor.RewardsAction("check_in", "DEMO-PLUS");
         await eligibleExecutor.ExecuteAsync("update_order", JsonSerializer.SerializeToElement(new
         {
-            action = "add", item_name = "Crunchy Taco", size = "Standard", quantity = 1,
+            action = "add",
+            item_name = "Crunchy Taco",
+            size = "Standard",
+            quantity = 1,
         }), TestContext.Current.CancellationToken);
-        var eligibleResult = await eligibleExecutor.ExecuteAsync("update_order", JsonSerializer.SerializeToElement(new
+        ToolResult eligibleResult = await eligibleExecutor.ExecuteAsync("update_order", JsonSerializer.SerializeToElement(new
         {
-            action = "add", item_name = "Cinnamon Twists", size = "Standard", quantity = 1,
+            action = "add",
+            item_name = "Cinnamon Twists",
+            size = "Standard",
+            quantity = 1,
         }), TestContext.Current.CancellationToken);
-        var eligibleSnapshot = ModelRewards(eligibleResult);
+        JsonObject eligibleSnapshot = ModelRewards(eligibleResult);
         Assert.True(eligibleSnapshot["canRedeem"]!.GetValue<bool>());
         Assert.True(eligibleSnapshot["eligibleItemInOrder"]!.GetValue<bool>());
         Assert.Equal("Cinnamon Twists", eligibleSnapshot["rewardItem"]!.GetValue<string>());
@@ -358,13 +379,16 @@ public sealed class RewardsDemoTests
         Assert.Contains("do not redeem automatically", eligibleResult.ToText());
         Assert.Equal(eligibleExecutor.CurrentOrderSummaryJson, eligibleResult.ToClientText());
         using (var clientTicket = JsonDocument.Parse(eligibleResult.ToClientText()))
+        {
             Assert.True(clientTicket.RootElement.GetProperty("rewardsDemo").GetProperty("demoCodes").GetArrayLength() > 0);
+        }
+
         AssertNoCodes(eligibleResult);
 
         eligibleExecutor.RewardsAction("redeem", null);
-        var reserved = await eligibleExecutor.ExecuteAsync("get_order", JsonSerializer.SerializeToElement(new { }),
+        ToolResult reserved = await eligibleExecutor.ExecuteAsync("get_order", JsonSerializer.SerializeToElement(new { }),
             TestContext.Current.CancellationToken);
-        var reservedSnapshot = ModelRewards(reserved);
+        JsonObject reservedSnapshot = ModelRewards(reserved);
         Assert.True(reservedSnapshot["redeemed"]!.GetValue<bool>());
         Assert.Equal(1.49m, reservedSnapshot["discount"]!.GetValue<decimal>());
         Assert.Equal(eligibleOrder.Summary.TotalDisplay, reservedSnapshot["postDiscountTotal"]!.GetValue<string>());
@@ -372,9 +396,12 @@ public sealed class RewardsDemoTests
 
         await eligibleExecutor.ExecuteAsync("update_order", JsonSerializer.SerializeToElement(new
         {
-            action = "remove", item_name = "Cinnamon Twists", size = "Standard", quantity = 1,
+            action = "remove",
+            item_name = "Cinnamon Twists",
+            size = "Standard",
+            quantity = 1,
         }), TestContext.Current.CancellationToken);
-        var afterRemove = ModelRewards(await eligibleExecutor.ExecuteAsync("get_order",
+        JsonObject afterRemove = ModelRewards(await eligibleExecutor.ExecuteAsync("get_order",
             JsonSerializer.SerializeToElement(new { }), TestContext.Current.CancellationToken));
         Assert.True(afterRemove["eligibleItemInOrder"]!.GetValue<bool>());
         Assert.True(afterRemove["canRedeem"]!.GetValue<bool>());
@@ -385,7 +412,7 @@ public sealed class RewardsDemoTests
 
         await eligibleExecutor.ExecuteAsync("reset_order", JsonSerializer.SerializeToElement(new { }),
             TestContext.Current.CancellationToken);
-        var afterReset = ModelRewards(await eligibleExecutor.ExecuteAsync("get_order",
+        JsonObject afterReset = ModelRewards(await eligibleExecutor.ExecuteAsync("get_order",
             JsonSerializer.SerializeToElement(new { }), TestContext.Current.CancellationToken));
         Assert.False(afterReset["eligibleItemInOrder"]!.GetValue<bool>());
         Assert.False(afterReset["redeemed"]!.GetValue<bool>());
@@ -393,28 +420,31 @@ public sealed class RewardsDemoTests
         AssertNoCodes(await eligibleExecutor.ExecuteAsync("get_order", JsonSerializer.SerializeToElement(new { }),
             TestContext.Current.CancellationToken));
 
-        var completedOrder = NewOrder();
+        OrderState completedOrder = NewOrder();
         var completedExecutor = new OrderToolExecutor(
             completedOrder, PersonaOrderFactory.GetMenuCatalog(persona), null, 10, 25);
         completedExecutor.RewardsAction("check_in", "DEMO-PLUS");
         await completedExecutor.ExecuteAsync("update_order", JsonSerializer.SerializeToElement(new
         {
-            action = "add", item_name = "Crunchy Taco", size = "Standard", quantity = 1,
+            action = "add",
+            item_name = "Crunchy Taco",
+            size = "Standard",
+            quantity = 1,
         }), TestContext.Current.CancellationToken);
         completedExecutor.RewardsAction("complete", null);
-        var completed = await completedExecutor.ExecuteAsync("get_order", JsonSerializer.SerializeToElement(new { }),
+        ToolResult completed = await completedExecutor.ExecuteAsync("get_order", JsonSerializer.SerializeToElement(new { }),
             TestContext.Current.CancellationToken);
-        var completedSnapshot = ModelRewards(completed);
+        JsonObject completedSnapshot = ModelRewards(completed);
         Assert.True(completedSnapshot["completed"]!.GetValue<bool>());
         Assert.False(completedSnapshot["canRedeem"]!.GetValue<bool>());
         Assert.Equal(519, completedSnapshot["balance"]!.GetValue<int>());
         AssertNoCodes(completed);
 
-        var neutralPersona = PersonaCatalog.Load().Default;
-        var neutralOrder = PersonaOrderFactory.CreateOrderState(neutralPersona);
+        Persona neutralPersona = PersonaCatalog.Load().Default;
+        OrderState neutralOrder = PersonaOrderFactory.CreateOrderState(neutralPersona);
         var neutralExecutor = new OrderToolExecutor(
             neutralOrder, PersonaOrderFactory.GetMenuCatalog(neutralPersona), null, 10, 25);
-        var neutralReadback = await neutralExecutor.ExecuteAsync("get_order",
+        ToolResult neutralReadback = await neutralExecutor.ExecuteAsync("get_order",
             JsonSerializer.SerializeToElement(new { }), TestContext.Current.CancellationToken);
         Assert.Equal(neutralOrder.GetGroupedOrderForReadback() + neutralOrder.HappyHourBanner,
             neutralReadback.ToText());
@@ -422,12 +452,12 @@ public sealed class RewardsDemoTests
 
     private static JsonObject ModelRewards(ToolResult result)
     {
-        const string marker = "[SERVER-AUTHORITATIVE FICTIONAL REWARDS STATE: ";
-        var text = result.ToText();
-        var start = text.IndexOf(marker, StringComparison.Ordinal);
+        const string Marker = "[SERVER-AUTHORITATIVE FICTIONAL REWARDS STATE: ";
+        string text = result.ToText();
+        int start = text.IndexOf(Marker, StringComparison.Ordinal);
         Assert.True(start >= 0, "Tool text should include the server rewards snapshot.");
-        start += marker.Length;
-        var end = text.IndexOf(']', start);
+        start += Marker.Length;
+        int end = text.IndexOf(']', start);
         Assert.True(end >= 0, "Tool text should close the server rewards snapshot.");
         return JsonNode.Parse(text[start..end])!.AsObject();
     }
@@ -443,7 +473,7 @@ public sealed class RewardsDemoTests
     [Fact]
     public void ReservationCannotSilentlySwitchToAnotherReward()
     {
-        var order = NewOrder();
+        OrderState order = NewOrder();
         Add(order);
         order.RewardsAction("check_in", "DEMO-PLUS");
         order.RewardsAction("redeem", null);
@@ -464,11 +494,19 @@ public sealed class RewardsDemoTests
     [InlineData(false)]
     public void MealDrinkUpgradeIsPathIndependentAndResizeDoesNotDuplicate(bool drinkFirst)
     {
-        var order = NewOrder();
+        OrderState order = NewOrder();
         void Drink() => order.HandleOrderUpdate("add", "Mountain Dew Baja Blast", "large", 1, 999m);
-        if (drinkFirst) Drink();
+        if (drinkFirst)
+        {
+            Drink();
+        }
+
         Add(order, "3 Soft Tacos Combo (No Tomatoes)");
-        if (!drinkFirst) Drink();
+        if (!drinkFirst)
+        {
+            Drink();
+        }
+
         Assert.Single(order.Items);
         Assert.Equal(9.49m, order.Items[0].Price);
         order.HandleOrderUpdate("modify", "Mountain Dew Baja Blast", "medium", 1, 999m);
@@ -483,15 +521,15 @@ public sealed class RewardsDemoTests
     [Fact]
     public void ExtensionReturnsExistingTicketContractAndOtherPersonasRemainDisabled()
     {
-        var order = NewOrder();
-        var persona = PersonaCatalog.Load().Get("tacobell");
+        OrderState order = NewOrder();
+        Persona persona = PersonaCatalog.Load().Get("tacobell");
         var executor = new OrderToolExecutor(order, PersonaOrderFactory.GetMenuCatalog(persona), null, 10, 25);
-        var frame = RewardsDemoFrames.Handle(executor, new JsonObject { ["action"] = "check_in", ["code"] = "DEMO-PLUS" });
+        JsonObject frame = RewardsDemoFrames.Handle(executor, new JsonObject { ["action"] = "check_in", ["code"] = "DEMO-PLUS" });
         Assert.Equal("extension.middle_tier_tool_response", frame["type"]!.GetValue<string>());
         Assert.Null(frame["previous_item_id"]);
-        var ticket = JsonNode.Parse(frame["tool_result"]!.GetValue<string>())!;
+        JsonNode ticket = JsonNode.Parse(frame["tool_result"]!.GetValue<string>())!;
         Assert.True(ticket["rewardsDemo"]!["checkedIn"]!.GetValue<bool>());
-        var neutral = PersonaOrderFactory.CreateOrderState(PersonaCatalog.Load().Default);
+        OrderState neutral = PersonaOrderFactory.CreateOrderState(PersonaCatalog.Load().Default);
         Assert.False(neutral.RewardsAction("check_in", "DEMO-PLUS"));
         Assert.Null(neutral.Summary.RewardsDemo);
     }

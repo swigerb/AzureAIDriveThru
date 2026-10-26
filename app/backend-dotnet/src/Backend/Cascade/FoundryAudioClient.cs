@@ -32,7 +32,7 @@ internal sealed class FoundryAudioClient(HttpClient httpClient, string endpoint,
     /// text (empty string if the response has none). Port of cascade_processor.py's `_transcribe`.</summary>
     public async Task<string> TranscribeAsync(byte[] pcm16Bytes, string deployment, int sampleRate, CancellationToken ct)
     {
-        var wavBytes = WavEncoder.PcmToWav(pcm16Bytes, sampleRate);
+        byte[] wavBytes = WavEncoder.PcmToWav(pcm16Bytes, sampleRate);
 
         using var content = new MultipartFormDataContent
         {
@@ -46,12 +46,12 @@ internal sealed class FoundryAudioClient(HttpClient httpClient, string endpoint,
         {
             Content = content,
         };
-        var token = await credential.GetTokenAsync(ct).ConfigureAwait(false);
+        string token = await credential.GetTokenAsync(ct).ConfigureAwait(false);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, ct)
+        using HttpResponseMessage response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, ct)
             .ConfigureAwait(false);
-        var responseText = await ReadBodySafelyAsync(response, ct).ConfigureAwait(false);
+        string responseText = await ReadBodySafelyAsync(response, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             throw BuildHttpException(response, responseText);
@@ -79,14 +79,14 @@ internal sealed class FoundryAudioClient(HttpClient httpClient, string endpoint,
         {
             Content = new StringContent(body.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
         };
-        var token = await credential.GetTokenAsync(ct).ConfigureAwait(false);
+        string token = await credential.GetTokenAsync(ct).ConfigureAwait(false);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, ct)
+        using HttpResponseMessage response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, ct)
             .ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            var errorText = await ReadBodySafelyAsync(response, ct).ConfigureAwait(false);
+            string errorText = await ReadBodySafelyAsync(response, ct).ConfigureAwait(false);
             throw BuildHttpException(response, errorText);
         }
         return await response.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
@@ -108,7 +108,7 @@ internal sealed class FoundryAudioClient(HttpClient httpClient, string endpoint,
     private static FoundryHttpException BuildHttpException(HttpResponseMessage response, string body)
     {
         double? retryAfter = response.Headers.RetryAfter?.Delta?.TotalSeconds;
-        var message = string.IsNullOrEmpty(body) ? $"HTTP {(int)response.StatusCode}" : body;
+        string message = string.IsNullOrEmpty(body) ? $"HTTP {(int)response.StatusCode}" : body;
         return new FoundryHttpException((int)response.StatusCode, retryAfter, message);
     }
 }
@@ -122,10 +122,10 @@ internal static class WavEncoder
 {
     public static byte[] PcmToWav(byte[] pcm16Bytes, int sampleRate, int channels = 1, int bitsPerSample = 16)
     {
-        var blockAlign = channels * (bitsPerSample / 8);
-        var byteRate = sampleRate * blockAlign;
-        var dataSize = pcm16Bytes.Length;
-        var riffSize = 36 + dataSize;
+        int blockAlign = channels * (bitsPerSample / 8);
+        int byteRate = sampleRate * blockAlign;
+        int dataSize = pcm16Bytes.Length;
+        int riffSize = 36 + dataSize;
 
         using var stream = new MemoryStream(44 + dataSize);
         using (var writer = new BinaryWriter(stream, System.Text.Encoding.ASCII, leaveOpen: true))

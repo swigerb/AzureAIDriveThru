@@ -1,17 +1,14 @@
-using System.Net.WebSockets;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json.Nodes;
-using Backend.Configuration;
+using Backend.Cascade;
 using Backend.Prompts;
 using Backend.Realtime;
 using Backend.Sessions;
+using Backend.Tests.Cascade;
 using Backend.Tests.Realtime;
 using Backend.Tools;
-using Backend.Tests.TestSupport;
 using Microsoft.Extensions.Logging.Abstractions;
-using Backend.Cascade;
-using Backend.Tests.Cascade;
-using System.Security.Cryptography;
-using System.Text;
 
 namespace Backend.Tests.Sessions;
 
@@ -29,8 +26,12 @@ public sealed class GreetingGateTests
     [InlineData(false)]
     public async Task ResponseScopedGreetingClearsOnceAndNeverCreatesGuestIntent(bool configured)
     {
-        var state = NewState("scoped-session");
-        if (configured) state.SessionConfigured.TrySetResult(true);
+        RealtimeProcessor.RealtimeSessionState state = NewState("scoped-session");
+        if (configured)
+        {
+            state.SessionConfigured.TrySetResult(true);
+        }
+
         var loader = new PromptLoader(Path.Combine(RepoRootLocator.Find(), "personas"), "tacobell");
         var upstream = new FakeWebSocket([]);
         var logger = new CascadeDiagnosticCaptureTests.RecordingLogger();
@@ -44,7 +45,7 @@ public sealed class GreetingGateTests
         var frames = upstream.SentMessages.Select(message => JsonNode.Parse(message.Data)!.AsObject()).ToList();
         Assert.Equal(new[] { "input_audio_buffer.clear", "response.create" },
             frames.Select(frame => frame["type"]!.GetValue<string>()));
-        var response = frames[1]["response"]!.AsObject();
+        JsonObject response = frames[1]["response"]!.AsObject();
         Assert.Equal(loader.SystemPrompt + "\n\n"
             + "Say exactly: Welcome to Taco Bell! Are you checking in with the Taco Bell app today?",
             response["instructions"]!.GetValue<string>());
@@ -53,7 +54,7 @@ public sealed class GreetingGateTests
         Assert.Equal("none", response["tool_choice"]!.GetValue<string>());
         Assert.DoesNotContain("Greet exactly:", loader.SystemPrompt);
         Assert.DoesNotContain("Say exactly:", loader.SystemPrompt);
-        var observation = JsonNode.Parse(Assert.Single(logger.Lines))!;
+        JsonNode observation = JsonNode.Parse(Assert.Single(logger.Lines))!;
         Assert.Equal(Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(response["instructions"]!.GetValue<string>()))),
             observation["instructionsHash"]!.GetValue<string>());
         Assert.True(observation["toolsPresent"]!.GetValue<bool>());
@@ -65,7 +66,7 @@ public sealed class GreetingGateTests
     public async Task ResponseScopedGreetingIsSilentOnResumeAndCancelledBeforeConfiguration()
     {
         var loader = new PromptLoader(Path.Combine(RepoRootLocator.Find(), "personas"), "tacobell");
-        var state = NewState("scoped-session");
+        RealtimeProcessor.RealtimeSessionState state = NewState("scoped-session");
         state.GreetingSent = true;
         var upstream = new FakeWebSocket([]);
         using var cts = new CancellationTokenSource();
@@ -99,7 +100,7 @@ public sealed class GreetingGateTests
     [Fact]
     public async Task SendOnceAsync_sends_the_fallback_greeting_when_session_configured_completes_immediately()
     {
-        var state = NewState("session-1");
+        RealtimeProcessor.RealtimeSessionState state = NewState("session-1");
         state.SessionConfigured.TrySetResult(true);
         var upstream = new FakeWebSocket([]);
 
@@ -113,7 +114,7 @@ public sealed class GreetingGateTests
         // input_audio_buffer.clear, the greeting item, then response.create -- in that order.
         Assert.Equal(3, upstream.SentMessages.Count);
         Assert.Contains("input_audio_buffer.clear", System.Text.Encoding.UTF8.GetString(upstream.SentMessages[0].Data));
-        var greetingFrame = JsonNode.Parse(upstream.SentMessages[1].Data)!.AsObject();
+        JsonObject greetingFrame = JsonNode.Parse(upstream.SentMessages[1].Data)!.AsObject();
         Assert.Equal("conversation.item.create", (string?)greetingFrame["type"]);
         Assert.Equal("Hello!", (string?)greetingFrame["item"]!["content"]![0]!["text"]);
         Assert.Contains("response.create", System.Text.Encoding.UTF8.GetString(upstream.SentMessages[2].Data));
@@ -122,7 +123,7 @@ public sealed class GreetingGateTests
     [Fact]
     public async Task SendOnceAsync_is_idempotent()
     {
-        var state = NewState("session-2");
+        RealtimeProcessor.RealtimeSessionState state = NewState("session-2");
         state.SessionConfigured.TrySetResult(true);
         var upstream = new FakeWebSocket([]);
         var gate = new GreetingGate(
@@ -141,7 +142,7 @@ public sealed class GreetingGateTests
     {
         // Mirrors RunSessionAsync's resume path, which sets state.GreetingSent directly
         // (outcome.ConversationStarted) without ever calling SendOnceAsync.
-        var state = NewState("session-3");
+        RealtimeProcessor.RealtimeSessionState state = NewState("session-3");
         state.GreetingSent = true;
         var upstream = new FakeWebSocket([]);
         var gate = new GreetingGate(
@@ -156,7 +157,7 @@ public sealed class GreetingGateTests
     [Fact]
     public async Task SendOnceAsync_sends_anyway_after_the_session_configured_wait_times_out()
     {
-        var state = NewState("session-4");
+        RealtimeProcessor.RealtimeSessionState state = NewState("session-4");
         // Never resolved -- forces the WaitAsync timeout branch.
         var upstream = new FakeWebSocket([]);
         var gate = new GreetingGate(

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.WebSockets;
+using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 
@@ -34,7 +35,7 @@ internal static class AuthRowRealtimeAssertions
     {
         if (expected == AuthRowExpectedOutcome.Accept)
         {
-            await using var browser = await RealtimeBrowserClient.ConnectAsync(
+            await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(
                 backendBaseUri,
                 origin: origin,
                 persona: persona,
@@ -44,16 +45,16 @@ internal static class AuthRowRealtimeAssertions
                 sessionToken: sessionToken,
                 cancellationToken: cancellationToken).ConfigureAwait(false);
 
-            var created = await browser.ReceivedFrames
+            RecordedFrame? created = await browser.ReceivedFrames
                 .WaitForAsync(f => f.Type == "session.created", FrameTimeout, cancellationToken)
                 .ConfigureAwait(false);
             Assert.True(created is not null, $"{rowLabel}: expected the socket to open (session.created), but it never arrived.");
             return;
         }
 
-        var expectedStatus = expected == AuthRowExpectedOutcome.Reject403 ? HttpStatusCode.Forbidden : HttpStatusCode.Unauthorized;
+        HttpStatusCode expectedStatus = expected == AuthRowExpectedOutcome.Reject403 ? HttpStatusCode.Forbidden : HttpStatusCode.Unauthorized;
 
-        var resolvedAccessToken = attachAccessToken
+        string? resolvedAccessToken = attachAccessToken
             ? accessToken ?? EntraDefaultCredentials.TryGetAccessToken(backendBaseUri)
             : null;
 
@@ -69,21 +70,21 @@ internal static class AuthRowRealtimeAssertions
             // (resolvedAccessToken, attached to the connect attempt below) is meant to vary row to
             // row; the session-token layer must stay fixed and valid, so a rejection is provably
             // caused by the Entra check, not a session-token fetch failure.
-            var sessionTokenFetchToken = ResolveSessionTokenFetchToken(
+            string? sessionTokenFetchToken = ResolveSessionTokenFetchToken(
                 resolvedAccessToken, EntraDefaultCredentials.TryGetAccessToken(backendBaseUri));
             resolvedSessionToken = sessionToken
                 ?? await RealtimeBrowserClient.FetchSessionTokenAsync(backendBaseUri, sessionTokenFetchToken, cancellationToken)
                     .ConfigureAwait(false);
         }
 
-        var query = BuildRejectionQuery(resolvedAccessToken, resolvedSessionToken, attachSessionToken, persona);
+        string query = BuildRejectionQuery(resolvedAccessToken, resolvedSessionToken, attachSessionToken, persona);
         var wsUri = new Uri($"ws://{backendBaseUri.Host}:{backendBaseUri.Port}/realtime{query}");
 
         using var socket = new ClientWebSocket();
         socket.Options.CollectHttpResponseDetails = true;
         socket.Options.SetRequestHeader("Origin", origin ?? $"{backendBaseUri.Scheme}://{backendBaseUri.Authority}");
 
-        var ex = await Assert.ThrowsAsync<WebSocketException>(() => socket.ConnectAsync(wsUri, cancellationToken))
+        WebSocketException ex = await Assert.ThrowsAsync<WebSocketException>(() => socket.ConnectAsync(wsUri, cancellationToken))
             .ConfigureAwait(false);
         Assert.NotNull(ex);
 
@@ -93,8 +94,8 @@ internal static class AuthRowRealtimeAssertions
 
         if (expectedStatus == HttpStatusCode.Unauthorized)
         {
-            var hasBearerChallenge =
-                socket.HttpResponseHeaders?.TryGetValue("WWW-Authenticate", out var values) == true
+            bool hasBearerChallenge =
+                socket.HttpResponseHeaders?.TryGetValue("WWW-Authenticate", out IEnumerable<string>? values) == true
                 && values.Any(v => v.Contains("Bearer", StringComparison.OrdinalIgnoreCase));
             Assert.True(hasBearerChallenge, $"{rowLabel}: expected a WWW-Authenticate: Bearer challenge on the /realtime 401 rejection.");
         }

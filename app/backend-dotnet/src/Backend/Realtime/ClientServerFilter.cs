@@ -58,24 +58,24 @@ internal static class ClientServerFilter
     // byte-for-byte onto the upstream GA socket) while Python strips/drops it. `\z` anchors to
     // the absolute end of the string with no such exception, matching `fullmatch`'s semantics
     // exactly.
-    private static readonly Regex EventIdRegex = new("^[A-Za-z0-9_-]{1,64}\\z", RegexOptions.Compiled);
-    private static readonly Regex Base64Regex = new("^[A-Za-z0-9+/]*={0,2}\\z", RegexOptions.Compiled);
+    private static readonly Regex s_eventIdRegex = new("^[A-Za-z0-9_-]{1,64}\\z", RegexOptions.Compiled);
+    private static readonly Regex s_base64Regex = new("^[A-Za-z0-9+/]*={0,2}\\z", RegexOptions.Compiled);
 
     /// <summary>Allow-lists and rebuilds a browser→upstream event. Returns null if the whole event
     /// must be dropped. <paramref name="hooksEnabled"/> mirrors Python's live
     /// <c>conformance_hooks.hooks_enabled_now()</c> re-check (CONFORMANCE_TEST_HOOKS=1).</summary>
     public static JsonObject? Filter(JsonObject message, bool hooksEnabled)
     {
-        var msgType = message["type"] is JsonValue v && v.TryGetValue<string>(out var t) ? t : "";
+        string msgType = message["type"] is JsonValue v && v.TryGetValue<string>(out string? t) ? t : "";
 
-        var allowed = ClientAllowedTypes.Contains(msgType) || (hooksEnabled && ClientTestOnlyTypes.Contains(msgType));
-        if (!allowed || !ClientTopLevelKeys.TryGetValue(msgType, out var allowedKeys))
+        bool allowed = ClientAllowedTypes.Contains(msgType) || (hooksEnabled && ClientTestOnlyTypes.Contains(msgType));
+        if (!allowed || !ClientTopLevelKeys.TryGetValue(msgType, out IReadOnlySet<string>? allowedKeys))
         {
             return null;
         }
 
         var filtered = new JsonObject();
-        foreach (var (key, value) in message)
+        foreach ((string? key, JsonNode? value) in message)
         {
             if (allowedKeys.Contains(key))
             {
@@ -83,30 +83,30 @@ internal static class ClientServerFilter
             }
         }
 
-        if (filtered.TryGetPropertyValue("audio", out var audioNode))
+        if (filtered.TryGetPropertyValue("audio", out JsonNode? audioNode))
         {
-            var audioOk = audioNode is JsonValue av && av.TryGetValue<string>(out var audioStr)
-                && Base64Regex.IsMatch(audioStr);
+            bool audioOk = audioNode is JsonValue av && av.TryGetValue<string>(out string? audioStr)
+                && s_base64Regex.IsMatch(audioStr);
             if (!audioOk)
             {
                 return null;
             }
         }
 
-        if (filtered.TryGetPropertyValue("event_id", out var eventIdNode))
+        if (filtered.TryGetPropertyValue("event_id", out JsonNode? eventIdNode))
         {
-            var eventIdOk = eventIdNode is JsonValue ev && ev.TryGetValue<string>(out var eventIdStr)
-                && EventIdRegex.IsMatch(eventIdStr);
+            bool eventIdOk = eventIdNode is JsonValue ev && ev.TryGetValue<string>(out string? eventIdStr)
+                && s_eventIdRegex.IsMatch(eventIdStr);
             if (!eventIdOk)
             {
                 filtered.Remove("event_id");
             }
         }
 
-        if (filtered.TryGetPropertyValue("response_id", out var responseIdNode))
+        if (filtered.TryGetPropertyValue("response_id", out JsonNode? responseIdNode))
         {
-            var responseIdOk = responseIdNode is JsonValue rv && rv.TryGetValue<string>(out var responseIdStr)
-                && EventIdRegex.IsMatch(responseIdStr);
+            bool responseIdOk = responseIdNode is JsonValue rv && rv.TryGetValue<string>(out string? responseIdStr)
+                && s_eventIdRegex.IsMatch(responseIdStr);
             if (!responseIdOk)
             {
                 return null;
@@ -123,7 +123,7 @@ internal static class ClientServerFilter
     {
         if (value is not JsonObject obj
             || obj["type"] is not JsonValue typeValue
-            || !typeValue.TryGetValue<string>(out var type)
+            || !typeValue.TryGetValue<string>(out string? type)
             || type != "server_vad")
         {
             return null;
@@ -152,17 +152,17 @@ internal static class ClientServerFilter
         {
             return false;
         }
-        var type = item["type"] is JsonValue tv && tv.TryGetValue<string>(out var t) ? t : null;
+        string? type = item["type"] is JsonValue tv && tv.TryGetValue<string>(out string? t) ? t : null;
         if (type is "function_call" or "function_call_output")
         {
             return true;
         }
-        var id = item["id"] is JsonValue iv && iv.TryGetValue<string>(out var idStr) ? idStr : null;
+        string? id = item["id"] is JsonValue iv && iv.TryGetValue<string>(out string? idStr) ? idStr : null;
         if (id is not null && id.StartsWith(MiddleTierItemIdPrefix, StringComparison.Ordinal))
         {
             return true;
         }
-        var role = item["role"] is JsonValue rv && rv.TryGetValue<string>(out var roleStr) ? roleStr : null;
+        string? role = item["role"] is JsonValue rv && rv.TryGetValue<string>(out string? roleStr) ? roleStr : null;
         return role == "system";
     }
 
@@ -190,7 +190,7 @@ internal static class ClientServerFilter
     private static void AddBoundedNumber(
         JsonObject source, JsonObject target, string key, double lo, double hi, bool intOnly)
     {
-        if (!source.TryGetPropertyValue(key, out var node) || node is not JsonValue value)
+        if (!source.TryGetPropertyValue(key, out JsonNode? node) || node is not JsonValue value)
         {
             return;
         }
@@ -202,7 +202,7 @@ internal static class ClientServerFilter
         double numeric;
         if (intOnly)
         {
-            if (!value.TryGetValue<int>(out var intValue))
+            if (!value.TryGetValue<int>(out int intValue))
             {
                 return;
             }

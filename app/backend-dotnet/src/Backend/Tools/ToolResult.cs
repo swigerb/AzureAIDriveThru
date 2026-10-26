@@ -22,7 +22,7 @@ internal enum ToolResultDirection
 /// Python's <c>to_text()</c> calls <c>json.dumps()</c> on a non-str payload.</summary>
 internal sealed class ToolResult
 {
-    private static readonly JsonSerializerOptions PayloadJsonOptions = new();
+    private static readonly JsonSerializerOptions s_payloadJsonOptions = new();
 
     private readonly string? _text;
     private readonly object? _payload;
@@ -50,7 +50,7 @@ internal sealed class ToolResult
 
     /// <summary>Text addressed to the model. Mirrors ToolResult.to_text(): a structured payload is
     /// JSON-serialized; a plain string result is returned as-is.</summary>
-    public string ToText() => _text ?? (_payload is null ? "" : JsonSerializer.Serialize(_payload, PayloadJsonOptions));
+    public string ToText() => _text ?? (_payload is null ? "" : JsonSerializer.Serialize(_payload, s_payloadJsonOptions));
 
     /// <summary>Text addressed to the connected client's own display, falling back to
     /// <see cref="ToText"/> when no separate client payload was supplied. Mirrors

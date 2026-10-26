@@ -56,7 +56,7 @@ public static class MenuSizeUpdater
     /// </summary>
     public static IReadOnlyDictionary<string, string> LoadProductSearchMap(string productSearchMapFilePath)
     {
-        using var stream = File.OpenRead(productSearchMapFilePath);
+        using FileStream stream = File.OpenRead(productSearchMapFilePath);
         using var doc = JsonDocument.Parse(stream);
 
         if (doc.RootElement.ValueKind != JsonValueKind.Object)
@@ -67,7 +67,7 @@ public static class MenuSizeUpdater
         }
 
         var map = new Dictionary<string, string>();
-        foreach (var property in doc.RootElement.EnumerateObject())
+        foreach (JsonProperty property in doc.RootElement.EnumerateObject())
         {
             // PR #224 review R3: a non-string value here (e.g. a typo'd `null`/number/object) must
             // not silently become "" -- FindSizesForProduct's search term would then be an empty
@@ -111,7 +111,7 @@ public static class MenuSizeUpdater
     /// </summary>
     public static (string? SizeKey, string Base) ExtractSize(string displayName)
     {
-        foreach (var (prefix, sizeKey) in SizePrefixes)
+        foreach ((string? prefix, string? sizeKey) in SizePrefixes)
         {
             if (displayName.StartsWith(prefix, StringComparison.Ordinal))
             {
@@ -128,35 +128,35 @@ public static class MenuSizeUpdater
     /// </summary>
     public static List<ProductEntry> LoadProductionProducts(string productionFilePath)
     {
-        using var stream = File.OpenRead(productionFilePath);
+        using FileStream stream = File.OpenRead(productionFilePath);
         using var doc = JsonDocument.Parse(stream);
 
         JsonElement? firstMenu = null;
-        if (doc.RootElement.TryGetProperty("menus", out var menus))
+        if (doc.RootElement.TryGetProperty("menus", out JsonElement menus))
         {
-            foreach (var menuProperty in menus.EnumerateObject())
+            foreach (JsonProperty menuProperty in menus.EnumerateObject())
             {
                 firstMenu = menuProperty.Value;
                 break;
             }
         }
 
-        if (firstMenu is null || !firstMenu.Value.TryGetProperty("products", out var products))
+        if (firstMenu is null || !firstMenu.Value.TryGetProperty("products", out JsonElement products))
         {
             return [];
         }
 
         var result = new List<ProductEntry>();
-        foreach (var productProperty in products.EnumerateObject())
+        foreach (JsonProperty productProperty in products.EnumerateObject())
         {
-            var product = productProperty.Value;
-            var displayName = product.TryGetProperty("displayName", out var nameEl) &&
+            JsonElement product = productProperty.Value;
+            string displayName = product.TryGetProperty("displayName", out JsonElement nameEl) &&
                                nameEl.ValueKind == JsonValueKind.String
                 ? nameEl.GetString() ?? string.Empty
                 : string.Empty;
             decimal price = 0m;
             string? priceText = null;
-            if (product.TryGetProperty("price", out var priceEl) && priceEl.ValueKind == JsonValueKind.Number)
+            if (product.TryGetProperty("price", out JsonElement priceEl) && priceEl.ValueKind == JsonValueKind.Number)
             {
                 price = priceEl.GetDecimal();
                 // The raw token, e.g. "2" or "1.50" -- not re-derived from `price`, which already
@@ -178,12 +178,12 @@ public static class MenuSizeUpdater
     public static Dictionary<string, ProductEntry> FindSizesForProduct(IReadOnlyList<ProductEntry> products, string searchTerm)
     {
         var sizes = new Dictionary<string, ProductEntry>();
-        var searchLower = searchTerm.ToLowerInvariant();
+        string searchLower = searchTerm.ToLowerInvariant();
 
-        foreach (var product in products)
+        foreach (ProductEntry product in products)
         {
-            var name = product.DisplayName;
-            var price = product.Price;
+            string name = product.DisplayName;
+            decimal price = product.Price;
             if (price <= 0m)
             {
                 continue;
@@ -193,7 +193,7 @@ public static class MenuSizeUpdater
                 continue;
             }
 
-            var (sizeKey, baseName) = ExtractSize(name);
+            (string? sizeKey, string? baseName) = ExtractSize(name);
             if (sizeKey is null)
             {
                 continue;
@@ -233,30 +233,30 @@ public static class MenuSizeUpdater
     /// </summary>
     public static UpdateResult UpdateMenu(string productionFilePath, string menuFilePath, string productSearchMapFilePath)
     {
-        var products = LoadProductionProducts(productionFilePath);
-        var productSearchMap = LoadProductSearchMap(productSearchMapFilePath);
+        List<ProductEntry> products = LoadProductionProducts(productionFilePath);
+        IReadOnlyDictionary<string, string> productSearchMap = LoadProductSearchMap(productSearchMapFilePath);
 
-        var menuText = File.ReadAllText(menuFilePath);
-        var menuNode = JsonNode.Parse(menuText)
+        string menuText = File.ReadAllText(menuFilePath);
+        JsonNode menuNode = JsonNode.Parse(menuText)
             ?? throw new InvalidDataException($"'{menuFilePath}' did not parse as a JSON object.");
 
         var log = new List<string>();
-        var updatedCount = 0;
+        int updatedCount = 0;
 
-        var categories = menuNode["menuItems"]!.AsArray();
-        foreach (var categoryNode in categories)
+        JsonArray categories = menuNode["menuItems"]!.AsArray();
+        foreach (JsonNode? categoryNode in categories)
         {
-            var items = categoryNode!["items"]!.AsArray();
-            foreach (var itemNode in items)
+            JsonArray items = categoryNode!["items"]!.AsArray();
+            foreach (JsonNode? itemNode in items)
             {
-                var item = itemNode!.AsObject();
-                var name = item["name"]!.GetValue<string>();
-                if (!productSearchMap.TryGetValue(name, out var searchTerm))
+                JsonObject item = itemNode!.AsObject();
+                string name = item["name"]!.GetValue<string>();
+                if (!productSearchMap.TryGetValue(name, out string? searchTerm))
                 {
                     continue;
                 }
 
-                var prodSizes = FindSizesForProduct(products, searchTerm);
+                Dictionary<string, ProductEntry> prodSizes = FindSizesForProduct(products, searchTerm);
                 if (prodSizes.Count == 0)
                 {
                     log.Add($"  SKIP {name}: no production data found");
@@ -264,30 +264,30 @@ public static class MenuSizeUpdater
                 }
 
                 var newSizes = new List<(string Size, ProductEntry Entry)>();
-                foreach (var sizeKey in SizeOrder)
+                foreach (string sizeKey in SizeOrder)
                 {
-                    if (prodSizes.TryGetValue(sizeKey, out var entry))
+                    if (prodSizes.TryGetValue(sizeKey, out ProductEntry entry))
                     {
                         newSizes.Add((sizeKey, entry));
                     }
                 }
 
-                var existingSizes = item["sizes"]!.AsArray();
+                JsonArray existingSizes = item["sizes"]!.AsArray();
                 var oldSizeKeys = new HashSet<string>(existingSizes.Select(s => s!["size"]!.GetValue<string>()));
                 var newSizeKeys = new HashSet<string>(newSizes.Select(s => s.Size));
 
-                var changed = !oldSizeKeys.SetEquals(newSizeKeys);
+                bool changed = !oldSizeKeys.SetEquals(newSizeKeys);
                 if (!changed)
                 {
-                    foreach (var existing in existingSizes)
+                    foreach (JsonNode? existing in existingSizes)
                     {
-                        var sizeKey = existing!["size"]!.GetValue<string>();
+                        string sizeKey = existing!["size"]!.GetValue<string>();
                         if (!newSizeKeys.Contains(sizeKey))
                         {
                             continue;
                         }
-                        var existingPrice = existing["price"]!.GetValue<decimal>();
-                        var newPrice = newSizes.First(n => n.Size == sizeKey).Entry.Price;
+                        decimal existingPrice = existing["price"]!.GetValue<decimal>();
+                        decimal newPrice = newSizes.First(n => n.Size == sizeKey).Entry.Price;
                         if (existingPrice != newPrice)
                         {
                             changed = true;
@@ -298,9 +298,9 @@ public static class MenuSizeUpdater
 
                 if (changed)
                 {
-                    var oldCount = existingSizes.Count;
+                    int oldCount = existingSizes.Count;
                     var newSizesArray = new JsonArray();
-                    foreach (var (size, entry) in newSizes)
+                    foreach ((string? size, ProductEntry entry) in newSizes)
                     {
                         newSizesArray.Add(new JsonObject
                         {
@@ -326,7 +326,7 @@ public static class MenuSizeUpdater
                     // string.Join-style [mini, small]. SizeOrder's values are a small fixed,
                     // internal set of plain words with no quotes/backslashes, so naive
                     // single-quote wrapping is safe here (not a general-purpose Python repr).
-                    var sizesRepr = "[" + string.Join(", ", newSizes.Select(s => $"'{s.Size}'")) + "]";
+                    string sizesRepr = "[" + string.Join(", ", newSizes.Select(s => $"'{s.Size}'")) + "]";
                     log.Add($"  UPDATED {name}: {oldCount} -> {newSizes.Count} sizes: {sizesRepr}");
                 }
                 else
@@ -399,7 +399,7 @@ public static class MenuSizeUpdater
     /// text as a double rather than starting from a C# <see cref="decimal"/>.</summary>
     internal static string PythonFloatRepr(double value)
     {
-        var text = value.ToString(CultureInfo.InvariantCulture);
+        string text = value.ToString(CultureInfo.InvariantCulture);
         return text.IndexOfAny(['.', 'e', 'E']) < 0 ? text + ".0" : text;
     }
 
@@ -421,15 +421,15 @@ public static class MenuSizeUpdater
             case JsonObject obj:
                 // ToList(): iterating obj directly while assigning obj[key] below would mutate
                 // the collection being enumerated.
-                foreach (var key in obj.Select(property => property.Key).ToList())
+                foreach (string? key in obj.Select(property => property.Key).ToList())
                 {
                     NormalizeChildInPlace(obj[key], replacement => obj[key] = replacement);
                 }
                 break;
             case JsonArray arr:
-                for (var i = 0; i < arr.Count; i++)
+                for (int i = 0; i < arr.Count; i++)
                 {
-                    var index = i;
+                    int index = i;
                     NormalizeChildInPlace(arr[index], replacement => arr[index] = replacement);
                 }
                 break;
@@ -450,7 +450,7 @@ public static class MenuSizeUpdater
         if (child is JsonValue value && value.TryGetValue(out JsonElement element) &&
             element.ValueKind == JsonValueKind.Number)
         {
-            var raw = element.GetRawText();
+            string raw = element.GetRawText();
             if (raw.IndexOfAny(['.', 'e', 'E']) >= 0)
             {
                 assign(JsonNode.Parse(PythonFloatRepr(double.Parse(raw, CultureInfo.InvariantCulture))));

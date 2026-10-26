@@ -61,9 +61,9 @@ internal sealed class SessionsConfig
 
     public static SessionsConfig FromConfig(AppConfig config)
     {
-        var security = config.TryGetSection("security");
-        var resume = config.TryGetSection("resume");
-        var context = config.TryGetSection("context");
+        IDictionary<object, object>? security = config.TryGetSection("security");
+        IDictionary<object, object>? resume = config.TryGetSection("resume");
+        IDictionary<object, object>? context = config.TryGetSection("context");
 
         return new SessionsConfig(
             idleTimeoutSeconds: ConformanceHooks.Seconds(
@@ -86,19 +86,19 @@ internal sealed class SessionsConfig
     }
 
     private static int GetInt(IDictionary<object, object>? section, string key, int fallback) =>
-        section is not null && section.TryGetValue(key, out var raw) && int.TryParse(raw?.ToString(), out var value)
+        section is not null && section.TryGetValue(key, out object? raw) && int.TryParse(raw?.ToString(), out int value)
             ? value
             : fallback;
 
     private static double GetDouble(IDictionary<object, object>? section, string key, double fallback) =>
-        section is not null && section.TryGetValue(key, out var raw) &&
-        double.TryParse(raw?.ToString(), CultureInfo.InvariantCulture, out var value)
+        section is not null && section.TryGetValue(key, out object? raw) &&
+        double.TryParse(raw?.ToString(), CultureInfo.InvariantCulture, out double value)
             ? value
             : fallback;
 
     private static bool GetBool(IDictionary<object, object>? section, string key, bool fallback)
     {
-        if (section is null || !section.TryGetValue(key, out var raw) || raw is null)
+        if (section is null || !section.TryGetValue(key, out object? raw) || raw is null)
         {
             return fallback;
         }
@@ -106,6 +106,6 @@ internal sealed class SessionsConfig
         {
             return direct;
         }
-        return bool.TryParse(raw.ToString(), out var parsed) ? parsed : fallback;
+        return bool.TryParse(raw.ToString(), out bool parsed) ? parsed : fallback;
     }
 }
