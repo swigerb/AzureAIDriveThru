@@ -76,7 +76,12 @@ RUN --mount=type=secret,id=nuget_config,target=/root/.nuget/NuGet/NuGet.Config \
     dotnet restore app/backend-dotnet/src/Backend/Backend.csproj --locked-mode \
       --ignore-failed-sources -p:WarningsNotAsErrors=NU1801
 
-# Copy the remaining backend source (changes more often than deps) and publish.
+# Copy the remaining backend source (changes more often than deps) and publish. The .editorconfig
+# is a build input too: it carries the analyzer severities and style settings the warnings-as-
+# errors build enforces (CA2007 off, scoped CA1031/CA1849 settings, ...), so without it the
+# container's Release publish fails on diagnostics the dev/CI builds never see. It is copied after
+# the restore step so editing it does not invalidate the cached restore layer.
+COPY app/backend-dotnet/.editorconfig app/backend-dotnet/
 COPY app/backend-dotnet/src/Backend/ app/backend-dotnet/src/Backend/
 
 # Portable, framework-dependent publish (matches Directory.Build.props's PublishAot=false -- no
