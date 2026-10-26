@@ -235,7 +235,7 @@ internal sealed class RecordingLogger : ILogger<CascadeProcessor>
 /// pre-chunked <c>ReceiveAsync</c> return): <see cref="ReceiveAsync"/> itself slices it into
 /// <see cref="WebSocketFrameReader"/>'s own 8192-byte chunk size across as many calls as needed,
 /// exactly like a real fragmented WebSocket message would arrive -- required here (and NOT by the
-/// realtime fake) because a guest turn's base64 audio payload routinely exceeds 8192 bytes.
+/// realtime fake) because a guest turn's base64 audio payload routinely exceeds 8192 bytes.</summary>
 internal sealed class DelayedFakeWebSocket(
     IEnumerable<(byte[] Data, WebSocketMessageType MessageType)> messages,
     TimeSpan delay) : WebSocket

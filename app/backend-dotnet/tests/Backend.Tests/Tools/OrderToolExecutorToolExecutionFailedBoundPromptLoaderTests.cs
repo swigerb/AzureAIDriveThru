@@ -17,7 +17,7 @@ namespace Backend.Tests.Tools;
 /// <see cref="OrderToolExecutor"/>'s own `tool_execution_failed` site (missing required
 /// `update_order` arguments) already renders from its OWN constructor-injected
 /// <see cref="PromptLoader"/> field (<c>_promptLoader</c>), which <see
-/// cref="Sessions.RealtimeProcessor.RunSessionAsync"/> constructs per-session from THIS
+/// cref="Backend.Sessions.RealtimeProcessor.RunSessionAsync"/> constructs per-session from THIS
 /// connection's own bound persona (<c>_promptLoaders.TryGetValue(persona.Id, ...)</c>) -- so the
 /// production code was already correct here, unlike Python's. This test exists because, before
 /// it, nothing proved that: a regression that swapped in a shared/default loader instead of the

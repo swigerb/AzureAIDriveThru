@@ -147,12 +147,12 @@ public sealed class BrowserSocketCancellationTests
     }
 
     /// <summary>Opens a real loopback TCP pair and wraps each end as a real
-    /// <c>ManagedWebSocket</c>: <paramref name="BrowserSocket"/> is what <see cref="CascadeProcessor"/>
+    /// <c>ManagedWebSocket</c>: <c>BrowserSocket</c> is what <see cref="CascadeProcessor"/>
     /// treats as the server-accepted connection to the browser (<c>isServer: true</c>, matching
-    /// Kestrel), <paramref name="GuestSocket"/> is the test's stand-in for the guest's own browser
+    /// Kestrel), <c>GuestSocket</c> is the test's stand-in for the guest's own browser
     /// WebSocket client. Both ends get a tiny socket buffer so a large payload genuinely
-    /// backpressures if the guest side stops reading. <paramref name="BrowserWriteTracker"/> is the
-    /// same stream <paramref name="BrowserSocket"/> writes through, exposed so the test can observe
+    /// backpressures if the guest side stops reading. <c>BrowserWriteTracker</c> is the
+    /// same stream <c>BrowserSocket</c> writes through, exposed so the test can observe
     /// (<see cref="WriteObservingStream.ArmNextBigWrite"/>) exactly when a browser-socket send is
     /// genuinely backpressure-blocked, rather than guessing with a fixed delay (#331).</summary>
     private static async Task<(WebSocket BrowserSocket, WebSocket GuestSocket, TcpClient ServerTcp, TcpClient ClientTcp, WriteObservingStream BrowserWriteTracker)> OpenLoopbackWebSocketPairAsync()

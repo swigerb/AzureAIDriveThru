@@ -125,7 +125,7 @@ public sealed partial class ConformanceHooksConsoleTimestampTests
     /// conditional formatting logic to disable, only a call site that is skipped entirely. This
     /// test proves what that skip leaves behind: the same default <see cref="ILoggerFactory"/>
     /// console registration <c>WebApplication.CreateBuilder</c> uses in production, with no
-    /// <see cref="ApplyConsoleTimestampFormat"/> involvement whatsoever, produces plain
+    /// <c>ApplyConsoleTimestampFormat</c> involvement whatsoever, produces plain
     /// "level: category[eventId]" / indented-message output with no embedded timestamp line --
     /// i.e. byte-for-byte what every backend run produced before #233, and what every hooks-off
     /// run still produces today.

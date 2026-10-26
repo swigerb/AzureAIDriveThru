@@ -288,7 +288,7 @@ public sealed class RateLimitRecoveryUnitTests
     }
 
     /// <summary>
-    /// Issue #252: documents the call-order contract <see cref="Sessions.RealtimeProcessor"/>'s
+    /// Issue #252: documents the call-order contract <see cref="Backend.Sessions.RealtimeProcessor"/>'s
     /// browser→upstream forwarding loop now relies on (and app/backend/rtmt.py's matching fix) --
     /// <see cref="RateLimitRecovery.OnExternalResponseCreate"/> for a browser-initiated
     /// response.create MUST be called before that same frame is ever sent upstream, not after.

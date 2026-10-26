@@ -68,7 +68,7 @@ public sealed class ModelDispatchTests
     }
 
     /// <summary>Loads a throwaway copy of the real sonic pack (never the shared tree) with its
-    /// `models.realtime` block replaced by <paramref name="realtime"/>.</summary>
+    /// `models.realtime` block replaced by a <c>realtime</c> block built from <paramref name="defaultModelId"/> and <paramref name="allowed"/>.</summary>
     private static Persona SonicWithRealtimeBlock(PersonaPackFixture fixture, string defaultModelId, params string[] allowed)
     {
         fixture.MutatePersonaJson("sonic", obj =>
