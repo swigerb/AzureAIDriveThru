@@ -92,7 +92,7 @@ internal static class RealtimeAuthGate
     /// the plain-text body -- <c>Results.Text</c> has no headers overload, so this is a small
     /// custom <see cref="IResult"/> rather than a library helper.
     /// </summary>
-    private static IResult UnauthorizedWithBearerChallenge(string text) => new BearerChallengeTextResult(text);
+    private static BearerChallengeTextResult UnauthorizedWithBearerChallenge(string text) => new(text);
 
     private sealed class BearerChallengeTextResult(string text) : IResult
     {

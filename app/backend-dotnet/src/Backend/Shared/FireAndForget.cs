@@ -40,15 +40,17 @@ internal static class FireAndForgetExtensions
         {
             // Expected shutdown/supersede path, not a fault -- nothing to log.
         }
+#pragma warning disable CA1031 // Last-resort observer for a discarded task: any fault must be logged here, never rethrown.
         catch (Exception ex)
+#pragma warning restore CA1031
         {
-            logger?.LogError(ex, "Unobserved exception in fire-and-forget task: {Description}", description);
+            logger?.FireAndForgetTaskFaulted(ex, description);
         }
     }
 
     private static void LogFault(Task task, ILogger? logger, string description)
     {
         Exception? ex = task.Exception?.GetBaseException();
-        logger?.LogError(ex, "Unobserved exception in fire-and-forget task: {Description}", description);
+        logger?.FireAndForgetTaskFaulted(ex, description);
     }
 }

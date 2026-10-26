@@ -194,17 +194,11 @@ IHttpClientFactory httpClientFactory = app.Services.GetRequiredService<IHttpClie
 
 if (entraSettings.Mode == EntraMode.Development)
 {
-    logger.LogWarning(
-        "AUTH_MODE is unconfigured: running with a SYNTHETIC Entra identity (oid={Oid}). Every " +
-        "request is treated as this principal. This is the Development pass-through -- it must " +
-        "NEVER run in Production. Set AUTH_MODE=Entra with valid ENTRA_TENANT_ID and " +
-        "ENTRA_CLIENT_ID for a real deployment.",
-        EntraSettings.SyntheticOid);
+    logger.StartupDevelopmentAuthMode(EntraSettings.SyntheticOid);
 }
 else
 {
-    logger.LogInformation(
-        "Auth mode: Entra (tenant={TenantId}, issuer={Issuer})", entraSettings.TenantId, entraSettings.Issuer);
+    logger.StartupEntraAuthMode(entraSettings.TenantId, entraSettings.Issuer);
 }
 
 // ── 1. Required environment variables (app.py's _REQUIRED_ENV_VARS) ────────────────────────
@@ -214,9 +208,7 @@ try
 }
 catch (OptionsValidationException exc)
 {
-    logger.LogCritical(
-        "FATAL: Missing required environment variables: {Missing}",
-        RequiredBackendOptionsValidator.GetMissingEnvironmentVariables(exc));
+    logger.StartupMissingEnvironmentVariables(RequiredBackendOptionsValidator.GetMissingEnvironmentVariables(exc));
     return 1;
 }
 startupChecks.Pass("env_vars");
@@ -229,7 +221,7 @@ try
 }
 catch (PersonaValidationException exc)
 {
-    logger.LogCritical("FATAL: Failed to load persona pack(s) - {Message}", exc.Message);
+    logger.StartupPersonaPackLoadFailed(exc.Message);
     return 1;
 }
 startupChecks.Pass("personas_loaded");
@@ -241,7 +233,7 @@ try
 }
 catch (ConfigValidationException exc)
 {
-    logger.LogCritical("FATAL: Failed to load config.yaml - {Message}", exc.Message);
+    logger.StartupConfigLoadFailed(exc.Message);
     return 1;
 }
 
@@ -254,7 +246,7 @@ try
 }
 catch (PromptLoadException exc)
 {
-    logger.LogCritical("FATAL: Failed to load prompts - {Message}", exc.Message);
+    logger.StartupPromptsLoadFailed(exc.Message);
     return 1;
 }
 startupChecks.Pass("prompts_loaded");
@@ -278,7 +270,7 @@ try
 }
 catch (ModelValidationException exc)
 {
-    logger.LogCritical("FATAL: Failed to load model catalog - {Message}", exc.Message);
+    logger.StartupModelCatalogLoadFailed(exc.Message);
     return 1;
 }
 // No dedicated StartupChecks entry: app.py's own `_startup_checks` dict (Health/StartupChecks.cs's
@@ -301,16 +293,17 @@ try
 }
 catch (InvalidOperationException exc)
 {
-    logger.LogCritical("FATAL: {Message}", exc.Message);
+    logger.StartupServiceGraphFailed(exc.Message);
     return 1;
 }
 
-logger.LogInformation(
-    "Startup validation passed: personas={Personas}, prompts loaded ({Chars} chars), config valid, {Count}/{Count} env vars set",
-    string.Join(", ", personaCatalog.Ids),
-    promptLoader.SystemPrompt.Length,
-    RequiredBackendOptions.RequiredEnvironmentVariableNames.Count,
-    RequiredBackendOptions.RequiredEnvironmentVariableNames.Count);
+if (logger.IsEnabled(LogLevel.Information))
+{
+    logger.StartupValidationPassed(
+        string.Join(", ", personaCatalog.Ids),
+        promptLoader.SystemPrompt.Length,
+        RequiredBackendOptions.RequiredEnvironmentVariableNames.Count);
+}
 
 // ── Session token service (rtmt.py's create_hmac_token/validate_hmac_token) ─────────────────
 SessionTokenService tokenService = app.Services.GetRequiredService<SessionTokenService>();
@@ -335,9 +328,7 @@ if (staticDir is not null && Directory.Exists(staticDir))
 }
 else
 {
-    logger.LogWarning(
-        "Static files directory not found (STATIC_FILES_DIR unset and no app/backend/static next " +
-        "to the repo root) - '/' will 404. Run `VITE_AUTH_MODE=Development npm run build` in app/frontend first.");
+    logger.StartupStaticFilesDirectoryNotFound();
 }
 
 // ── Issue #147 (ADR-002): explicit routing/authentication/authorization middleware, in the
@@ -420,8 +411,8 @@ app.MapGet("/realtime", async (HttpContext context) =>
     // its own unit tests, and tests/conformance's Scenarios/Http, Scenarios/Security, and
     // Scenarios/Auth tests for the over-the-wire proof against this backend.
     IResult? rejection = RealtimeAuthGate.Check(
-        context.Request.Headers["Origin"].ToString(),
-        context.Request.Headers["Host"].ToString(),
+        context.Request.Headers.Origin.ToString(),
+        context.Request.Headers.Host.ToString(),
         context.Request.Query["token"].ToString(),
         securityConfig,
         tokenService,
@@ -443,7 +434,7 @@ app.MapGet("/realtime", async (HttpContext context) =>
     {
         // rtmt.py's `_websocket_handler` logs this rejection at warning level before returning
         // the 404 (Rick's PR #122 review item 2) -- mirrored here, not just the response body.
-        logger.LogWarning("Rejected WebSocket for unknown/disabled persona: {PersonaId}", personaId);
+        logger.RealtimeRejectedUnknownPersona(personaId);
         return Results.Text($"Unknown or disabled persona: '{personaId}'", statusCode: 404);
     }
     Persona persona = personaCatalog.Get(personaId);
@@ -470,9 +461,7 @@ app.MapGet("/realtime", async (HttpContext context) =>
             // the 400 response body below still echoes the value via PyRepr, which is fine (same
             // as the persona/model 404s above), since that goes out over HTTP to the same client
             // that sent it, not into the shared log stream.
-            logger.LogWarning(
-                "Rejected WebSocket for invalid menu mode (length={MenuModeLength}, persona={PersonaId})",
-                requestedMenuMode?.Length ?? 0, persona.Id);
+            logger.RealtimeRejectedInvalidMenuMode(requestedMenuMode?.Length ?? 0, persona.Id);
             return Results.Text(
                 $"Invalid menu mode: {PyRepr(requestedMenuMode)} (expected 'breakfast' or 'lunch')", statusCode: 400);
         }
@@ -513,9 +502,7 @@ app.MapGet("/realtime", async (HttpContext context) =>
         // below -- rtmt.py's own dispatch_processor except-clause returns the identical body
         // regardless of the underlying reason (unknown model vs. an unregistered pipeline for a
         // catalogued one); the detailed reason goes to the log, not the client.
-        logger.LogWarning(
-            "Rejected WebSocket for unknown model / unregistered pipeline: {ModelId} ({Reason})",
-            requestedModelId, exc.Message);
+        logger.RealtimeRejectedUnregisteredPipeline(requestedModelId, exc.Message);
         return Results.Text($"Unknown or disallowed model: {PyRepr(requestedModelId)}", statusCode: 404);
     }
 
@@ -527,9 +514,7 @@ app.MapGet("/realtime", async (HttpContext context) =>
     {
         // Same fixed body/log split as the dispatch-stage catch above, mirroring rtmt.py's
         // second `except ModelSelectionError` clause (resolve_model, not dispatch_processor).
-        logger.LogWarning(
-            "Rejected WebSocket for unknown/disallowed model: {ModelId} ({Reason})",
-            requestedModelId, exc.Message);
+        logger.RealtimeRejectedDisallowedModel(requestedModelId, exc.Message);
         return Results.Text($"Unknown or disallowed model: {PyRepr(requestedModelId)}", statusCode: 404);
     }
 
@@ -649,17 +634,21 @@ static async Task CheckServiceConnectivityAsync(ILogger logger, IHttpClientFacto
             try
             {
                 using HttpResponseMessage response = await httpClient.GetAsync(url).ConfigureAwait(false);
-                logger.LogInformation("✅ {Name} reachable (HTTP {StatusCode})", name, (int)response.StatusCode);
+                logger.ServiceConnectivityReachable(name, (int)response.StatusCode);
             }
+#pragma warning disable CA1031 // Per-endpoint isolation, matching app.py's inner `except Exception`: any failure logs and moves on.
             catch (Exception exc)
+#pragma warning restore CA1031
             {
-                logger.LogWarning("⚠️ {Name} unreachable at {Url} — {Message} (non-fatal)", name, url, exc.Message);
+                logger.ServiceConnectivityUnreachable(name, url, exc.Message);
             }
         }
     }
+#pragma warning disable CA1031 // Best-effort startup probe, matching app.py's outer `except Exception`: it must never fail startup.
     catch (Exception exc)
+#pragma warning restore CA1031
     {
-        logger.LogWarning("⚠️ Service connectivity check failed — {Message} (non-fatal)", exc.Message);
+        logger.ServiceConnectivityCheckFailed(exc.Message);
     }
 }
 
@@ -718,10 +707,10 @@ static RealtimeStartupSettings BuildRealtimeStartupSettings(AppConfig appConfig,
         ParallelToolCalls = ReadBool(modelSection, "parallel_tool_calls"),
         ReasoningModel = reasoningModel,
     };
-    if (sessionConfig.ReasoningEffort is not null && !sessionConfig.IsReasoningModel(Overridable.Unset<bool?>()))
+    if (sessionConfig.ReasoningEffort is not null && !sessionConfig.IsReasoningModel(Overridable.Unset<bool?>())
+        && logger.IsEnabled(LogLevel.Information))
     {
-        logger.LogInformation(
-            "Deployment {Deployment} is not treated as a reasoning model (reasoning_model={ReasoningModel}); `reasoning` (effort={Effort}) will not be sent",
+        logger.StartupDeploymentNotReasoningModel(
             realtimeDeployment, reasoningModel is null ? "auto" : reasoningModel.Value.ToString(), sessionConfig.ReasoningEffort);
     }
 
@@ -800,7 +789,3 @@ internal sealed record RealtimeStartupSettings(
     IReadOnlySet<string> AllowedVoices,
     string VoiceChoice,
     double EchoCooldownSeconds);
-
-/// <summary>Exposes Program's top-level statements to WebApplicationFactory-based integration
-/// tests (Microsoft.AspNetCore.Mvc.Testing requires a public partial Program type).</summary>
-public partial class Program;

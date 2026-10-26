@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Text.RegularExpressions;
 
 namespace Backend.Realtime;
@@ -16,28 +17,23 @@ namespace Backend.Realtime;
 /// 4. The deployment-name heuristic (<see cref="DeploymentSupportsReasoning"/>) -- last resort,
 ///    used only when the switch is "auto" (null) and no catalog override was passed.
 /// </summary>
-internal static class ReasoningRules
+internal static partial class ReasoningRules
 {
     /// <summary>Values accepted by gpt-realtime-2.1 for `reasoning.effort` (probed live 2026-09-22).</summary>
-    public static readonly IReadOnlySet<string> ReasoningEfforts = new HashSet<string>
-    {
-        "none", "minimal", "low", "medium", "high", "xhigh",
-    };
+    public static readonly IReadOnlySet<string> ReasoningEfforts = FrozenSet.Create(
+        "none", "minimal", "low", "medium", "high", "xhigh");
 
     /// <summary>Config values that mean "do not send `reasoning` at all".</summary>
-    private static readonly IReadOnlySet<string> s_reasoningDisabledValues = new HashSet<string>
-    {
-        "", "off", "disabled", "false", "null",
-    };
+    private static readonly FrozenSet<string> s_reasoningDisabledValues = FrozenSet.Create(
+        "", "off", "disabled", "false", "null");
 
     /// <summary>Realtime model families that are NOT reasoning models. gpt-realtime-1.5 answers
     /// `reasoning` (any effort, even "none") and `parallel_tool_calls: true` with `invalid_value`
     /// "Unsupported option for this model" -- and drops the whole session.update, tools included.
     /// The dated `gpt-realtime-2025-08-28` snapshot is the original non-reasoning gpt-realtime,
     /// not gpt-realtime-2.</summary>
-    private static readonly Regex s_nonReasoningDeploymentRe = new(
-        @"^(gpt-4o.*|gpt-realtime(-mini.*|-1(\.\d+)?(-.*)?|-\d{4}-\d{2}-\d{2})?)$",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    [GeneratedRegex(@"^(gpt-4o.*|gpt-realtime(-mini.*|-1(\.\d+)?(-.*)?|-\d{4}-\d{2}-\d{2})?)$", RegexOptions.IgnoreCase)]
+    private static partial Regex NonReasoningDeploymentRegex { get; }
 
     /// <summary>
     /// Best-effort check from the deployment name, used only when `model.reasoning_model` is
@@ -52,7 +48,7 @@ internal static class ReasoningRules
         {
             return true;
         }
-        return !s_nonReasoningDeploymentRe.IsMatch(deployment.Trim());
+        return !NonReasoningDeploymentRegex.IsMatch(deployment.Trim());
     }
 
     /// <summary>

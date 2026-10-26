@@ -46,31 +46,41 @@ internal static class WebSocketFrameReader
         CancellationToken cancellationToken,
         int maxMessageBytes = DefaultMaxMessageBytes)
     {
-        byte[] chunk = new byte[ChunkSize];
-        WebSocketReceiveResult result;
-        // ArrayBufferWriter, not a fixed buffer: an individual message can be arbitrarily larger
-        // than one chunk (unlike the byte[4096] this replaces, which silently dropped the excess).
-        var writer = new ArrayBufferWriter<byte>();
-
-        do
+        // Pooled: this runs once per relayed message in both directions, so a fresh 8 KiB array
+        // per message is pure GC churn. Always exactly ChunkSize bytes are offered to the socket
+        // (a rented array may be longer), so receive chunking is unchanged.
+        byte[] chunk = ArrayPool<byte>.Shared.Rent(ChunkSize);
+        try
         {
-            result = await socket.ReceiveAsync(chunk, cancellationToken).ConfigureAwait(false);
-            if (result.MessageType == WebSocketMessageType.Close)
+            WebSocketReceiveResult result;
+            // ArrayBufferWriter, not a fixed buffer: an individual message can be arbitrarily larger
+            // than one chunk (unlike the byte[4096] this replaces, which silently dropped the excess).
+            var writer = new ArrayBufferWriter<byte>();
+
+            do
             {
-                return null;
-            }
-            if (result.Count > 0)
-            {
-                if (writer.WrittenCount + result.Count > maxMessageBytes)
+                result = await socket.ReceiveAsync(new ArraySegment<byte>(chunk, 0, ChunkSize), cancellationToken).ConfigureAwait(false);
+                if (result.MessageType == WebSocketMessageType.Close)
                 {
-                    await CloseMessageTooBigAsync(socket).ConfigureAwait(false);
                     return null;
                 }
-                writer.Write(chunk.AsSpan(0, result.Count));
-            }
-        } while (!result.EndOfMessage);
+                if (result.Count > 0)
+                {
+                    if (writer.WrittenCount + result.Count > maxMessageBytes)
+                    {
+                        await CloseMessageTooBigAsync(socket).ConfigureAwait(false);
+                        return null;
+                    }
+                    writer.Write(chunk.AsSpan(0, result.Count));
+                }
+            } while (!result.EndOfMessage);
 
-        return new WebSocketFrame(writer.WrittenSpan.ToArray(), result.MessageType);
+            return new WebSocketFrame(writer.WrittenSpan.ToArray(), result.MessageType);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(chunk);
+        }
     }
 
     private static async Task CloseMessageTooBigAsync(WebSocket socket)
@@ -88,7 +98,9 @@ internal static class WebSocketFrameReader
                     .ConfigureAwait(false);
             }
         }
+#pragma warning disable CA1031 // WebSocket implementations don't share a closed exception set; this close is best-effort.
         catch (Exception)
+#pragma warning restore CA1031
         {
             // Best-effort: the peer may have already torn the connection down, and the caller
             // treats a null return as "socket is gone" either way.

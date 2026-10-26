@@ -186,11 +186,7 @@ internal static class EntraAuthentication
         // DI coupling for something used often enough that connection pooling/reuse matters; this
         // backchannel is used for low-frequency OIDC discovery fetches only, so a plain HttpClient
         // with its own handler, scoped to this one named options instance, is the simpler choice.
-        options.Backchannel ??= new HttpClient(options.BackchannelHttpHandler ?? new HttpClientHandler())
-        {
-            Timeout = options.BackchannelTimeout,
-            MaxResponseContentBufferSize = 10 * 1024 * 1024,
-        };
+        options.Backchannel ??= CreateBackchannel(options);
         var innerConfigurationManager = new ConfigurationManager<OpenIdConnectConfiguration>(
             settings.DiscoveryUrl,
             new OpenIdConnectConfigurationRetriever(),
@@ -463,6 +459,21 @@ internal static class EntraAuthentication
     /// </summary>
     private static bool HasUsableCachedConfiguration(JwtBearerOptions options) =>
         options.ConfigurationManager is CooldownAwareConfigurationManager { HasConfiguration: true };
+
+    /// <summary>
+    /// Builds the OIDC discovery/JWKS backchannel exactly as JwtBearerPostConfigureOptions would:
+    /// on the caller-supplied <see cref="JwtBearerOptions.BackchannelHttpHandler"/> when there is
+    /// one, otherwise on a fresh default handler. The parameterless <see cref="HttpClient()"/>
+    /// constructor is exactly <c>new HttpClient(new HttpClientHandler())</c>, so in both branches
+    /// the handler is owned by -- and disposed with -- the returned client.
+    /// </summary>
+    private static HttpClient CreateBackchannel(JwtBearerOptions options)
+    {
+        HttpClient backchannel = options.BackchannelHttpHandler is { } handler ? new HttpClient(handler) : new HttpClient();
+        backchannel.Timeout = options.BackchannelTimeout;
+        backchannel.MaxResponseContentBufferSize = 10 * 1024 * 1024;
+        return backchannel;
+    }
 
     /// <summary>
     /// The single fallback+default authorization policy (issue #147 bullet 1/3): one

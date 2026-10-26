@@ -28,7 +28,7 @@ namespace Backend;
 /// for the literal string in the Python tree; a C# mirror of that guard is out of this file's
 /// scope but the same rule applies).
 /// </summary>
-internal static class ConformanceHooks
+internal static partial class ConformanceHooks
 {
     private const string EnabledEnv = "CONFORMANCE_TEST_HOOKS";
     private const string FixedNowEnv = "CONFORMANCE_FIXED_NOW";
@@ -37,7 +37,8 @@ internal static class ConformanceHooks
     // Accepts a trailing numeric offset ("+05:00"/"-0500") or a literal "Z" (UTC) -- matches
     // Python's `datetime.fromisoformat` contract of "RFC 3339 with an explicit numeric UTC
     // offset", never an IANA zone *name* suffix.
-    private static readonly Regex s_explicitOffsetSuffix = new(@"(Z|[+-]\d{2}:?\d{2})$", RegexOptions.Compiled);
+    [GeneratedRegex(@"(Z|[+-]\d{2}:?\d{2})$")]
+    private static partial Regex ExplicitOffsetSuffixRegex { get; }
 
     /// <summary>Live re-check of <c>CONFORMANCE_TEST_HOOKS</c> -- read fresh every call (never
     /// cached), matching Python's <c>hooks_enabled_now()</c> re-read contract so a test process
@@ -172,7 +173,7 @@ internal static class ConformanceHooks
 
     private static DateTimeOffset ParseFixedNow(string raw)
     {
-        if (!s_explicitOffsetSuffix.IsMatch(raw.Trim()))
+        if (!ExplicitOffsetSuffixRegex.IsMatch(raw.Trim()))
         {
             throw new InvalidOperationException(
                 $"{FixedNowEnv} must be an RFC 3339 timestamp with an explicit numeric UTC " +
