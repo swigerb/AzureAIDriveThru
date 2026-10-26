@@ -166,6 +166,33 @@ public sealed class RealtimeProcessorExtensionMessageTests
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("extension.set_happy_hour_mode", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task TryHandleSessionOverrideExtensionMessage_neutralises_client_text_in_the_drop_warnings()
+    {
+        const string SessionId = "sess-override-injection";
+        SessionManager manager = CreateSessionManager(DeltaFixture.Load("test-delta"), SessionId);
+        var logger = new RecordingLogger();
+        RealtimeProcessor processor = CreateProcessor(manager, logger);
+
+        Assert.True(await processor.TryHandleSessionOverrideExtensionMessageAsync(
+            "extension.set_machine_status",
+            new System.Text.Json.Nodes.JsonObject { ["machine"] = "bad\r\nmachine", ["status"] = "up\nforged" },
+            SessionId, ct: TestContext.Current.CancellationToken));
+        Assert.True(await processor.TryHandleSessionOverrideExtensionMessageAsync(
+            "extension.set_happy_hour_mode",
+            new System.Text.Json.Nodes.JsonObject { ["mode"] = "x\r\ny" },
+            SessionId, ct: TestContext.Current.CancellationToken));
+
+        Assert.Collection(
+            logger.Entries.Where(e => e.Level == LogLevel.Warning),
+            machine => Assert.Equal(
+                $"Dropped extension.set_machine_status with unknown/invalid machine or status (machine=bad__machine, status=up_forged, session={SessionId})",
+                machine.Message),
+            mode => Assert.Equal(
+                $"Dropped extension.set_happy_hour_mode with an invalid mode or unsupported persona (mode=x__y, session={SessionId})",
+                mode.Message));
+    }
+
     /// <summary>#309 (R2): a successful extension.set_happy_hour_mode must push the refreshed
     /// ticket to the browser right away -- the same extension.middle_tier_tool_response shape a
     /// successful update_order/get_order tool call already pushes -- with previous_item_id null

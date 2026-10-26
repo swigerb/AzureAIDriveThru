@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Backend.Configuration;
 using Backend.Realtime;
+using Backend.Shared;
 
 namespace Backend.Sessions;
 
@@ -284,7 +285,7 @@ internal sealed class RealtimeClientRelay(RealtimeSessionContext context)
         string? newVoice = ClientServerFilter.SanitizeVoice(candidate, context.AllowedVoices);
         if (newVoice is null)
         {
-            context.Logger.DroppedSetVoice(candidate, context.SessionId);
+            context.Logger.DroppedSetVoice(LogSanitizer.Sanitize(candidate), context.SessionId);
             return;
         }
         context.State.Voice = newVoice;

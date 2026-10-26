@@ -140,7 +140,9 @@ internal sealed class RealtimeServerRelay(RealtimeSessionContext context)
                 && toolCallLogger.IsEnabled(LogLevel.Information))
             {
                 toolCallLogger.ResponseContainedToolCalls(
-                    outputResult.ToolNames.Count, string.Join(", ", outputResult.ToolNames), context.SessionId);
+                    outputResult.ToolNames.Count,
+                    string.Join(", ", outputResult.ToolNames.Select(LogSanitizer.Sanitize)),
+                    context.SessionId);
             }
             TrackResponseOutput(response);
         }
@@ -318,7 +320,10 @@ internal sealed class RealtimeServerRelay(RealtimeSessionContext context)
         {
             if (context.Logger is { } logger && logger.IsEnabled(LogLevel.Information))
             {
-                logger.ToolCallReceived(RealtimeProcessor.GetString(item, "name"), callId, context.SessionId);
+                logger.ToolCallReceived(
+                    LogSanitizer.Sanitize(RealtimeProcessor.GetString(item, "name")),
+                    LogSanitizer.Sanitize(callId),
+                    context.SessionId);
             }
             context.State.ToolsPending[callId] = "";
         }

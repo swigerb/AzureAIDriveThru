@@ -3,6 +3,7 @@ using System.Net.WebSockets;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Backend.Realtime;
+using Backend.Shared;
 using Backend.Tools;
 
 namespace Backend.Sessions;
@@ -34,13 +35,14 @@ internal sealed class ToolCallDispatcher(
         string? callId = RealtimeProcessor.GetString(item, "call_id");
         if (callId is null || !state.ToolsPending.TryGetValue(callId, out string? previousItemId))
         {
-            logger?.ToolCallNotFoundInPending(callId, sessionId);
+            logger?.ToolCallNotFoundInPending(LogSanitizer.Sanitize(callId), sessionId);
             return;
         }
         string toolName = RealtimeProcessor.GetString(item, "name") ?? "";
         if (!state.ToolExecutor.ToolNames.Contains(toolName))
         {
-            logger?.UnknownToolRequested(toolName, sessionId);
+            // Not yet checked against the registry, so the model chose this name: neutralise it.
+            logger?.UnknownToolRequested(LogSanitizer.Sanitize(toolName), sessionId);
             return;
         }
 

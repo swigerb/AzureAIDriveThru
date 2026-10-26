@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Backend.Cascade;
 using Backend.Realtime;
+using Backend.Shared;
 using Backend.Tools;
 
 namespace Backend.Sessions;
@@ -41,7 +42,7 @@ internal sealed class CascadeToolCallDispatcher(
         string name = CascadeProcessor.GetString(toolCall["function"] as JsonObject, "name") ?? "";
         if (!context.ToolExecutor.ToolNames.Contains(name))
         {
-            context.Logger.CascadeUnknownTool(name, context.SessionId);
+            context.Logger.CascadeUnknownTool(LogSanitizer.Sanitize(name), context.SessionId);
             context.State.Messages.Add(CascadeChatMessage.Tool("", callId));
             return;
         }

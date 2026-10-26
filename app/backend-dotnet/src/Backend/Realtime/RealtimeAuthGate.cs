@@ -1,5 +1,6 @@
 using Backend.Auth;
 using Backend.Configuration;
+using Backend.Shared;
 
 namespace Backend.Realtime;
 
@@ -50,8 +51,12 @@ internal static class RealtimeAuthGate
         // /realtime handshake attempt (accepted or rejected), mirroring aiohttp's own access
         // logger wrapping app.py's whole request pipeline -- that line is this row's own positive
         // control proving the leak checks below aren't vacuously passing because nothing was
-        // logged at all. Deliberately logs only Origin/Host, never `token`/`principalOid`.
-        logger.RealtimeHandshake(host, origin);
+        // logged at all. Deliberately logs only Origin/Host, never `token`/`principalOid`. Both are
+        // client-controlled request headers, so they are neutralised once (CWE-117) for every line
+        // below; a normal Host/Origin passes through unchanged.
+        string safeHost = LogSanitizer.Sanitize(host);
+        string safeOrigin = LogSanitizer.Sanitize(origin);
+        logger.RealtimeHandshake(safeHost, safeOrigin);
 
         // ── Origin validation ("Task 3") -- missing/empty Origin is accepted unchanged
         // (non-browser and same-process callers legitimately omit it); this only hardens the
@@ -60,7 +65,7 @@ internal static class RealtimeAuthGate
             && !OriginValidator.MatchesHost(origin, host)
             && !security.AllowedOrigins.Contains(origin, StringComparer.Ordinal))
         {
-            logger.RejectedDisallowedOrigin(host, origin);
+            logger.RejectedDisallowedOrigin(safeHost, safeOrigin);
             return Results.Text("Origin not allowed", statusCode: StatusCodes.Status403Forbidden);
         }
 

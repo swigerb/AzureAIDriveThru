@@ -6,6 +6,7 @@ using Backend.Models;
 using Backend.Personas;
 using Backend.Prompts;
 using Backend.Realtime;
+using Backend.Shared;
 using Backend.Tools;
 
 namespace Backend.Sessions;
@@ -594,7 +595,8 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
             if (string.IsNullOrEmpty(machine) || status is null
                 || !_sessionManager.SetMachineStatus(effectiveSessionId, machine, status))
             {
-                _logger?.DroppedSetMachineStatus(machine, candidateStatus, effectiveSessionId);
+                _logger?.DroppedSetMachineStatus(
+                    LogSanitizer.Sanitize(machine), LogSanitizer.Sanitize(candidateStatus), effectiveSessionId);
                 return true;
             }
 
@@ -608,7 +610,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
             string? mode = ClientServerFilter.SanitizeHappyHourMode(candidateMode);
             if (mode is null || !_sessionManager.SetHappyHourMode(effectiveSessionId, mode))
             {
-                _logger?.DroppedSetHappyHourMode(candidateMode, effectiveSessionId);
+                _logger?.DroppedSetHappyHourMode(LogSanitizer.Sanitize(candidateMode), effectiveSessionId);
                 return true;
             }
 

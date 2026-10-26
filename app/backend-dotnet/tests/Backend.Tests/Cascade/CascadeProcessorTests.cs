@@ -1578,6 +1578,32 @@ public sealed class CascadeProcessorTests
         Assert.Equal(greetingTtsRequest["voice"]!.GetValue<string>(), guestTurnTtsRequest["voice"]!.GetValue<string>());
     }
 
+    /// <summary>The rejected voice is client-controlled and is echoed by the drop warning, so a
+    /// CR/LF in it must not be able to forge a second log line.</summary>
+    [Fact]
+    public async Task SetVoiceWithAHostileVoice_NeutralisesTheValueInTheDropWarning()
+    {
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
+        var logger = new RecordingLogger();
+        CascadeProcessor processor = NewProcessor(
+            new RoutingFoundryHandler(), new StubToolExecutor(["search"]), loader, logger: logger);
+        var socket = new DelayedFakeWebSocket([], TimeSpan.Zero);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        CascadeSessionContext context = processor.CreateSessionContext(socket, persona,
+            new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false), "hostile-voice-session", cts);
+
+        await new CascadeClientMessageHandler(context).HandleAsync(new JsonObject
+        {
+            ["type"] = "extension.set_voice",
+            ["voice"] = "evil\r\nWARN forged",
+        });
+
+        string message = Assert.Single(logger.Entries, e => e.Level == LogLevel.Warning).Message;
+        Assert.Equal(
+            "Dropped extension.set_voice with an unknown/invalid voice evil__WARN forged (session=hostile-voice-session)",
+            message);
+    }
+
     // ── #126: resume / nudge / echo-suppression ─────────────────────────────────────────────────
 
     private static byte[] ResumeFrame(string? resumeId) =>

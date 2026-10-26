@@ -439,7 +439,9 @@ app.MapGet("/realtime", async (HttpContext context) =>
     {
         // rtmt.py's `_websocket_handler` logs this rejection at warning level before returning
         // the 404 (Rick's PR #122 review item 2) -- mirrored here, not just the response body.
-        logger.RealtimeRejectedUnknownPersona(personaId);
+        // `personaId` is the raw ?persona= value, so it is neutralised for the log only (CWE-117);
+        // the 404 body below keeps the byte-for-byte Python shape.
+        logger.RealtimeRejectedUnknownPersona(LogSanitizer.Sanitize(personaId));
         return Results.Text($"Unknown or disabled persona: '{personaId}'", statusCode: 404);
     }
     Persona persona = personaCatalog.Get(personaId);
@@ -506,8 +508,11 @@ app.MapGet("/realtime", async (HttpContext context) =>
         // Rick's PR #122 review item 2: the 404 BODY is always the fixed, Python-matching shape
         // below -- rtmt.py's own dispatch_processor except-clause returns the identical body
         // regardless of the underlying reason (unknown model vs. an unregistered pipeline for a
-        // catalogued one); the detailed reason goes to the log, not the client.
-        logger.RealtimeRejectedUnregisteredPipeline(requestedModelId, exc.Message);
+        // catalogued one); the detailed reason goes to the log, not the client. Both the requested
+        // id and the exception text (which embeds it) are client-controlled, so the log gets
+        // neutralised copies (CWE-117) while the body stays byte-for-byte unchanged.
+        logger.RealtimeRejectedUnregisteredPipeline(
+            LogSanitizer.Sanitize(requestedModelId), LogSanitizer.Sanitize(exc.Message));
         return Results.Text($"Unknown or disallowed model: {PyRepr(requestedModelId)}", statusCode: 404);
     }
 
@@ -519,7 +524,8 @@ app.MapGet("/realtime", async (HttpContext context) =>
     {
         // Same fixed body/log split as the dispatch-stage catch above, mirroring rtmt.py's
         // second `except ModelSelectionError` clause (resolve_model, not dispatch_processor).
-        logger.RealtimeRejectedDisallowedModel(requestedModelId, exc.Message);
+        logger.RealtimeRejectedDisallowedModel(
+            LogSanitizer.Sanitize(requestedModelId), LogSanitizer.Sanitize(exc.Message));
         return Results.Text($"Unknown or disallowed model: {PyRepr(requestedModelId)}", statusCode: 404);
     }
 
