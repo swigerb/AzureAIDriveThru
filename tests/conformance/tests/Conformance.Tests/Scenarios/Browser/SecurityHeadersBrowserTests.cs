@@ -31,8 +31,9 @@ namespace Conformance.Tests.Scenarios.Browser;
 /// <item><description><see cref="Settings_and_the_dark_mode_switch_raise_no_violation"/>: the
 /// <c>&lt;style&gt;</c> that Radix's scroll lock injects as the dialog opens (one of the reasons
 /// <c>style-src</c> carries <c>'unsafe-inline'</c>; the persona theme's <c>.dark</c> rules are
-/// another) and the dark-mode path, where the bundled-but-unused Dark Reader would start to violate
-/// the policy if it were ever wired up.</description></item>
+/// another) and the dark-mode path. Dark Reader's <c>enable()</c> is only reachable through a
+/// <c>toggleTheme</c> that no component calls, so this does not exercise it; wiring it up needs a
+/// re-test under the policy.</description></item>
 /// <item><description><see cref="The_browser_enforces_the_policy_and_the_recorder_sees_what_it_blocks"/>:
 /// the negative control. A clean run proves nothing unless the browser really enforces the policy and
 /// the recorder really sees a block, so this provokes one of each kind on purpose.</description></item>

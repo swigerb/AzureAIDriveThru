@@ -955,9 +955,12 @@ Things to know:
 
 - `includeSubDomains` covers subdomains of the serving host. If the app is ever served from an apex
   custom domain that also has HTTP-only subdomains, drop it first (ASP.NET's own `UseHsts` default
-  omits it too). There is no runtime switch; roll back by deploying the previous image digest.
-- Dark Reader is bundled but nothing calls its `enable()` (the settings switch toggles a Tailwind
-  class). Wiring it up needs a re-test: it creates `blob:` URLs and fetches stylesheets, which this
+  omits it too). There is no runtime switch; roll back by deploying the previous image digest. That
+  does not clear HSTS already cached by browsers (up to a year); retiring it takes a release that
+  sends `Strict-Transport-Security: max-age=0` over HTTPS.
+- Dark Reader is bundled and `ThemeProvider` calls `enable()` when its theme is `"dark"`, but the
+  theme starts as `"light"` and no component calls `toggleTheme`, so only `disable()` runs (the
+  settings switch toggles a Tailwind class). Wiring `toggleTheme` up needs a re-test: it creates `blob:` URLs and fetches stylesheets, which this
   policy does not allow.
 - `useRealtime`'s `useDirectAoaiApi` debug mode (a socket straight to an Azure OpenAI endpoint)
   is not passed by any component and `connect-src` would block it; allow that endpoint if the mode
@@ -1017,6 +1020,9 @@ headers, fields of browser WebSocket frames, and model-generated tool names and 
 `[LoggerMessage]` templates are untouched because conformance rows match on their text. Deliberately
 not sanitized: server-issued or already-validated values (session ids are HMAC-checked; catalog ids
 passed a lookup; values filtered by `ClientServerFilter`) and the error text Azure OpenAI returns.
+Exception objects are never handed to a log call for a client-derived parse failure, because the
+framework's JSON reader echoes the rest of a malformed frame in its message (the cascade processor's
+malformed-JSON warning logs the session id only, like the realtime relay's).
 
 ### Close frame ordering on the browser socket
 

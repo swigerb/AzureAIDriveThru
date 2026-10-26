@@ -414,7 +414,8 @@ completely independently.
 ### Security headers and HSTS
 
 The C# app sends a Content-Security-Policy, `X-Content-Type-Options`, `X-Frame-Options`,
-`Referrer-Policy` and `Permissions-Policy` on every response, plus `Strict-Transport-Security` for
+`Referrer-Policy` and `Permissions-Policy` on every response the pipeline produces (not on a 500 from
+an unhandled exception, where Kestrel resets the response), plus `Strict-Transport-Security` for
 HTTPS requests (the container speaks plain HTTP behind the ingress, so it keys off
 `X-Forwarded-Proto: https`). The Python app does not send them. After a deploy, look at the headers
 and confirm there is no `server:` line:
@@ -428,6 +429,10 @@ after opening Settings. `includeSubDomains` is part of the HSTS value; if the ap
 an apex custom domain that has HTTP-only subdomains, change it in
 `app/backend-dotnet/src/Backend/Http/SecurityHeaders.cs` first. There is no runtime switch, so roll
 back by deploying the previous image digest (`az containerapp update --image <repo>@sha256:<digest>`).
+That rollback only stops sending the headers: a browser that already received the HSTS policy keeps
+upgrading HTTP to HTTPS for up to a year. To actually retire HSTS (for example before a host or domain
+change), ship a release that answers over HTTPS with `Strict-Transport-Security: max-age=0` and leave
+it running until clients have visited.
 The policy and the reason for each allowance are in `docs/dotnet_mapping.md`.
 
 ### Data Protection keys

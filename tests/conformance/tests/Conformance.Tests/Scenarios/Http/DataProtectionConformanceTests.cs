@@ -6,8 +6,9 @@ namespace Conformance.Tests;
 
 /// <summary>
 /// Booting the real <c>Program.cs</c> in Entra mode leaves the framework's Data Protection key ring
-/// alone: no key is created or written and the stack logs nothing at startup (see
-/// <c>Backend/Auth/EphemeralDataProtection.cs</c> for why that is the wanted outcome).
+/// alone: the stack logs nothing at startup, which is the observable sign that no key ring was built
+/// (the unit tests cover the registrations; this row does not inspect the key directory). See
+/// <c>Backend/Auth/EphemeralDataProtection.cs</c> for why that is the wanted outcome.
 ///
 /// Black-box on purpose: <c>Backend.Tests</c> proves the helper inside a TestServer with its own
 /// copy of the auth wiring, but nothing there boots <c>Program.cs</c>, so only a real launch notices
