@@ -884,6 +884,215 @@ process exit code 1) rather than silently degrading. This was also verified once
 (`dotnet run` against a mutated pack copy, confirmed non-zero exit and a `crit:`-level log line
 naming the exact violation).
 
+## Follow-ups to the .NET 11 modernization (PR #372)
+
+Small hardening fixes that PR #372's review deferred. Each landed as its own commit with its own
+tests.
+
+### Security headers and Content-Security-Policy
+
+`Http/SecurityHeaders.cs` is the first middleware in `Program.cs`, ahead of `UseStaticFiles` (which
+short-circuits the pipeline for a file it serves), so the SPA shell, static assets, the JSON API,
+401s from the Entra fallback policy and 404s all carry the same headers. They are assigned by
+indexer before the rest of the pipeline runs, so a route that sets one itself (the persona asset
+route sets `nosniff`) replaces the value instead of duplicating it. Kestrel's own `Server` header is
+off (`ConfigureKestrel`, `AddServerHeader = false`). The Python backend sends none of this (it sets
+`nosniff` on persona assets only), so every conformance row that asserts it skips on the Python leg.
+
+| Header | Value |
+| ------ | ----- |
+| `X-Content-Type-Options` | `nosniff` |
+| `X-Frame-Options` | `SAMEORIGIN` (not `DENY`; see MSAL below) |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+| `Permissions-Policy` | `camera=(), geolocation=(), microphone=(self), payment=(), usb=()` (the SPA only ever asks for audio) |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains`, only when the request is HTTPS or was forwarded as `X-Forwarded-Proto: https` (the container listens on plain HTTP behind the ingress), and never in Development. No `preload`. |
+| `Content-Security-Policy` | the policy below, sent as one line |
+
+```text
+default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; media-src 'self';
+connect-src 'self' ws(s)://<host> https://login.microsoftonline.com;
+frame-src 'self' https://login.microsoftonline.com; object-src 'none'; base-uri 'self';
+form-action 'self'; frame-ancestors 'self'
+```
+
+Why each allowance exists (checked against the shipped SPA, not assumed):
+
+- `script-src 'self'`: no inline script, `eval`, `Worker` or service worker; the two audio worklets
+  are same-origin files.
+- `style-src 'unsafe-inline'`: two runtime `<style>` injections cannot carry a nonce in a
+  script-free policy: the persona theme's `.dark { ... }` rules at load, and react-remove-scroll's
+  `body[data-scroll-locked]` rules when a Radix dialog (Settings) opens. Confirmed by mutation:
+  without it the Browser row fails with `style-src-elem` violations, two on load and three once
+  Settings is open.
+- Google Fonts: a persona with `ui.theme.font.importUrl` (three of the shipped packs; one has
+  none) gets a `<link id="persona-font-link">`, and `index.css` imports the same family. `font-src`
+  has no `data:`.
+- `img-src 'self' data:`: persona logos are same-origin and the bundle inlines a few `data:` SVGs.
+  The menu data carries about 1,760 `https://imagedelivery.net` image URLs, but the SPA never
+  renders a menu image, so that origin is deliberately **not** allowed.
+- `connect-src https://login.microsoftonline.com`: MSAL's discovery and token requests.
+- `frame-src`, `frame-ancestors 'self'` and `X-Frame-Options: SAMEORIGIN`: MSAL's hidden
+  silent-renewal iframe goes to Entra (`prompt=none`) and is redirected back to this origin, which
+  then has to be allowed to load inside the app's own page. A foreign page cannot frame the app.
+- The explicit `ws://` or `wss://` source in `connect-src` (`wss` when the request is secure) is for
+  older Safari, which does not match `'self'` to a WebSocket scheme. It is taken from the `Host`
+  header, which is request-controlled text spliced into a policy, so `IsSafeAuthority` accepts only
+  a DNS name or IPv4 address with an optional port (the CSP host-source grammar); anything else,
+  IPv6 literals included, gets the same policy without the explicit source. Kestrel (11.0.100-rc.3)
+  answers 400 for 20 characters in a `Host` (among them space, `;`, `,` and `*`) but passes 72, of
+  which 64 are valid in a host-source; the other 8 (`' ! $ & ( ) _ ~`) are what the validator is for.
+
+Changing the policy is deliberately a three-place edit: the constants in `SecurityHeaders.cs`, the
+exact expected string in `SecurityHeadersTests`, and, for an origin a persona pack brings,
+`PersonaPackContentSecurityPolicyTests`. That guard walks every `personas/**/*.json` and fails when
+a pack names an origin the policy neither allows nor lists as data-only (`s_dataOnly`: the menu
+image URLs), so a new persona with its own font host or image CDN fails in CI instead of as a console
+violation in production. A UI change that starts rendering menu images must add the origin to
+`img-src` and delete the `s_dataOnly` entry.
+
+Things to know:
+
+- `includeSubDomains` covers subdomains of the serving host. If the app is ever served from an apex
+  custom domain that also has HTTP-only subdomains, drop it first (ASP.NET's own `UseHsts` default
+  omits it too). There is no runtime switch; roll back by deploying the previous image digest. That
+  does not clear HSTS already cached by browsers (up to a year); retiring it takes a release that
+  sends `Strict-Transport-Security: max-age=0` over HTTPS.
+- Dark Reader is bundled and `ThemeProvider` calls `enable()` when its theme is `"dark"`, but the
+  theme starts as `"light"` and no component calls `toggleTheme`, so only `disable()` runs (the
+  settings switch toggles a Tailwind class). Wiring `toggleTheme` up needs a re-test: it creates `blob:` URLs and fetches stylesheets, which this
+  policy does not allow.
+- `useRealtime`'s `useDirectAoaiApi` debug mode (a socket straight to an Azure OpenAI endpoint)
+  is not passed by any component and `connect-src` would block it; allow that endpoint if the mode
+  is ever surfaced.
+- A 500 from an unhandled exception loses the headers (Kestrel resets the response), and the
+  Development exception page clears them. There is no `UseForwardedHeaders`, COOP/COEP/CORP,
+  report-only phase or reporting endpoint.
+
+Test layers:
+
+1. `Backend.Tests/Http/SecurityHeadersTests.cs`: the exact policy string, every header value, the
+   host validator (a theory plus an alphabet sweep) and, through `TestServer`, headers on
+   short-circuited responses and replacement by a route.
+2. `Backend.Tests/Http/PersonaPackContentSecurityPolicyTests.cs`: the persona-pack guard above.
+3. `Scenarios/Http/SecurityHeadersConformanceTests.cs`: black-box rows on the real `Program.cs`
+   wiring (nothing in `Backend.Tests` boots it): baseline headers on `/health`, `/` and an unknown
+   route, a 401, the policy shape, HSTS and `wss` only behind a forwarded `https`, no `Server` or
+   `X-Powered-By`.
+4. `Scenarios/Browser/SecurityHeadersBrowserTests.cs`: a real Edge/Chrome page with a violation
+   recorder: every persona on disk loads with no violation and reaches the realtime relay, a
+   recorded turn, the Settings dialog and its dark-mode switch, a canary proving the browser really
+   blocks an inline script, an `eval` and a foreign `fetch` and that the recorder sees them, and
+   framing (same origin allowed, a real second origin refused, with a control frame proving framing
+   works in that browser).
+
+What the rows can catch was measured by mutation. The unit tests killed nine mutants and the
+persona guard three. In the HTTP row, dropping `UseSecurityHeaders` fails four of five (the fifth
+is Kestrel's `Server` header), and `AddServerHeader = true` and an inverted HSTS switch each fail
+their own row. In the Browser row, dropping `'unsafe-inline'` fails six of eight, and
+`script-src 'unsafe-inline' 'unsafe-eval'` with `frame-ancestors 'none'` fails two (the canary and
+the same-origin framing). `frame-ancestors *` with `X-Frame-Options: ALLOWALL` first survived,
+because the first version framed from a routed, made-up host whose child never loaded whatever the
+policy said; the real second origin and its control frame fixed that.
+
+Known limits: Chromium matches `'self'` to a same-origin `ws://`, so the explicit `ws(s)` source can
+only be pinned by the unit and HTTP rows, and it ignores `X-Frame-Options` when `frame-ancestors` is
+present, so that header is pinned the same way. The Development fixture serves a no-MSAL SPA build,
+so sign-in and silent renewal under the policy can only be checked against a deployed Entra
+environment.
+
+### `/favicon.ico` answers anonymously
+
+`Http/FaviconEndpoint.cs` maps `GET` and `HEAD /favicon.ico` as anonymous and answers `204` with
+`Cache-Control: public, max-age=86400`. `index.html` carries no `<link rel="icon">` (the persona's
+own icon is injected at runtime), so a first page load makes the browser ask the origin root, and
+in Entra mode that unmapped probe came back 401 from the fallback authorization policy: a console
+error on every sign-in. The persona's favicon is still served from `/personas/{id}/assets/`.
+
+### Log neutralisation (CWE-117)
+
+`Shared/LogSanitizer.Sanitize` replaces control, format (bidi overrides, zero-width, the invisible tag
+block), line and paragraph separator characters and unpaired surrogates with `_`, and cuts a value
+to 256 characters plus a `...` marker (long enough for a full 253-character host name, so a
+legitimate `Host` or `Origin` is never altered). A value that needs no change comes back as the same
+instance. It wraps values from outside the process at the call site: query-string values, request
+headers, fields of browser WebSocket frames, and model-generated tool names and call ids. The
+`[LoggerMessage]` templates are untouched because conformance rows match on their text. Deliberately
+not sanitized: server-issued or already-validated values (session ids are HMAC-checked; catalog ids
+passed a lookup; values filtered by `ClientServerFilter`) and the error text Azure OpenAI returns.
+Exception objects are never handed to a log call for a client-derived parse failure, because the
+framework's JSON reader echoes the rest of a malformed frame in its message (the cascade processor's
+malformed-JSON warning logs the session id only, like the realtime relay's).
+
+### Close frame ordering on the browser socket
+
+`Realtime/OrderedCloseWebSocket` wraps the browser socket and guarantees the Close frame is the last
+frame written. `ManagedWebSocket.SendAsync` validates the state once and then waits on an internal
+lock that `CloseOutputAsync` takes too, so a data send that had already passed the check was written
+after the Close frame (a raw socket produced Text, Close, Text; the wrapper produces Text, Close),
+and browsers log "Data frame received after close". A close now refuses every later data send and
+waits for the one write that may be in flight. Caveats: the refusal is permanent and silent (as
+`FramePump` already was for a socket that is not open); a send cancelled while queued throws
+`OperationCanceledException` instead of aborting the socket; the gate is never disposed, on purpose;
+the cost is one uncontended `SemaphoreSlim` wait and release per browser send; only the browser
+socket is wrapped (the upstream audio socket has no such race).
+
+### Data Protection keys
+
+The follow-up was worded "persist the Data Protection keys". The backend now creates no key ring at
+all, and persisting is deferred until something needs it.
+
+Entra mode's `AddAuthentication` registers ASP.NET Data Protection as a side effect, and the
+framework's own hosted service then built a key ring on every start: an unencrypted `key-<guid>.xml`
+under `/home/app/.aspnet/DataProtection-Keys`, plus the `FileSystemXmlRepository` "may not be
+persisted outside of the container" and `XmlKeyManager` "No XML encryptor configured" warnings.
+Nothing in this backend consumes Data Protection (JwtBearer validation is stateless;
+`SessionTokenService` is an HMAC over `APP_SESSION_SECRET`), so those keys protected nothing.
+`Auth/EphemeralDataProtection.Configure`, called last in `Program.cs`, switches to the in-memory
+provider and removes that hosted service.
+
+Reproduced on the net11.0 SDK in a Linux container, where startup matches production:
+
+| Variant | Startup output | Key files |
+|---|---|---|
+| default, or `UseEphemeralDataProtectionProvider()` alone | both warnings | 1 |
+| ephemeral provider plus the hosted service removed by full type name, after all auth registration | silent | 0 |
+| the same removal, matched by assembly instead | removes nothing, as noisy as the default | 1 |
+| the same removal, run before `AddAuthentication` | the service is registered again, as noisy as the default | 1 |
+| removal without the ephemeral provider | silent, but the first consumer creates the file-system key ring on demand | 0, then 1 |
+
+Both halves are therefore needed, and the order matters: `AddAuthentication` and `AddDataProtection`
+register the service with `TryAddEnumerable`, which an earlier removal does not survive. The service
+type is internal and does not live in the assembly that defines `IDataProtectionProvider`, so it is
+matched by full name; `Backend.Tests` pins that name to the real registration, so a framework rename
+fails a test instead of turning the removal into a silent no-op. On the net11.0 SDK
+`ServiceDescriptor.ImplementationType` is `null` for keyed, instance and factory registrations (it
+does not throw), so the scan leaves those alone.
+
+What this gives up: keys live in memory only, so a restart or a second replica cannot read a payload
+another instance protected. Today that costs nothing. The first feature that does use Data Protection
+(cookie authentication, antiforgery, an `IDataProtector`) needs persisted keys shared by every
+replica, and must drop the call. The framework's "Using ephemeral data protection provider" line would
+say so, but `appsettings.json` caps `Microsoft.AspNetCore` at Warning, so it stays hidden unless
+`Logging:LogLevel:Microsoft.AspNetCore.DataProtection` is lowered.
+
+Real persistence (a blob container for the ring and a Key Vault key to protect it at rest) was left
+out. It needs new infra (a Key Vault, a container, role assignments) that can only ship through
+`azd provision`, which `DEPLOY.md` treats as a guarded operation on production; the Azure Data
+Protection NuGet packages (a `packages.lock.json` change); and a startup dependency on both. The
+storage account has `allowSharedKeyAccess: false`, so an Azure Files mount is not an option, and the
+documents container is Search-indexed, so it must not hold keys. It can be added when a consumer
+exists. A provider that throws on use (fail closed) was rejected because a framework upgrade that
+starts resolving the provider would then break production.
+
+`DataProtectionConformanceTests` boots the real `Program.cs` in Entra mode in its own process and
+asserts that no line from `Microsoft.AspNetCore.DataProtection` is logged. The C# backend ignores
+`LOG_LEVEL`, and `appsettings.json` caps `Microsoft.AspNetCore` at Warning, so where the key ring is
+built without a warning (Windows, DPAPI) the old noise would be filtered and the assertion would pass
+for nothing; the row therefore sets that one category to Trace. Mutation-checked: removing the call,
+or moving it ahead of the auth registration, makes it fail with the lines the key ring logs. It skips
+on the Python leg.
+
 ## Spikes #44 and #23
 
 See the comments left on those issues directly for this wave's position. Summary:

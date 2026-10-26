@@ -1,6 +1,7 @@
 using Backend.Auth;
 using Backend.Configuration;
 using Backend.Realtime;
+using Backend.Tests.TestSupport;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -236,6 +237,55 @@ public sealed class RealtimeAuthGateTests
 
         Assert.NotNull(result);
         await AssertWwwAuthenticateBearer(result);
+    }
+
+    [Fact]
+    public async Task Check_HostileHostAndOrigin_AreNeutralisedInEveryLogLine_AndTheResponseIsUnchanged()
+    {
+        var logger = new CapturingLogger();
+
+        IResult? result = RealtimeAuthGate.Check(
+            origin: "https://attacker.example\r\nWARN forged entry\u001b[31m", host: "example.com\nforged", token: null,
+            security: NoAuthRequired(), tokenService: NewTokenService(), logger);
+
+        Assert.NotNull(result);
+        await AssertResponse(result, StatusCodes.Status403Forbidden, "Origin not allowed");
+        Assert.Collection(
+            logger.Entries,
+            handshake => Assert.Equal(
+                "Realtime handshake: GET /realtime (host=example.com_forged, origin=https://attacker.example__WARN forged entry_[31m)",
+                handshake.Message),
+            rejected => Assert.Equal(
+                "Rejected WebSocket from disallowed origin: host=example.com_forged origin=https://attacker.example__WARN forged entry_[31m",
+                rejected.Message));
+    }
+
+    [Fact]
+    public void Check_OrdinaryHostAndOrigin_AreLoggedVerbatim()
+    {
+        var logger = new CapturingLogger();
+
+        IResult? result = RealtimeAuthGate.Check(
+            origin: $"https://{Host}", host: Host, token: null,
+            security: NoAuthRequired(), tokenService: NewTokenService(), logger);
+
+        Assert.Null(result);
+        CapturingLogger.CapturedEntry entry = Assert.Single(logger.Entries);
+        Assert.Equal("Realtime handshake: GET /realtime (host=example.com, origin=https://example.com)", entry.Message);
+    }
+
+    [Fact]
+    public void Check_OverlongOrigin_IsTruncatedInTheLog()
+    {
+        var logger = new CapturingLogger();
+
+        IResult? result = RealtimeAuthGate.Check(
+            origin: "https://" + new string('a', 5000), host: Host, token: null,
+            security: NoAuthRequired(), tokenService: NewTokenService(), logger);
+
+        Assert.NotNull(result);
+        Assert.All(logger.Entries, entry => Assert.True(entry.Message.Length < 700));
+        Assert.All(logger.Entries, entry => Assert.Contains("...", entry.Message, StringComparison.Ordinal));
     }
 
     private static SessionTokenService NewTokenService() => new(s_secret);

@@ -397,7 +397,10 @@ internal static class FramePump
     /// fast path so the C# port's forwarding behaviour matches byte-for-byte, per this port's
     /// "match Python's handling exactly" requirement (issue #13).</summary>
     private static bool IsFastPathAudioAlphabetByte(byte b) =>
-b is >= ((byte)'A') and <= ((byte)'Z') or >= ((byte)'a') and <= ((byte)'z') or >= ((byte)'0') and <= ((byte)'9') or ((byte)'+') or ((byte)'/') or ((byte)'=');
+        b is >= (byte)'A' and <= (byte)'Z'
+            or >= (byte)'a' and <= (byte)'z'
+            or >= (byte)'0' and <= (byte)'9'
+            or (byte)'+' or (byte)'/' or (byte)'=';
 
     /// <summary>Monotonic "loop time" in seconds, mirroring Python's
     /// <c>asyncio.AbstractEventLoop.time()</c> -- immune to system clock adjustments. Issue #13

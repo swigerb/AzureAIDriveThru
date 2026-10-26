@@ -4,6 +4,7 @@ using Backend.Auth;
 using Backend.Cascade;
 using Backend.Configuration;
 using Backend.Health;
+using Backend.Http;
 using Backend.Models;
 using Backend.Personas;
 using Backend.Prompts;
@@ -43,6 +44,8 @@ string host = BackendEnvironment.Get(BackendEnvironment.Host) ?? "127.0.0.1";
 // review nit) -- both backends bind the same default when PORT is unset.
 string port = BackendEnvironment.Get(BackendEnvironment.Port) ?? "8000";
 builder.WebHost.UseUrls($"http://{host}:{port}");
+// "Server: Kestrel" tells a scanner which server to target and adds nothing for a client.
+builder.WebHost.ConfigureKestrel(static options => options.AddServerHeader = false);
 
 var startupChecks = new StartupChecks();
 
@@ -188,6 +191,12 @@ builder.Services.AddSingleton<SessionRegistry>();
 // through DI keeps the hosted service on the same singleton the processors use.
 builder.Services.AddHostedService<SessionSweepService>();
 
+// Keep this the LAST service registration: it removes the framework's Data Protection hosted
+// service, and any AddAuthentication/AddDataProtection call after it would register that service
+// again. Nothing here consumes Data Protection, so no key ring is created or written (see
+// EphemeralDataProtection for the full rationale and the trade-off).
+EphemeralDataProtection.Configure(builder.Services);
+
 WebApplication app = builder.Build();
 ILogger logger = app.Logger;
 IHttpClientFactory httpClientFactory = app.Services.GetRequiredService<IHttpClientFactory>();
@@ -314,6 +323,12 @@ SecurityConfig securityConfig = app.Services.GetRequiredService<SecurityConfig>(
 
 SessionRegistry sessionRegistry = app.Services.GetRequiredService<SessionRegistry>();
 
+// ── Browser-hardening headers (CSP, nosniff, framing, referrer, permissions, HSTS) on EVERY
+// response -- first in the pipeline so a static file (which short-circuits everything after it),
+// a 401 from the Entra fallback policy and a 404 all carry them. HSTS is for real deployments only:
+// never in Development. See SecurityHeaders for the policy and the reason behind each allowance. ──
+app.UseSecurityHeaders(emitHsts: !app.Environment.IsDevelopment());
+
 // ── Static files (shared with the Python backend -- frontend unchanged by the port) -- placed
 // BEFORE UseRouting/UseAuthentication/UseAuthorization below so a static-file request never
 // reaches routing/authorization at all (standard ASP.NET Core ordering: UseStaticFiles short-
@@ -348,6 +363,10 @@ app.UseAuthorization();
 
 // ── Routes ───────────────────────────────────────────────────────────────────────────────────
 app.MapGet("/health", () => HealthEndpoint.Handle(startupChecks, personaCatalog)).AllowAnonymous();
+
+// Browsers probe /favicon.ico before the persona-supplied icon exists; answer it anonymously
+// (204) instead of letting the Entra fallback policy turn the probe into a 401 console error.
+FaviconEndpoint.Map(app);
 
 // Issue #147 bullet 6 (design doc 18.3's layered session token): the minted token's `oid` binds
 // to the caller's own Entra-validated principal (Entra mode) or the Development pass-through's
@@ -434,7 +453,9 @@ app.MapGet("/realtime", async (HttpContext context) =>
     {
         // rtmt.py's `_websocket_handler` logs this rejection at warning level before returning
         // the 404 (Rick's PR #122 review item 2) -- mirrored here, not just the response body.
-        logger.RealtimeRejectedUnknownPersona(personaId);
+        // `personaId` is the raw ?persona= value, so it is neutralised for the log only (CWE-117);
+        // the 404 body below keeps the byte-for-byte Python shape.
+        logger.RealtimeRejectedUnknownPersona(LogSanitizer.Sanitize(personaId));
         return Results.Text($"Unknown or disabled persona: '{personaId}'", statusCode: 404);
     }
     Persona persona = personaCatalog.Get(personaId);
@@ -501,8 +522,11 @@ app.MapGet("/realtime", async (HttpContext context) =>
         // Rick's PR #122 review item 2: the 404 BODY is always the fixed, Python-matching shape
         // below -- rtmt.py's own dispatch_processor except-clause returns the identical body
         // regardless of the underlying reason (unknown model vs. an unregistered pipeline for a
-        // catalogued one); the detailed reason goes to the log, not the client.
-        logger.RealtimeRejectedUnregisteredPipeline(requestedModelId, exc.Message);
+        // catalogued one); the detailed reason goes to the log, not the client. Both the requested
+        // id and the exception text (which embeds it) are client-controlled, so the log gets
+        // neutralised copies (CWE-117) while the body stays byte-for-byte unchanged.
+        logger.RealtimeRejectedUnregisteredPipeline(
+            LogSanitizer.Sanitize(requestedModelId), LogSanitizer.Sanitize(exc.Message));
         return Results.Text($"Unknown or disallowed model: {PyRepr(requestedModelId)}", statusCode: 404);
     }
 
@@ -514,12 +538,16 @@ app.MapGet("/realtime", async (HttpContext context) =>
     {
         // Same fixed body/log split as the dispatch-stage catch above, mirroring rtmt.py's
         // second `except ModelSelectionError` clause (resolve_model, not dispatch_processor).
-        logger.RealtimeRejectedDisallowedModel(requestedModelId, exc.Message);
+        logger.RealtimeRejectedDisallowedModel(
+            LogSanitizer.Sanitize(requestedModelId), LogSanitizer.Sanitize(exc.Message));
         return Results.Text($"Unknown or disallowed model: {PyRepr(requestedModelId)}", statusCode: 404);
     }
 
     string sessionId = Guid.NewGuid().ToString("n");
-    using WebSocket socket = await context.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
+    using WebSocket acceptedSocket = await context.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
+    // Everything below uses the wrapper, never acceptedSocket: it keeps the Close frame the last
+    // frame written to the browser (see OrderedCloseWebSocket).
+    using WebSocket socket = new OrderedCloseWebSocket(acceptedSocket);
     var metadata = new SessionMetadata(persona.Id, resolvedModel.Id, pipelineName);
     SessionActor actor = sessionRegistry.GetOrAdd(sessionId, id => new SessionActor(id, processor, metadata));
     try

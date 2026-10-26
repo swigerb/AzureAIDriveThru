@@ -7,6 +7,7 @@ using Backend.Tests.Cascade;
 using Backend.Tests.Realtime;
 using Backend.Tests.TestSupport;
 using Backend.Tools;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Backend.Tests.Sessions;
@@ -34,7 +35,8 @@ public sealed class CascadeToolCallDispatcherTests
         IToolExecutor toolExecutor,
         CascadeProcessor.CascadeSessionState state,
         FakeWebSocket? browserSocket = null,
-        Action<CascadeSessionContext>? configureContext = null)
+        Action<CascadeSessionContext>? configureContext = null,
+        ILogger? logger = null)
     {
         var context = new CascadeSessionContext
         {
@@ -49,7 +51,7 @@ public sealed class CascadeToolCallDispatcherTests
             PromptLoader = null,
             Detector = new TurnDetector(0.5, 500, 24000),
             AllowedVoices = new HashSet<string> { "marin" },
-            Logger = NullLogger.Instance,
+            Logger = logger ?? NullLogger.Instance,
             TimeProvider = TimeProvider.System,
             TurnRegistryLock = new object(),
             SessionId = "session-1",
@@ -199,6 +201,28 @@ public sealed class CascadeToolCallDispatcherTests
         Assert.Empty(toolExecutor.ReceivedArgumentsJson);
         JsonObject toolMessage = Assert.Single(state.Messages, m => m["role"]?.GetValue<string>() == "tool");
         Assert.Equal("", toolMessage["content"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task RunChatToolLoopAsync_UnknownTool_NeutralisesTheModelChosenNameInTheLog()
+    {
+        var toolCall = new JsonObject
+        {
+            ["id"] = "call-2",
+            ["function"] = new JsonObject { ["name"] = "evil\r\ntool", ["arguments"] = "{}" },
+        };
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", null, [toolCall])
+            .EnqueueChatMessage("assistant", "Done.");
+        var logger = new CapturingLogger();
+        CascadeToolCallDispatcher dispatcher = NewDispatcher(
+            handler, new RecordingToolExecutor(["get_order"]), NewState(), logger: logger);
+
+        await dispatcher.RunChatToolLoopAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            "Unknown tool requested: evil__tool (session=session-1)",
+            Assert.Single(logger.Entries, entry => entry.EventId.Id == 2007).Message);
     }
 
     [Fact]

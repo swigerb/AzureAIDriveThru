@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using Backend.Realtime;
 using Backend.Sessions;
 using Backend.Tests.Realtime;
+using Backend.Tests.TestSupport;
 using Backend.Tools;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -77,6 +78,37 @@ public sealed class ToolCallDispatcherTests
 
         Assert.Empty(TextFrames(upstream));
         Assert.Empty(TextFrames(browser));
+    }
+
+    [Fact]
+    public async Task HandleToolCallDoneAsync_neutralises_a_model_chosen_call_id_in_the_not_found_log()
+    {
+        RealtimeProcessor.RealtimeSessionState state = NewState(new StubToolExecutor(["get_order"]));
+        var logger = new CapturingLogger();
+        var dispatcher = new ToolCallDispatcher(
+            new FakeWebSocket([]), new FakeWebSocket([]), state, sessionManager: null, "session-1", logger, CancellationToken.None);
+
+        await dispatcher.HandleToolCallDoneAsync(new JsonObject { ["call_id"] = "call\r\nforged", ["name"] = "get_order" });
+
+        Assert.Equal(
+            "Tool call call__forged not found in pending tools (session=session-1)",
+            Assert.Single(logger.Entries, entry => entry.EventId.Id == 1019).Message);
+    }
+
+    [Fact]
+    public async Task HandleToolCallDoneAsync_neutralises_an_unregistered_tool_name_in_the_log()
+    {
+        RealtimeProcessor.RealtimeSessionState state = NewState(new StubToolExecutor(["get_order"]));
+        state.ToolsPending["call-1"] = "prev-item";
+        var logger = new CapturingLogger();
+        var dispatcher = new ToolCallDispatcher(
+            new FakeWebSocket([]), new FakeWebSocket([]), state, sessionManager: null, "session-1", logger, CancellationToken.None);
+
+        await dispatcher.HandleToolCallDoneAsync(new JsonObject { ["call_id"] = "call-1", ["name"] = "delete\r\neverything" });
+
+        Assert.Equal(
+            "Unknown tool requested: delete__everything (session=session-1)",
+            Assert.Single(logger.Entries, entry => entry.EventId.Id == 1020).Message);
     }
 
     [Fact]

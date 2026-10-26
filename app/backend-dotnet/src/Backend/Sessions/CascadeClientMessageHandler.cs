@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Backend.Realtime;
+using Backend.Shared;
 
 namespace Backend.Sessions;
 
@@ -123,7 +124,7 @@ internal sealed class CascadeClientMessageHandler(CascadeSessionContext context)
         string? voice = ClientServerFilter.SanitizeVoice(candidate, context.AllowedVoices);
         if (voice is null)
         {
-            context.Logger.CascadeSetVoiceDropped(candidate, context.SessionId);
+            context.Logger.CascadeSetVoiceDropped(LogSanitizer.Sanitize(candidate), context.SessionId);
         }
         else
         {
