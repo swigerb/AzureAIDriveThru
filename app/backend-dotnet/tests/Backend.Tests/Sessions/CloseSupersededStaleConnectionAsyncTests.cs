@@ -39,8 +39,12 @@ public sealed class CloseSupersededStaleConnectionAsyncTests
         var staleWs = new FakeWebSocket([], hangCloseOutputUntilCancelled: true);
         using var staleCts = new CancellationTokenSource();
 
+        // CA2025: the task is raced against s_assertionDeadline below and awaited before staleCts's
+        // using scope ends on every passing path; if it never completes, the test has already failed.
+#pragma warning disable CA2025 // awaited before disposal on every passing path (see above)
         Task task = FramePump.CloseSupersededStaleConnectionAsync(
             staleWs, staleCts, TimeSpan.FromMilliseconds(200), NullLogger<RealtimeProcessor>.Instance);
+#pragma warning restore CA2025
 
         Task completed = await Task.WhenAny(task, Task.Delay(s_assertionDeadline, TestContext.Current.CancellationToken));
         Assert.True(
@@ -106,8 +110,10 @@ public sealed class CloseSupersededStaleConnectionAsyncTests
         var staleWs = new FakeWebSocket([]);
         using var staleCts = new CancellationTokenSource();
 
+#pragma warning disable CA2025 // closeTask is awaited below, after the intermediate-state assertions, before staleCts is disposed
         Task closeTask = FramePump.CloseSupersededStaleConnectionAsync(
             staleWs, staleCts, TimeSpan.FromSeconds(5), NullLogger<RealtimeProcessor>.Instance);
+#pragma warning restore CA2025
 
         // FakeWebSocket's non-hanging CloseOutputAsync completes synchronously, so by the time we
         // get here the close frame is long sent and the socket is parked in CloseSent -- but

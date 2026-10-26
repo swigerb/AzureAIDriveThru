@@ -76,8 +76,8 @@ public sealed class RateLimitRecoveryUnitTests
         // to this name -- was `enabled:` (lowercase) on the old realtime-only class.
         var h = new Harness(new RateLimitSettings(Enabled: false));
 
-        bool handledError = await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
-        bool handledDone = await h.Recovery.OnResponseDoneAsync(ResponseDoneFailed(RateLimitError()), CancellationToken.None);
+        bool handledError = await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), TestContext.Current.CancellationToken);
+        bool handledDone = await h.Recovery.OnResponseDoneAsync(ResponseDoneFailed(RateLimitError()), TestContext.Current.CancellationToken);
 
         Assert.False(handledError);
         Assert.False(handledDone);
@@ -93,7 +93,7 @@ public sealed class RateLimitRecoveryUnitTests
     {
         var h = new Harness();
 
-        bool handled = await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
+        bool handled = await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), TestContext.Current.CancellationToken);
 
         Assert.True(handled);
         Assert.Empty(h.Client); // silent -- the first retry never tells the browser.
@@ -114,7 +114,7 @@ public sealed class RateLimitRecoveryUnitTests
         var h = new Harness();
 
         // Attempt 1: silent retry.
-        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
+        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), TestContext.Current.CancellationToken);
         h.Time.Advance(TimeSpan.FromSeconds(1.5));
         Assert.Single(h.Upstream);
         Assert.Empty(h.Client);
@@ -125,7 +125,7 @@ public sealed class RateLimitRecoveryUnitTests
         // instead, to avoid double-counting the same failure). Should notify attempt 1 (non-final)
         // and schedule the second retry.
         h.Recovery.OnResponseCreated();
-        await h.Recovery.OnResponseDoneAsync(ResponseDoneFailed(RateLimitError()), CancellationToken.None);
+        await h.Recovery.OnResponseDoneAsync(ResponseDoneFailed(RateLimitError()), TestContext.Current.CancellationToken);
 
         Assert.Single(h.Client);
         Assert.Equal("extension.rate_limited", h.Client[0]["type"]!.GetValue<string>());
@@ -139,7 +139,7 @@ public sealed class RateLimitRecoveryUnitTests
 
         // Retry 2 also fails -- exhausted: final notice, no third retry ever scheduled.
         h.Recovery.OnResponseCreated();
-        await h.Recovery.OnResponseDoneAsync(ResponseDoneFailed(RateLimitError()), CancellationToken.None);
+        await h.Recovery.OnResponseDoneAsync(ResponseDoneFailed(RateLimitError()), TestContext.Current.CancellationToken);
 
         Assert.Equal(2, h.Client.Count);
         Assert.Equal(2, h.Client[1]["attempt"]!.GetValue<int>());
@@ -150,13 +150,13 @@ public sealed class RateLimitRecoveryUnitTests
         Assert.Equal(2, h.Upstream.Count); // still exactly 2 -- no third retry.
 
         // A further failure report after exhaustion (e.g. a stray late error) is ignored outright.
-        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
+        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), TestContext.Current.CancellationToken);
         Assert.Equal(2, h.Client.Count);
         Assert.Equal(2, h.Upstream.Count);
 
         // The guest's next turn starts the ladder over from scratch.
         h.Recovery.OnGuestSpeech();
-        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
+        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), TestContext.Current.CancellationToken);
         Assert.Equal(2, h.Client.Count); // still silent -- fresh attempt 1 again.
         h.Time.Advance(TimeSpan.FromSeconds(1.5));
         Assert.Equal(3, h.Upstream.Count);
@@ -169,7 +169,7 @@ public sealed class RateLimitRecoveryUnitTests
     {
         var h = new Harness();
 
-        bool handled = await h.Recovery.OnResponseDoneAsync(ResponseDoneFailed(RateLimitError()), CancellationToken.None);
+        bool handled = await h.Recovery.OnResponseDoneAsync(ResponseDoneFailed(RateLimitError()), TestContext.Current.CancellationToken);
 
         Assert.True(handled);
         h.Time.Advance(TimeSpan.FromSeconds(1.5));
@@ -181,7 +181,7 @@ public sealed class RateLimitRecoveryUnitTests
     {
         var h = new Harness();
         bool handled = await h.Recovery.OnResponseDoneAsync(
-            ResponseDoneFailed(new JsonObject { ["code"] = "content_filter" }), CancellationToken.None);
+            ResponseDoneFailed(new JsonObject { ["code"] = "content_filter" }), TestContext.Current.CancellationToken);
 
         Assert.False(handled);
         h.Time.Advance(TimeSpan.FromSeconds(10));
@@ -196,16 +196,16 @@ public sealed class RateLimitRecoveryUnitTests
         // Fail once (attempt 1 scheduled), but before it fires, a genuinely successful response
         // elsewhere -- OnGuestSpeech isn't the only reset path; a clean response.done is too once
         // it's not a retry's own failure.
-        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
+        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), TestContext.Current.CancellationToken);
         h.Time.Advance(TimeSpan.FromSeconds(1.5));
         h.Recovery.OnResponseCreated();
-        bool handled = await h.Recovery.OnResponseDoneAsync(ResponseDoneOk(), CancellationToken.None);
+        bool handled = await h.Recovery.OnResponseDoneAsync(ResponseDoneOk(), TestContext.Current.CancellationToken);
 
         Assert.False(handled); // not a rate-limit failure -- caller forwards response.done as-is.
         Assert.False(h.Recovery.Busy);
 
         // Next failure starts a fresh ladder (attempt 1 again, still silent).
-        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
+        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), TestContext.Current.CancellationToken);
         Assert.Empty(h.Client);
         h.Time.Advance(TimeSpan.FromSeconds(1.5));
         Assert.Equal(2, h.Upstream.Count);
@@ -219,14 +219,14 @@ public sealed class RateLimitRecoveryUnitTests
         var h = new Harness();
         h.Recovery.OnResponseCreated(); // a normal (non-retry) response starts.
 
-        bool handled = await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
+        bool handled = await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), TestContext.Current.CancellationToken);
 
         Assert.True(handled); // swallowed -- but...
         h.Time.Advance(TimeSpan.FromSeconds(10));
         Assert.Empty(h.Upstream); // ...no retry scheduled from the bare error event alone.
 
         // The response's own response.done reports the SAME failure -- now it retries.
-        await h.Recovery.OnResponseDoneAsync(ResponseDoneFailed(RateLimitError()), CancellationToken.None);
+        await h.Recovery.OnResponseDoneAsync(ResponseDoneFailed(RateLimitError()), TestContext.Current.CancellationToken);
         h.Time.Advance(TimeSpan.FromSeconds(1.5));
         Assert.Single(h.Upstream);
     }
@@ -237,7 +237,7 @@ public sealed class RateLimitRecoveryUnitTests
     public async Task OnGuestSpeech_CancelsPendingRetry()
     {
         var h = new Harness();
-        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
+        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), TestContext.Current.CancellationToken);
         Assert.True(h.Recovery.Busy);
 
         h.Recovery.OnGuestSpeech();
@@ -251,7 +251,7 @@ public sealed class RateLimitRecoveryUnitTests
     public async Task OnExternalResponseCreate_CancelsPendingRetry()
     {
         var h = new Harness();
-        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
+        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), TestContext.Current.CancellationToken);
 
         h.Recovery.OnExternalResponseCreate("tool follow-up");
 
@@ -263,7 +263,7 @@ public sealed class RateLimitRecoveryUnitTests
     public async Task OnResponseCreated_ForSomeoneElsesResponse_CancelsPendingRetry()
     {
         var h = new Harness();
-        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
+        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), TestContext.Current.CancellationToken);
 
         // e.g. VAD auto-responded, or the greeting fired, before our retry's delay elapsed.
         h.Recovery.OnResponseCreated();
@@ -276,7 +276,7 @@ public sealed class RateLimitRecoveryUnitTests
     public async Task OnResponseCreated_ForOurOwnRetry_DoesNotCancelItself()
     {
         var h = new Harness();
-        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
+        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), TestContext.Current.CancellationToken);
         h.Time.Advance(TimeSpan.FromSeconds(1.5)); // retry fires -- _awaitingRetry is now true.
 
         // The upstream's own response.created event for OUR retry must not cancel anything (there
@@ -330,7 +330,7 @@ public sealed class RateLimitRecoveryUnitTests
         // That same response.create now reaches upstream and fails as rate-limited -- even if
         // this happens essentially instantaneously relative to the caller's own bookkeeping.
         h.Recovery.OnResponseCreated();
-        bool handled = await h.Recovery.OnResponseDoneAsync(ResponseDoneFailed(RateLimitError()), CancellationToken.None);
+        bool handled = await h.Recovery.OnResponseDoneAsync(ResponseDoneFailed(RateLimitError()), TestContext.Current.CancellationToken);
 
         Assert.True(handled);
         Assert.True(h.Recovery.Busy); // the first (silent) retry is scheduled, undisturbed.
@@ -342,7 +342,7 @@ public sealed class RateLimitRecoveryUnitTests
     public void Cancel_DropsPendingRetry()
     {
         var h = new Harness();
-        _ = h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
+        _ = h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), TestContext.Current.CancellationToken);
 
         h.Recovery.Cancel("socket closed");
 
@@ -359,7 +359,7 @@ public sealed class RateLimitRecoveryUnitTests
     public async Task UnrelatedToolFollowUp_SeparateFromLadder_DoesNotInterfere()
     {
         var h = new Harness();
-        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
+        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), TestContext.Current.CancellationToken);
 
         // Nothing from a tool-call response.done path calls any RateLimitRecovery hook at all
         // (RealtimeProcessor sends that response.create directly) -- confirm our own pending retry
@@ -409,7 +409,7 @@ public sealed class RateLimitRecoveryUnitTests
     {
         var h = new Harness();
         // The service's own hint (9s) exceeds the first-retry ceiling (5.0s) -- must clamp down.
-        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError("Please try again in 9 seconds.")), CancellationToken.None);
+        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError("Please try again in 9 seconds.")), TestContext.Current.CancellationToken);
 
         h.Time.Advance(TimeSpan.FromSeconds(4.99));
         Assert.Empty(h.Upstream); // not yet -- clamped to 5.0s, not the raw 9s hint nor the 1.5s default.
@@ -436,7 +436,7 @@ public sealed class RateLimitRecoveryUnitTests
     public async Task RunRetryAsync_SkipsSend_WhenResponseAlreadyInFlight()
     {
         var h = new Harness();
-        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
+        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), TestContext.Current.CancellationToken);
         Assert.True(h.Recovery.Busy);
 
         // Simulate the race itself: flip the private flag directly (bypassing the public
@@ -458,7 +458,7 @@ public sealed class RateLimitRecoveryUnitTests
         inFlightField.SetValue(h.Recovery, false);
 
         // The next failure starts a fresh ladder (attempt was reset to 0, not left at 1).
-        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
+        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), TestContext.Current.CancellationToken);
         h.Time.Advance(TimeSpan.FromSeconds(1.5));
         Assert.Single(h.Upstream);
     }
@@ -512,23 +512,22 @@ public sealed class RateLimitRecoveryUnitTests
         await (Task)s_runRetryAsyncMethod.Invoke(h.Recovery, [0d, 0, staleCts])!;
     }
 
-    public static IEnumerable<object[]> CancellationSources()
+    // Delegates aren't serializable, so discovery-time enumeration is disabled explicitly: each
+    // row still runs (and is reported) individually at execution time.
+    public static TheoryData<string, Action<RateLimitRecovery>> CancellationSources() => new()
     {
-        yield return new object[] { "guest speech", (Action<RateLimitRecovery>)(r => r.OnGuestSpeech()) };
-        yield return new object[]
-        {
-            "browser response.create", (Action<RateLimitRecovery>)(r => r.OnExternalResponseCreate("browser")),
-        };
-        yield return new object[] { "teardown", (Action<RateLimitRecovery>)(r => r.Cancel("socket closed")) };
-    }
+        { "guest speech", r => r.OnGuestSpeech() },
+        { "browser response.create", r => r.OnExternalResponseCreate("browser") },
+        { "teardown", r => r.Cancel("socket closed") },
+    };
 
     [Theory]
-    [MemberData(nameof(CancellationSources))]
+    [MemberData(nameof(CancellationSources), DisableDiscoveryEnumeration = true)]
     public async Task StaleTimerContinuation_LosesRaceToCancellation_SendsNothingAndStaysClean(
         string _, Action<RateLimitRecovery> cancellationSource)
     {
         var h = new Harness();
-        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
+        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), TestContext.Current.CancellationToken);
         Assert.True(h.Recovery.Busy);
 
         await RunStaleRetryRaceAsync(h, cancellationSource);
@@ -539,7 +538,7 @@ public sealed class RateLimitRecoveryUnitTests
         // And the ladder genuinely restarted clean: the next failure is attempt 1 again (silent),
         // not corrupted leftover state from the superseded retry (which would have forced
         // _attempt=1/_awaitingRetry=true regardless of what the cancellation source itself did).
-        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
+        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), TestContext.Current.CancellationToken);
         Assert.Empty(h.Client); // still silent -- a fresh attempt 1, not a corrupted later attempt.
         h.Time.Advance(TimeSpan.FromSeconds(1.5));
         Assert.Single(h.Upstream);
@@ -549,7 +548,7 @@ public sealed class RateLimitRecoveryUnitTests
     public async Task StaleTimerContinuation_LosesRaceToANewlyScheduledRetry_OnlyTheNewOneSends()
     {
         var h = new Harness();
-        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None);
+        await h.Recovery.OnErrorAsync(ErrorEvent(RateLimitError()), TestContext.Current.CancellationToken);
         Assert.True(h.Recovery.Busy);
 
         // The race window: guest speech cancels the stale retry AND a brand-new rate-limit
@@ -559,7 +558,7 @@ public sealed class RateLimitRecoveryUnitTests
         await RunStaleRetryRaceAsync(h, r =>
         {
             r.OnGuestSpeech();
-            bool handled = r.OnErrorAsync(ErrorEvent(RateLimitError()), CancellationToken.None)
+            bool handled = r.OnErrorAsync(ErrorEvent(RateLimitError()), TestContext.Current.CancellationToken)
                 .GetAwaiter().GetResult();
             Assert.True(handled);
         });

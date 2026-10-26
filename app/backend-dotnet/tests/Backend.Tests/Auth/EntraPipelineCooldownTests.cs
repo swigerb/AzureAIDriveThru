@@ -49,17 +49,11 @@ public sealed class EntraPipelineCooldownTests
     {
         public const string Kid = "pipeline-test-key";
 
-        private RSA _rsa;
-        private readonly List<RSA> _allKeys = [];
+        private RSA _rsa = RSA.Create(2048);
+        private readonly List<RSA> _retiredKeys = [];
         private WebApplication? _app;
         private int _discoveryRequestCount;
         private int _jwksRequestCount;
-
-        public FakeDiscoveryServer()
-        {
-            _rsa = RSA.Create(2048);
-            _allKeys.Add(_rsa);
-        }
 
         public ServerMode Mode { get; set; } = ServerMode.Succeed;
 
@@ -88,7 +82,7 @@ public sealed class EntraPipelineCooldownTests
             builder.WebHost.UseUrls("http://127.0.0.1:0");
             WebApplication app = builder.Build();
 
-            app.MapGet("/{tenant}/v2.0/.well-known/openid-configuration", async (HttpContext ctx) =>
+            app.MapGet($"/{Tenant}/v2.0/.well-known/openid-configuration", async (HttpContext ctx) =>
             {
                 Interlocked.Increment(ref _discoveryRequestCount);
                 await RespondAsync(ctx, () => $$"""
@@ -97,7 +91,7 @@ public sealed class EntraPipelineCooldownTests
                     """);
             });
 
-            app.MapGet("/{tenant}/discovery/v2.0/keys", async (HttpContext ctx) =>
+            app.MapGet($"/{Tenant}/discovery/v2.0/keys", async (HttpContext ctx) =>
             {
                 Interlocked.Increment(ref _jwksRequestCount);
                 await RespondAsync(ctx, BuildJwksJson);
@@ -149,9 +143,9 @@ public sealed class EntraPipelineCooldownTests
         {
             RSA oldKey = _rsa;
             string oldKid = CurrentKid;
+            _retiredKeys.Add(oldKey);
             _rsa = RSA.Create(2048);
             CurrentKid = $"pipeline-test-key-rotated-{Guid.NewGuid():N}";
-            _allKeys.Add(_rsa);
             return (oldKey, oldKid);
         }
 
@@ -190,7 +184,8 @@ public sealed class EntraPipelineCooldownTests
                 await _app.DisposeAsync();
             }
 
-            foreach (RSA key in _allKeys)
+            _rsa.Dispose();
+            foreach (RSA key in _retiredKeys)
             {
                 key.Dispose();
             }

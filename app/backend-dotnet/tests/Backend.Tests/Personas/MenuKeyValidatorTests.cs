@@ -142,15 +142,18 @@ public sealed class MenuKeyValidatorTests
     // to either _menu_key (Python) or MenuKeyValidator.MenuKey (C#) that quietly drifts the two
     // apart fails here in whichever backend didn't change, rather than only surfacing as a live
     // cross-backend behavior difference nobody wrote a test for.
-    public static IEnumerable<object[]> SharedMenuKeyVectors()
+    public static TheoryData<string, string> SharedMenuKeyVectors()
     {
         string path = Path.Combine(
             RepoRootLocator.Find(), "app", "backend", "tests", "fixtures", "menu_key_vectors.json");
         using var doc = JsonDocument.Parse(File.ReadAllText(path));
+        TheoryData<string, string> vectors = [];
         foreach (JsonElement vector in doc.RootElement.EnumerateArray())
         {
-            yield return [vector.GetProperty("input").GetString()!, vector.GetProperty("key").GetString()!];
+            vectors.Add(vector.GetProperty("input").GetString()!, vector.GetProperty("key").GetString()!);
         }
+
+        return vectors;
     }
 
     [Theory]
@@ -163,7 +166,7 @@ public sealed class MenuKeyValidatorTests
     {
         // Guard against the golden file itself quietly shrinking back below the ~20 examples
         // Rick's #137 review note asked for.
-        Assert.True(SharedMenuKeyVectors().Count() >= 20,
+        Assert.True(SharedMenuKeyVectors().Count >= 20,
             "Expected at least 20 shared menu-key vectors in menu_key_vectors.json.");
     }
 }

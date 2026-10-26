@@ -62,7 +62,7 @@ public sealed class CascadeAudioTurnPipelineTests
         RoutingFoundryHandler handler = new RoutingFoundryHandler().EnqueueTranscript("I'd like fries");
         CascadeAudioTurnPipeline pipeline = NewPipeline(handler, new FakeWebSocket([]), NewState());
 
-        string text = await pipeline.TranscribeAsync([1, 2, 3, 4], CancellationToken.None);
+        string text = await pipeline.TranscribeAsync([1, 2, 3, 4], TestContext.Current.CancellationToken);
 
         Assert.Equal("I'd like fries", text);
         Assert.Equal(1, handler.TranscribeRequestCount);
@@ -76,7 +76,7 @@ public sealed class CascadeAudioTurnPipelineTests
         var socket = new FakeWebSocket([]);
         CascadeAudioTurnPipeline pipeline = NewPipeline(handler, socket, NewState());
 
-        await pipeline.SpeakAsync("Coming right up", "resp_1", CancellationToken.None);
+        await pipeline.SpeakAsync("Coming right up", "resp_1", TestContext.Current.CancellationToken);
 
         // Two chunks: one full CascadeProcessor.TtsChunkBytes-sized delta, one 100-byte remainder.
         Assert.Equal(2, socket.SentMessages.Count);
@@ -97,7 +97,7 @@ public sealed class CascadeAudioTurnPipelineTests
         var detector = new TurnDetector(0.5, 500, 24000);
         CascadeAudioTurnPipeline pipeline = NewPipeline(handler, new FakeWebSocket([]), NewState(), detector, echoCooldownSeconds: 0.2);
 
-        await pipeline.SpeakAsync("Coming right up", "resp_1", CancellationToken.None);
+        await pipeline.SpeakAsync("Coming right up", "resp_1", TestContext.Current.CancellationToken);
 
         // 0.5s audio + 0.2s cooldown starting at nowSeconds()=0 means a 0.0 timestamp is still
         // inside the cooldown window -- Feed() with LOUD audio at that timestamp still returns
@@ -119,7 +119,7 @@ public sealed class CascadeAudioTurnPipelineTests
         var socket = new FakeWebSocket([]);
         CascadeAudioTurnPipeline pipeline = NewPipeline(new RoutingFoundryHandler(), socket, NewState());
 
-        await pipeline.SendFailedResponseDoneAsync("resp-1", "boom", CancellationToken.None);
+        await pipeline.SendFailedResponseDoneAsync("resp-1", "boom", TestContext.Current.CancellationToken);
 
         Assert.Equal(2, socket.SentMessages.Count);
         JsonObject errorFrame = JsonNode.Parse(socket.SentMessages[0].Data)!.AsObject();

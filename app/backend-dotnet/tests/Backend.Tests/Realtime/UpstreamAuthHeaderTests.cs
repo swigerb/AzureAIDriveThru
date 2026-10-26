@@ -66,7 +66,7 @@ public sealed class UpstreamAuthHeaderTests
         var provider = new FakeBearerTokenProvider("should-not-be-used");
         RealtimeProcessor processor = CreateProcessor(upstreamApiKey: "sk-real-key", provider);
 
-        (string? name, string? value) = await processor.ResolveUpstreamAuthHeaderAsync(CancellationToken.None);
+        (string? name, string? value) = await processor.ResolveUpstreamAuthHeaderAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("api-key", name);
         Assert.Equal("sk-real-key", value);
@@ -79,7 +79,7 @@ public sealed class UpstreamAuthHeaderTests
         var provider = new FakeBearerTokenProvider("fake-aad-token");
         RealtimeProcessor processor = CreateProcessor(upstreamApiKey: string.Empty, provider);
 
-        (string? name, string? value) = await processor.ResolveUpstreamAuthHeaderAsync(CancellationToken.None);
+        (string? name, string? value) = await processor.ResolveUpstreamAuthHeaderAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("Authorization", name);
         Assert.Equal("Bearer fake-aad-token", value);
@@ -92,8 +92,8 @@ public sealed class UpstreamAuthHeaderTests
         var provider = new FakeBearerTokenProvider("fake-aad-token");
         RealtimeProcessor processor = CreateProcessor(upstreamApiKey: string.Empty, provider);
 
-        await processor.ResolveUpstreamAuthHeaderAsync(CancellationToken.None);
-        await processor.ResolveUpstreamAuthHeaderAsync(CancellationToken.None);
+        await processor.ResolveUpstreamAuthHeaderAsync(TestContext.Current.CancellationToken);
+        await processor.ResolveUpstreamAuthHeaderAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(2, provider.CallCount);
     }
@@ -114,7 +114,7 @@ public sealed class UpstreamAuthHeaderTests
             PersonaCatalog.Load().Default,
             new ResolvedModel("gpt-realtime-2.1", "realtime", "gpt-realtime-2.1", false),
             "s1",
-            CancellationToken.None);
+            TestContext.Current.CancellationToken);
 
         Assert.True(socket.CloseCalled);
         Assert.Equal(WebSocketCloseStatus.InternalServerError, socket.ClosedWithStatus);

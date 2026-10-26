@@ -97,7 +97,7 @@ public sealed class FoundryChatClientTests
 
         JsonObject message = await client.CompleteAsync(
             [CascadeChatMessage.System("be nice"), CascadeChatMessage.User("hello")],
-            deployment: "gpt-5-mini", toolDefinitions: null, CancellationToken.None);
+            deployment: "gpt-5-mini", toolDefinitions: null, TestContext.Current.CancellationToken);
 
         Assert.Equal("assistant", message["role"]!.GetValue<string>());
         Assert.Equal("Hi there!", message["content"]!.GetValue<string>());
@@ -124,7 +124,7 @@ public sealed class FoundryChatClientTests
             new JsonObject { ["name"] = "search", ["description"] = "search the menu", ["parameters"] = new JsonObject { ["type"] = "object" } },
         ]);
 
-        JsonObject message = await client.CompleteAsync([CascadeChatMessage.User("do a search")], "gpt-5-mini", toolDefs, CancellationToken.None);
+        JsonObject message = await client.CompleteAsync([CascadeChatMessage.User("do a search")], "gpt-5-mini", toolDefs, TestContext.Current.CancellationToken);
 
         Assert.Null(message["content"]);
         Assert.Equal("call_1", message["tool_calls"]![0]!["id"]!.GetValue<string>());
@@ -143,7 +143,7 @@ public sealed class FoundryChatClientTests
         FoundryChatClient client = NewClient(handler);
 
         FoundryHttpException exc = await Assert.ThrowsAsync<FoundryHttpException>(() =>
-            client.CompleteAsync([CascadeChatMessage.User("hi")], "gpt-5-mini", null, CancellationToken.None));
+            client.CompleteAsync([CascadeChatMessage.User("hi")], "gpt-5-mini", null, TestContext.Current.CancellationToken));
 
         Assert.Equal(429, exc.StatusCode);
         Assert.Contains("try again in 2s", exc.Message);
@@ -159,7 +159,7 @@ public sealed class FoundryChatClientTests
         FoundryChatClient client = NewClient(handler);
 
         FoundryHttpException exc = await Assert.ThrowsAsync<FoundryHttpException>(() =>
-            client.CompleteAsync([CascadeChatMessage.User("hi")], "gpt-5-mini", null, CancellationToken.None));
+            client.CompleteAsync([CascadeChatMessage.User("hi")], "gpt-5-mini", null, TestContext.Current.CancellationToken));
 
         Assert.Equal(429, exc.StatusCode);
         Assert.Equal("HTTP 429", exc.Message);
@@ -173,7 +173,7 @@ public sealed class FoundryChatClientTests
         FoundryChatClient client = NewClient(handler);
 
         FoundryHttpException exc = await Assert.ThrowsAsync<FoundryHttpException>(() =>
-            client.CompleteAsync([CascadeChatMessage.User("hi")], "gpt-5-mini", null, CancellationToken.None));
+            client.CompleteAsync([CascadeChatMessage.User("hi")], "gpt-5-mini", null, TestContext.Current.CancellationToken));
 
         Assert.Equal(5.0, exc.RetryAfterSeconds);
     }
@@ -187,7 +187,7 @@ public sealed class FoundryChatClientTests
         FoundryChatClient client = NewClient(handler);
 
         FoundryHttpException exc = await Assert.ThrowsAsync<FoundryHttpException>(() =>
-            client.CompleteAsync([CascadeChatMessage.User("hi")], "gpt-5-mini", null, CancellationToken.None));
+            client.CompleteAsync([CascadeChatMessage.User("hi")], "gpt-5-mini", null, TestContext.Current.CancellationToken));
 
         Assert.Null(exc.RetryAfterSeconds);
     }

@@ -52,7 +52,7 @@ public sealed class OrderToolExecutorBundleAndExtrasTests
         await executor.ExecuteAsync("update_order", Args("add", "Delta Meal", "regular", 1, 5.99m), TestContext.Current.CancellationToken);
 
         ToolResult summary = await executor.ExecuteAsync("get_order", JsonSerializer.SerializeToElement(new { }), TestContext.Current.CancellationToken);
-        var client = JsonDocument.Parse(summary.ToClientText());
+        using var client = JsonDocument.Parse(summary.ToClientText());
         JsonElement items = client.RootElement.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         var components = items[0].GetProperty("components").EnumerateArray().Select(e => e.GetString()).ToList();
@@ -68,7 +68,7 @@ public sealed class OrderToolExecutorBundleAndExtrasTests
         await executor.ExecuteAsync("update_order", Args("add", "Delta Meal", "regular", 1, 5.99m), TestContext.Current.CancellationToken);
 
         ToolResult summary = await executor.ExecuteAsync("get_order", JsonSerializer.SerializeToElement(new { }), TestContext.Current.CancellationToken);
-        var client = JsonDocument.Parse(summary.ToClientText());
+        using var client = JsonDocument.Parse(summary.ToClientText());
         var items = client.RootElement.GetProperty("items").EnumerateArray().ToList();
 
         // The standalone fries line is gone -- absorbed, not double-counted -- leaving only the
@@ -376,7 +376,7 @@ public sealed class OrderToolExecutorBundleAndExtrasTests
         Assert.False(string.IsNullOrWhiteSpace(payload.RootElement.GetProperty("message").GetString()));
 
         ToolResult summary = await executor.ExecuteAsync("get_order", JsonSerializer.SerializeToElement(new { }), TestContext.Current.CancellationToken);
-        var client = JsonDocument.Parse(summary.ToClientText());
+        using var client = JsonDocument.Parse(summary.ToClientText());
         Assert.Equal(0, client.RootElement.GetProperty("items").GetArrayLength());
     }
 

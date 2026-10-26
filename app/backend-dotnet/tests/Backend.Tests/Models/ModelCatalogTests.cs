@@ -20,8 +20,8 @@ public sealed class ModelCatalogTests
 
         var catalog = ModelCatalog.FromConfig(config);
 
-        Assert.Equal(
-            new[] { "gpt-5-mini", "gpt-realtime-2.1", "gpt-realtime-2.1-mini", "phi-4" },
+        Assert.Equal<string>(
+            ["gpt-5-mini", "gpt-realtime-2.1", "gpt-realtime-2.1-mini", "phi-4"],
             catalog.Ids);
 
         ModelEntry realtime = catalog.Get("gpt-realtime-2.1");

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.WebSockets;
 using System.Security.Cryptography;
 using System.Text;
@@ -13,7 +14,7 @@ namespace Backend.Tests.Realtime;
 
 public sealed class DiagnosticWebSocketTests
 {
-    private static readonly DateTimeOffset s_now = DateTimeOffset.Parse("2026-10-22T22:30:00Z");
+    private static readonly DateTimeOffset s_now = DateTimeOffset.Parse("2026-10-22T22:30:00Z", CultureInfo.InvariantCulture);
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     private static (byte[] Data, bool EndOfMessage, WebSocketMessageType MessageType) Text(string value, bool end = true)
         => (Encoding.UTF8.GetBytes(value), end, WebSocketMessageType.Text);
@@ -57,10 +58,10 @@ public sealed class DiagnosticWebSocketTests
         var inner = new FakeWebSocket([Text(ack[..20], false), Text(ack[20..]), Text(Done)]);
         var logger = new CascadeDiagnosticCaptureTests.RecordingLogger();
         using var socket = new DiagnosticWebSocket(inner, Capture(logger), true);
-        await socket.SendAsync(new ArraySegment<byte>(Encoding.UTF8.GetBytes(outbound[..12])), WebSocketMessageType.Text, false, CancellationToken.None);
-        await socket.SendAsync(new ArraySegment<byte>(Encoding.UTF8.GetBytes(outbound[12..])), WebSocketMessageType.Text, true, CancellationToken.None);
-        WebSocketFrame? first = await WebSocketFrameReader.ReadMessageAsync(socket, CancellationToken.None);
-        WebSocketFrame? second = await WebSocketFrameReader.ReadMessageAsync(socket, CancellationToken.None);
+        await socket.SendAsync(new ArraySegment<byte>(Encoding.UTF8.GetBytes(outbound[..12])), WebSocketMessageType.Text, false, TestContext.Current.CancellationToken);
+        await socket.SendAsync(new ArraySegment<byte>(Encoding.UTF8.GetBytes(outbound[12..])), WebSocketMessageType.Text, true, TestContext.Current.CancellationToken);
+        WebSocketFrame? first = await WebSocketFrameReader.ReadMessageAsync(socket, TestContext.Current.CancellationToken);
+        WebSocketFrame? second = await WebSocketFrameReader.ReadMessageAsync(socket, TestContext.Current.CancellationToken);
         Assert.Equal(ack, Encoding.UTF8.GetString(first!.Payload));
         Assert.Equal(Done, Encoding.UTF8.GetString(second!.Payload));
         Assert.Equal(outbound, string.Concat(inner.SentMessages.Select(s => Encoding.UTF8.GetString(s.Data))));
@@ -83,7 +84,7 @@ public sealed class DiagnosticWebSocketTests
         CascadeDiagnosticCapture capture = Capture(logger);
         var inner = new FakeWebSocket([Text("""{"type":"extension.resume","resume_id":"PRIVATE-RESUME"}""")]);
         using var browser = new DiagnosticWebSocket(inner, capture, false);
-        await WebSocketFrameReader.ReadMessageAsync(browser, CancellationToken.None);
+        await WebSocketFrameReader.ReadMessageAsync(browser, TestContext.Current.CancellationToken);
         capture.RealtimeFrame(JsonNode.Parse("""{"type":"response.done","response":{"output":[]}}""")!.AsObject(), false);
         Assert.Empty(logger.Lines);
         CascadeDiagnosticCapture fresh = Capture(logger);
@@ -109,7 +110,7 @@ public sealed class DiagnosticWebSocketTests
         var logger = new CascadeDiagnosticCaptureTests.RecordingLogger();
         using var socket = new DiagnosticWebSocket(inner, Capture(logger, _ =>
             throw new System.Text.RegularExpressions.RegexMatchTimeoutException()), true);
-        await FramePump.SendTextAsync(socket, Frame, CancellationToken.None);
+        await FramePump.SendTextAsync(socket, Frame, TestContext.Current.CancellationToken);
         Assert.Equal(Frame, Encoding.UTF8.GetString(Assert.Single(inner.SentMessages).Data));
         Assert.Empty(logger.Lines);
         Assert.Single(logger.Warnings);
@@ -126,14 +127,14 @@ public sealed class DiagnosticWebSocketTests
             ["type"] = "response.create",
             ["response"] = new JsonObject { ["instructions"] = new string('x', 140000) },
         }.ToJsonString();
-        await FramePump.SendTextAsync(socket, oversized, CancellationToken.None);
+        await FramePump.SendTextAsync(socket, oversized, TestContext.Current.CancellationToken);
         Assert.Equal(oversized, Encoding.UTF8.GetString(inner.SentMessages[0].Data));
         Assert.Empty(logger.Lines);
         Assert.Equal("Synthetic cascade diagnostic capture stopped: text frame limit reached.", Assert.Single(logger.Warnings));
-        await FramePump.SendTextAsync(socket, """{"type":"response.cancel"}""", CancellationToken.None);
+        await FramePump.SendTextAsync(socket, """{"type":"response.cancel"}""", TestContext.Current.CancellationToken);
         Assert.Empty(logger.Lines);
-        await FramePump.SendTextAsync(socket, "not-json", CancellationToken.None);
-        await FramePump.SendTextAsync(socket, """{"type":"response.cancel"}""", CancellationToken.None);
+        await FramePump.SendTextAsync(socket, "not-json", TestContext.Current.CancellationToken);
+        await FramePump.SendTextAsync(socket, """{"type":"response.cancel"}""", TestContext.Current.CancellationToken);
         Assert.Equal(4, inner.SentMessages.Count);
         Assert.Empty(logger.Lines);
     }

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Backend.Auth;
 using Microsoft.IdentityModel.Protocols;
@@ -58,7 +59,7 @@ public sealed class CooldownAwareConfigurationManagerTests
         var gate = new DiscoveryFailureGate();
         var decorator = new CooldownAwareConfigurationManager(Inner(), gate);
 
-        BaseConfiguration configuration = await decorator.GetBaseConfigurationAsync(CancellationToken.None);
+        BaseConfiguration configuration = await decorator.GetBaseConfigurationAsync(TestContext.Current.CancellationToken);
 
         Assert.NotNull(configuration);
         Assert.True(decorator.HasConfiguration);
@@ -76,7 +77,7 @@ public sealed class CooldownAwareConfigurationManagerTests
         var decorator = new CooldownAwareConfigurationManager(inner, gate);
 
         HttpRequestException thrown = await Assert.ThrowsAsync<HttpRequestException>(
-            () => decorator.GetBaseConfigurationAsync(CancellationToken.None));
+            () => decorator.GetBaseConfigurationAsync(TestContext.Current.CancellationToken));
 
         Assert.Equal("connection reset", thrown.Message);
         Assert.False(decorator.HasConfiguration);
@@ -84,7 +85,7 @@ public sealed class CooldownAwareConfigurationManagerTests
     }
 
     [Theory]
-    [MemberData(nameof(DiscoveryFailureExceptions))]
+    [MemberData(nameof(DiscoveryFailureExceptions), DisableDiscoveryEnumeration = true)]
     public async Task GetBaseConfigurationAsync_ColdFailure_RecognizesAllDiscoveryFailureShapes(Exception failure)
     {
         var gate = new DiscoveryFailureGate();
@@ -92,7 +93,7 @@ public sealed class CooldownAwareConfigurationManagerTests
         inner.NextFailure = failure;
         var decorator = new CooldownAwareConfigurationManager(inner, gate);
 
-        await Assert.ThrowsAnyAsync<Exception>(() => decorator.GetBaseConfigurationAsync(CancellationToken.None));
+        await Assert.ThrowsAnyAsync<Exception>(() => decorator.GetBaseConfigurationAsync(TestContext.Current.CancellationToken));
 
         Assert.True(gate.IsInCooldown());
     }
@@ -118,7 +119,7 @@ public sealed class CooldownAwareConfigurationManagerTests
         inner.NextFailure = new InvalidOperationException("unrelated, no network cause");
         var decorator = new CooldownAwareConfigurationManager(inner, gate);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => decorator.GetBaseConfigurationAsync(CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => decorator.GetBaseConfigurationAsync(TestContext.Current.CancellationToken));
 
         Assert.False(gate.IsInCooldown());
     }
@@ -132,12 +133,12 @@ public sealed class CooldownAwareConfigurationManagerTests
         var gate = new DiscoveryFailureGate();
         FakeInnerConfigurationManager inner = Inner();
         var decorator = new CooldownAwareConfigurationManager(inner, gate);
-        await decorator.GetBaseConfigurationAsync(CancellationToken.None);
+        await decorator.GetBaseConfigurationAsync(TestContext.Current.CancellationToken);
         Assert.True(decorator.HasConfiguration);
 
         inner.NextFailure = new HttpRequestException("transient refetch failure while warm");
         HttpRequestException thrown = await Assert.ThrowsAsync<HttpRequestException>(
-            () => decorator.GetBaseConfigurationAsync(CancellationToken.None));
+            () => decorator.GetBaseConfigurationAsync(TestContext.Current.CancellationToken));
 
         Assert.Equal("transient refetch failure while warm", thrown.Message);
         Assert.True(decorator.HasConfiguration);
@@ -145,6 +146,8 @@ public sealed class CooldownAwareConfigurationManagerTests
     }
 
     [Fact]
+    [SuppressMessage("Performance", "CA1859:Use concrete types when possible for improved performance",
+        Justification = "The test deliberately calls through the IConfigurationManager<T> interface entrypoint.")]
     public async Task GetConfigurationAsync_InterfaceEntrypoint_RoutesThroughSameLogic()
     {
         // Not reachable on the real JwtBearerHandler pipeline, but must still behave correctly
@@ -154,7 +157,7 @@ public sealed class CooldownAwareConfigurationManagerTests
         inner.NextFailure = new IOException("reset");
         IConfigurationManager<OpenIdConnectConfiguration> decorator = new CooldownAwareConfigurationManager(inner, gate);
 
-        await Assert.ThrowsAsync<IOException>(() => decorator.GetConfigurationAsync(CancellationToken.None));
+        await Assert.ThrowsAsync<IOException>(() => decorator.GetConfigurationAsync(TestContext.Current.CancellationToken));
 
         Assert.True(gate.IsInCooldown());
     }

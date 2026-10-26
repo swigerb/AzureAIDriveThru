@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json.Nodes;
 using Backend.Cascade;
 using Backend.Realtime;
@@ -11,7 +12,7 @@ public sealed class CascadeDiagnosticCaptureTests
 {
     private const string Oid = "11111111-1111-1111-1111-111111111111";
     private const string Marker = "22222222222222222222222222222222";
-    private static readonly DateTimeOffset s_now = DateTimeOffset.Parse("2026-10-22T22:30:00Z");
+    private static readonly DateTimeOffset s_now = DateTimeOffset.Parse("2026-10-22T22:30:00Z", CultureInfo.InvariantCulture);
 
     private static CascadeDiagnosticGate Gate(FakeTimeProvider clock, string? key = null, string? value = null)
     {
@@ -98,8 +99,8 @@ public sealed class CascadeDiagnosticCaptureTests
         CascadeDiagnosticCapture? capture = Claim(Gate(new(s_now)), logger);
         JsonObject[] messages = [CascadeChatMessage.User("NEVER-COPY-GUEST")];
 
-        JsonObject baseline = await client.CompleteAsync(messages, "fake", [], CancellationToken.None);
-        JsonObject diagnosed = await client.CompleteAsync(messages, "fake", [], CancellationToken.None, capture);
+        JsonObject baseline = await client.CompleteAsync(messages, "fake", [], TestContext.Current.CancellationToken);
+        JsonObject diagnosed = await client.CompleteAsync(messages, "fake", [], TestContext.Current.CancellationToken, capture);
 
         Assert.Equal(handler.RequestBodies[0], handler.RequestBodies[1]);
         Assert.Equal(baseline.ToJsonString(), diagnosed.ToJsonString());
@@ -133,8 +134,8 @@ public sealed class CascadeDiagnosticCaptureTests
         [
             duringRequest ? CascadeChatMessage.Assistant("NEVER-COPY-INPUT") : CascadeChatMessage.User("NEVER-COPY-GUEST"),
         ];
-        JsonObject baseline = await client.CompleteAsync(messages, "fake", [], CancellationToken.None);
-        JsonObject actual = await client.CompleteAsync(messages, "fake", [], CancellationToken.None, capture);
+        JsonObject baseline = await client.CompleteAsync(messages, "fake", [], TestContext.Current.CancellationToken);
+        JsonObject actual = await client.CompleteAsync(messages, "fake", [], TestContext.Current.CancellationToken, capture);
         capture.Emission("tts.started");
         capture.Request(messages);
         capture.Choice(actual, "stop");
@@ -188,7 +189,7 @@ public sealed class CascadeDiagnosticCaptureTests
         Assert.Equal(original, new JsonArray(messages.Select(m => m.DeepClone()).ToArray()).ToJsonString());
         JsonNode request = JsonNode.Parse(logger.Lines[0])!;
         JsonArray snapshot = request["messages"]!.AsArray();
-        Assert.Equal(new[] { "system", "user", "assistant", "tool" },
+        Assert.Equal<string>(["system", "user", "assistant", "tool"],
             snapshot.Select(m => m!["role"]!.GetValue<string>()));
         Assert.Equal(snapshot[2]!["toolCalls"]![0]!["idHash"]!.GetValue<string>(),
             snapshot[3]!["toolCallIdHash"]!.GetValue<string>());

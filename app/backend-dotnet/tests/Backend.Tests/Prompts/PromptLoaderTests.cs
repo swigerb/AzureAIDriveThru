@@ -249,7 +249,7 @@ public sealed class PromptLoaderTests : IDisposable
         string marker = "REQUIRED_ERROR_MESSAGE_KEYS: tuple[str, ...] = (";
         int start = source.IndexOf(marker, StringComparison.Ordinal);
         Assert.True(start >= 0, $"Could not find REQUIRED_ERROR_MESSAGE_KEYS in {pythonFile}");
-        int end = source.IndexOf(")", start, StringComparison.Ordinal);
+        int end = source.IndexOf(')', start);
         string body = source[(start + marker.Length)..end];
 
         var keys = new List<string>();

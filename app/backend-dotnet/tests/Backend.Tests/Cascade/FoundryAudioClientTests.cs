@@ -22,7 +22,7 @@ public sealed class FoundryAudioClientTests
         FoundryAudioClient client = NewClient(handler, token: "my-token");
         byte[] pcm = [0x01, 0x00, 0x02, 0x00];
 
-        string transcript = await client.TranscribeAsync(pcm, deployment: "gpt-4o-transcribe", sampleRate: 24000, CancellationToken.None);
+        string transcript = await client.TranscribeAsync(pcm, deployment: "gpt-4o-transcribe", sampleRate: 24000, TestContext.Current.CancellationToken);
 
         Assert.Equal("two burgers please", transcript);
         HttpRequestMessage request = Assert.Single(handler.Requests);
@@ -39,7 +39,7 @@ public sealed class FoundryAudioClientTests
         QueuedFoundryHttpHandler handler = new QueuedFoundryHttpHandler().Enqueue(HttpStatusCode.OK, "{}");
         FoundryAudioClient client = NewClient(handler);
 
-        string transcript = await client.TranscribeAsync([0x00, 0x00], "gpt-4o-transcribe", 24000, CancellationToken.None);
+        string transcript = await client.TranscribeAsync([0x00, 0x00], "gpt-4o-transcribe", 24000, TestContext.Current.CancellationToken);
 
         Assert.Equal("", transcript);
     }
@@ -51,7 +51,7 @@ public sealed class FoundryAudioClientTests
         FoundryAudioClient client = NewClient(handler);
 
         FoundryHttpException exc = await Assert.ThrowsAsync<FoundryHttpException>(() =>
-            client.TranscribeAsync([0x00, 0x00], "gpt-4o-transcribe", 24000, CancellationToken.None));
+            client.TranscribeAsync([0x00, 0x00], "gpt-4o-transcribe", 24000, TestContext.Current.CancellationToken));
 
         Assert.Equal(503, exc.StatusCode);
         Assert.Contains("upstream down", exc.Message);
@@ -68,7 +68,7 @@ public sealed class FoundryAudioClientTests
         FoundryAudioClient client = NewClient(handler);
 
         FoundryHttpException exc = await Assert.ThrowsAsync<FoundryHttpException>(() =>
-            client.TranscribeAsync([0x00, 0x00], "gpt-4o-transcribe", 24000, CancellationToken.None));
+            client.TranscribeAsync([0x00, 0x00], "gpt-4o-transcribe", 24000, TestContext.Current.CancellationToken));
 
         Assert.Equal(429, exc.StatusCode);
         Assert.Equal(3.0, exc.RetryAfterSeconds);
@@ -82,7 +82,7 @@ public sealed class FoundryAudioClientTests
         QueuedFoundryHttpHandler handler = new QueuedFoundryHttpHandler().EnqueueBytes(HttpStatusCode.OK, pcmResponse);
         FoundryAudioClient client = NewClient(handler, token: "my-token");
 
-        byte[] result = await client.SpeakAsync("Welcome to Test Co.!", voice: "marin", deployment: "gpt-4o-mini-tts", CancellationToken.None);
+        byte[] result = await client.SpeakAsync("Welcome to Test Co.!", voice: "marin", deployment: "gpt-4o-mini-tts", TestContext.Current.CancellationToken);
 
         Assert.Equal(pcmResponse, result);
         HttpRequestMessage request = Assert.Single(handler.Requests);
@@ -104,7 +104,7 @@ public sealed class FoundryAudioClientTests
         FoundryAudioClient client = NewClient(handler);
 
         FoundryHttpException exc = await Assert.ThrowsAsync<FoundryHttpException>(() =>
-            client.SpeakAsync("hi", "marin", "gpt-4o-mini-tts", CancellationToken.None));
+            client.SpeakAsync("hi", "marin", "gpt-4o-mini-tts", TestContext.Current.CancellationToken));
 
         Assert.Equal(429, exc.StatusCode);
         Assert.Equal(3.0, exc.RetryAfterSeconds);

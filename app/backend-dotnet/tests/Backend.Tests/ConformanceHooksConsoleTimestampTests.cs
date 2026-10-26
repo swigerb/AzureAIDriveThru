@@ -26,8 +26,16 @@ namespace Backend.Tests;
 /// exactly the gap those two tests couldn't catch, since neither one goes through a real
 /// <c>ConsoleLoggerProvider</c>).
 /// </summary>
-public sealed class ConformanceHooksConsoleTimestampTests
+public sealed partial class ConformanceHooksConsoleTimestampTests
 {
+    // Both patterns use the same literal regex as CapturedProcessOutput.BackendTimestampPrefix
+    // (duplicated deliberately: Backend.Tests has no project reference to tests/conformance).
+    [GeneratedRegex(@"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z info: Backend\.ConformanceHooksConsoleTimestampTests\[0\] conformance timestamp end-to-end probe$", RegexOptions.Multiline)]
+    private static partial Regex TimestampedProbeLineRegex { get; }
+
+    [GeneratedRegex(@"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z ", RegexOptions.Multiline)]
+    private static partial Regex BackendTimestampPrefixRegex { get; }
+
     [Fact]
     public void ApplyConsoleTimestampFormat_sets_utc_and_the_shared_literal_format_string()
     {
@@ -86,7 +94,7 @@ public sealed class ConformanceHooksConsoleTimestampTests
     public void AddSimpleConsole_is_what_actually_makes_real_console_output_self_timestamped()
     {
         TextWriter originalOut = Console.Out;
-        var capture = new StringWriter();
+        using var capture = new StringWriter();
         try
         {
             Console.SetOut(capture);
@@ -107,13 +115,7 @@ public sealed class ConformanceHooksConsoleTimestampTests
 
         string output = capture.ToString();
 
-        // Same literal regex as CapturedProcessOutput.BackendTimestampPrefix (duplicated
-        // deliberately: Backend.Tests has no project reference to tests/conformance).
-        Assert.Matches(
-            new Regex(
-                @"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z info: Backend\.ConformanceHooksConsoleTimestampTests\[0\] conformance timestamp end-to-end probe$",
-                RegexOptions.Multiline),
-            output.TrimEnd('\r', '\n'));
+        Assert.Matches(TimestampedProbeLineRegex, output.TrimEnd('\r', '\n'));
     }
 
     /// <summary>
@@ -132,7 +134,7 @@ public sealed class ConformanceHooksConsoleTimestampTests
     public void Default_console_registration_without_AddSimpleConsole_has_no_backend_timestamp_prefix()
     {
         TextWriter originalOut = Console.Out;
-        var capture = new StringWriter();
+        using var capture = new StringWriter();
         try
         {
             Console.SetOut(capture);
@@ -152,9 +154,7 @@ public sealed class ConformanceHooksConsoleTimestampTests
 
         string output = capture.ToString();
 
-        Assert.DoesNotMatch(
-            new Regex(@"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z ", RegexOptions.Multiline),
-            output);
+        Assert.DoesNotMatch(BackendTimestampPrefixRegex, output);
         Assert.Contains("info: Backend.ConformanceHooksConsoleTimestampTests[0]", output);
         Assert.Contains("conformance timestamp end-to-end probe", output);
     }
