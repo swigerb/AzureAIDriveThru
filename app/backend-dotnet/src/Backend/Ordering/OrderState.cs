@@ -1,3 +1,4 @@
+using System.Globalization;
 using Backend.Personas;
 
 namespace Backend.Ordering;
@@ -100,6 +101,8 @@ internal sealed class OrderState
     /// independent of whether happy hour is currently active.</param>
     /// <param name="happyHourBanner">This session's own bound persona's own
     /// <c>pricing.happyHour.banner</c> text (#113) -- never hardcoded here.</param>
+    /// <param name="rewardsDemo">This session's own bound persona's optional fictional
+    /// rewards-demo configuration, or <c>null</c> when the persona has no rewards demo.</param>
     public OrderState(
         MenuCatalog menu,
         TimeZoneInfo timeZone,
@@ -235,7 +238,9 @@ internal sealed class OrderState
             }
 
             string display = item.Display.Length > 0 ? item.Display : item.Item;
-            discounted.Add(item.Quantity > 1 ? $"{item.Quantity} x {display}" : display);
+            discounted.Add(item.Quantity > 1
+                ? string.Create(CultureInfo.InvariantCulture, $"{item.Quantity} x {display}")
+                : display);
         }
 
         return discounted;
@@ -1380,7 +1385,7 @@ internal sealed class OrderState
     /// name="finalTotal"/> -- never re-derived here. Cached once per <see cref="UpdateSummary"/>
     /// call onto <see cref="OrderSummary.SpokenReadBack"/> so it can never drift from the tool
     /// response that serializes the same <see cref="OrderSummary"/>.</summary>
-    private string ComposeSpokenReadBack(IReadOnlyList<OrderItem> items, decimal finalTotal)
+    private string ComposeSpokenReadBack(List<OrderItem> items, decimal finalTotal)
     {
         if (items.Count == 0)
         {

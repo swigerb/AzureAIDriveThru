@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Backend.Configuration;
@@ -32,10 +33,14 @@ namespace Backend.Models;
 /// </summary>
 internal sealed class ModelCatalog
 {
-    private static readonly HashSet<string> s_pipelines = ["realtime", "cascade"];
-    private static readonly HashSet<string> s_requiredEntryFields = ["id", "pipeline", "label"];
-    private static readonly HashSet<string> s_knownEntryFields =
-        ["id", "pipeline", "label", "reasoning", "toolCalling"];
+    private static readonly FrozenSet<string> s_pipelines =
+        FrozenSet.Create(StringComparer.Ordinal, "realtime", "cascade");
+    private static readonly FrozenSet<string> s_requiredEntryFields =
+        FrozenSet.Create(StringComparer.Ordinal, "id", "pipeline", "label");
+    private static readonly FrozenSet<string> s_knownEntryFields =
+        FrozenSet.Create(StringComparer.Ordinal, "id", "pipeline", "label", "reasoning", "toolCalling");
+    private static readonly FrozenSet<string> s_cascadeAudioFields =
+        FrozenSet.Create(StringComparer.Ordinal, "transcription", "tts");
 
     private const string DeploymentsEnvVar = "AZURE_AI_MODEL_DEPLOYMENTS";
 
@@ -126,11 +131,7 @@ internal sealed class ModelCatalog
                     }
                     if (!IsCataloguedFor(allowedId, pipelineName))
                     {
-                        logger.LogWarning(
-                            "Persona {PersonaId}'s {Pipeline} allowed model {AllowedId} is not in config.yaml's " +
-                            "models.catalog for pipeline {Pipeline} -- it will 404 if a guest ever requests it " +
-                            "explicitly by id.",
-                            personaId, pipelineName, allowedId, pipelineName);
+                        logger.AllowedModelNotCatalogued(personaId, pipelineName, allowedId);
                     }
                 }
             }
@@ -188,7 +189,7 @@ internal sealed class ModelCatalog
             deploymentsRaw = BackendEnvironment.Get(DeploymentsEnvVar);
         }
 
-        IReadOnlyDictionary<string, string> deployments = ParseDeploymentMap(deploymentsRaw);
+        Dictionary<string, string> deployments = ParseDeploymentMap(deploymentsRaw);
         object? cascadeRaw = null;
         modelsSection?.TryGetValue("cascade", out cascadeRaw);
         CascadeAudioConfig? cascadeAudio = ParseCascadeAudioConfig(cascadeRaw);
@@ -214,15 +215,14 @@ internal sealed class ModelCatalog
         }
 
         var dict = map.ToDictionary(kv => kv.Key.ToString()!, kv => kv.Value);
-        var known = new HashSet<string> { "transcription", "tts" };
 
-        var unknown = dict.Keys.Where(k => !known.Contains(k)).OrderBy(k => k, StringComparer.Ordinal).ToList();
+        var unknown = dict.Keys.Where(k => !s_cascadeAudioFields.Contains(k)).OrderBy(k => k, StringComparer.Ordinal).ToList();
         if (unknown.Count > 0)
         {
             throw new ModelValidationException($"config.yaml models.cascade has unknown field(s): {FormatList(unknown)}.");
         }
 
-        var missing = known.Where(f => !dict.ContainsKey(f)).OrderBy(f => f, StringComparer.Ordinal).ToList();
+        var missing = s_cascadeAudioFields.Where(f => !dict.ContainsKey(f)).OrderBy(f => f, StringComparer.Ordinal).ToList();
         if (missing.Count > 0)
         {
             throw new ModelValidationException($"config.yaml models.cascade is missing required field(s): {FormatList(missing)}.");
@@ -327,11 +327,11 @@ internal sealed class ModelCatalog
         }
     }
 
-    private static IReadOnlyDictionary<string, string> ParseDeploymentMap(string? raw)
+    private static Dictionary<string, string> ParseDeploymentMap(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw))
         {
-            return new Dictionary<string, string>(StringComparer.Ordinal);
+            return [with(StringComparer.Ordinal)];
         }
 
         JsonNode? parsed;

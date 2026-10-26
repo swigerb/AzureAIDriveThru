@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -21,14 +23,14 @@ namespace Backend.Personas;
 /// </summary>
 internal static class PersonaRoutes
 {
-    private static readonly Dictionary<string, string> s_assetContentTypes = new(StringComparer.Ordinal)
+    private static readonly FrozenDictionary<string, string> s_assetContentTypes = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         [".svg"] = "image/svg+xml",
         [".wav"] = "audio/wav",
         [".mp3"] = "audio/mpeg",
         [".ico"] = "image/x-icon",
         [".json"] = "application/json",
-    };
+    }.ToFrozenDictionary(StringComparer.Ordinal);
 
     private static readonly JsonSerializerOptions s_serializeOptions = new()
     {
@@ -129,9 +131,9 @@ internal static class PersonaRoutes
 
         string requestedV = context.Request.Query["v"].ToString();
         context.Response.Headers.CacheControl = requestedV.Length > 0 && requestedV == contentHash
-            ? $"public, max-age={cacheConfig.ImmutableMaxAgeSeconds}, immutable"
-            : $"public, max-age={cacheConfig.DefaultMaxAgeSeconds}";
-        context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+            ? string.Create(CultureInfo.InvariantCulture, $"public, max-age={cacheConfig.ImmutableMaxAgeSeconds}, immutable")
+            : string.Create(CultureInfo.InvariantCulture, $"public, max-age={cacheConfig.DefaultMaxAgeSeconds}");
+        context.Response.Headers.XContentTypeOptions = "nosniff";
 
         await context.Response.Body.WriteAsync(bytes, context.RequestAborted);
     }

@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text.RegularExpressions;
 
 namespace Backend.Personas;
@@ -27,7 +28,7 @@ internal sealed record ResolvedMenuItem(
 /// keyword/substring guess. <see cref="ResolveMenuItem"/> is the single on-menu gate
 /// <c>Tools.UpdateOrder</c> calls before adding anything to an order.
 /// </summary>
-internal sealed class MenuCatalog
+internal sealed partial class MenuCatalog
 {
     private sealed record ItemFields(
         string Name,
@@ -48,6 +49,7 @@ internal sealed class MenuCatalog
     // follow-up): "Route-44" and "rt. 44" must resolve identically to "route44"/"rt44" --
     // whitespace alone wasn't enough to catch the hyphen or period variants.
     private const string SizeAliasIgnoredChars = " .-";
+    private static readonly SearchValues<char> s_sizeAliasIgnoredChars = SearchValues.Create(SizeAliasIgnoredChars);
 
     public string PersonaId { get; }
     public string SpeechStyle { get; private init; } = "fullReadback";
@@ -263,7 +265,9 @@ internal sealed class MenuCatalog
     private static string CompactSizeKey(string? size)
     {
         string key = (size ?? "").Trim().ToLowerInvariant();
-        return new string([.. key.Where(ch => !SizeAliasIgnoredChars.Contains(ch))]);
+        return key.AsSpan().ContainsAny(s_sizeAliasIgnoredChars)
+            ? string.Concat(key.Where(ch => !s_sizeAliasIgnoredChars.Contains(ch)))
+            : key;
     }
 
     private static string CanonicalSizeKeyFor(
@@ -449,7 +453,7 @@ internal sealed class MenuCatalog
         {
             return query;
         }
-        Match match = System.Text.RegularExpressions.Regex.Match(query, @"\d+");
+        Match match = DigitRunRegex().Match(query);
         if (!match.Success)
         {
             return query;
@@ -461,6 +465,9 @@ internal sealed class MenuCatalog
         }
         return $"{query} {string.Join(" ", candidates)}";
     }
+
+    [GeneratedRegex(@"\d+")]
+    private static partial Regex DigitRunRegex();
 
     private static readonly string[] s_combinedNameConnectors = [" with ", " and ", " + ", " & "];
 
@@ -567,8 +574,6 @@ internal sealed class MenuCatalog
         {
             return null;
         }
-        return fields.Prices.GetValueOrDefault(sizeKey) is var price && fields.Prices.ContainsKey(sizeKey)
-            ? price
-            : null;
+        return fields.Prices.TryGetValue(sizeKey, out decimal price) ? price : null;
     }
 }

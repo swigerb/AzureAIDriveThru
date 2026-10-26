@@ -15,7 +15,7 @@ namespace Backend.Tools;
 /// "search" -- see <c>SearchTool</c>/whatever composes both into one <see cref="IToolExecutor"/>
 /// for a session's full tool set.
 /// </summary>
-internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, IRewardsDemoControl
+internal sealed partial class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, IRewardsDemoControl
 {
     private readonly Ordering.OrderState _order;
     private readonly MenuCatalog _menu;
@@ -543,15 +543,15 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
     // customization-validation block in UpdateOrder can tell "Milk Jug (1%) - White" (the
     // canonical name's own parens, not a guest modifier) apart from "Milk Jug (1%) - White (no
     // ice)" (a genuine customization).
-    private static readonly System.Text.RegularExpressions.Regex s_parenGroupRegex =
-        new(@"\([^)]*\)", System.Text.RegularExpressions.RegexOptions.Compiled);
+    [System.Text.RegularExpressions.GeneratedRegex(@"\([^)]*\)")]
+    private static partial System.Text.RegularExpressions.Regex ParenGroupRegex();
 
     private static (string ItemName, string CustomizationSuffix) ReattachCustomizationSuffix(string rawItemName, string canonicalName)
     {
         string raw = rawItemName ?? "";
         string canonical = canonicalName ?? "";
-        var rawGroups = s_parenGroupRegex.Matches(raw).Select(m => m.Value).ToList();
-        var canonicalGroups = s_parenGroupRegex.Matches(canonical).Select(m => m.Value).ToList();
+        var rawGroups = ParenGroupRegex().Matches(raw).Select(m => m.Value).ToList();
+        var canonicalGroups = ParenGroupRegex().Matches(canonical).Select(m => m.Value).ToList();
         foreach (string? group in canonicalGroups)
         {
             rawGroups.Remove(group);
@@ -666,7 +666,9 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
         int existingQty = _menu.SpeechStyle == "naturalDriveThru"
             ? _order.Items.Where(i => i.Item == itemName && i.Size == _menu.CanonicalSizeKey(size)).Sum(i => i.Quantity)
             : _order.Items.FirstOrDefault(oi => oi.Item == itemName && oi.Size == size)?.Quantity ?? 0;
-        int newItemQty = existingQty + quantity;
+        // Widened to long: Python's ints are unbounded, so a huge model-supplied quantity must
+        // trip the limit rather than wrapping a 32-bit sum negative and slipping past it.
+        long newItemQty = (long)existingQty + quantity;
         if (newItemQty > _maxItemQuantity)
         {
             int allowed = _maxItemQuantity - existingQty;
@@ -690,7 +692,7 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
             return new ToolResult(msg, ToolResultDirection.ToServer);
         }
 
-        int totalQty = _order.Items.Sum(oi => oi.Quantity) + quantity;
+        long totalQty = (long)_order.Items.Sum(oi => oi.Quantity) + quantity;
         if (totalQty > _maxOrderItems)
         {
             int remaining = _maxOrderItems - _order.Items.Sum(oi => oi.Quantity);
@@ -832,6 +834,6 @@ internal sealed class OrderToolExecutor : IToolExecutor, IOrderSessionSettings, 
             ? price
             : null;
 
-    private static IReadOnlyDictionary<string, object?> Vars(params (string Key, object? Value)[] pairs) =>
-        pairs.ToDictionary(p => p.Key, p => p.Value);
+    private static Dictionary<string, object?> Vars(params (string Key, object? Value)[] pairs) =>
+        pairs.ToDictionary(p => p.Key, p => p.Value, StringComparer.Ordinal);
 }

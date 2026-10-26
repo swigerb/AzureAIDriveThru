@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Backend.Configuration;
 using Backend.Personas;
@@ -72,6 +73,10 @@ internal sealed class SearchTool
     /// cref="ToolResultDirection.ToServer"/> -- mirrors tools.py's <c>search</c> always
     /// constructing a <c>TO_SERVER</c> <c>ToolResult</c>: search results are model-facing
     /// knowledge-base lookups, never a client-visible order-state change.</summary>
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Deliberate last-resort tool boundary (mirrors tools.py's search): credential, transport, and parse failures " +
+            "from the search round trip all become a graceful search_service_unavailable tool result instead of tearing down " +
+            "the session. A caller cancellation during the first attempt is rethrown by the dedicated OperationCanceledException catch.")]
     public async Task<ToolResult> ExecuteAsync(JsonElement args, CancellationToken cancellationToken = default)
     {
         string rawQuery = args.TryGetProperty("query", out JsonElement queryEl) ? queryEl.GetString() ?? "" : "";
@@ -97,7 +102,7 @@ internal sealed class SearchTool
         // this search filter in sync -- without it, a period-less item could be added to an order
         // in either mode yet never surface in a mode-filtered search.
         string? modeFilter = _menuMode is { Length: > 0 }
-            ? $"menuPeriod eq '{_menuMode}' or menuPeriod eq 'allDay' or menuPeriod eq ''"
+            ? $"menuPeriod eq '{EscapeODataString(_menuMode)}' or menuPeriod eq 'allDay' or menuPeriod eq ''"
             : null;
 
         string[] selectFields = [_config.IdentifierField, "name", "category", "description", "sizes"];
@@ -197,6 +202,12 @@ internal sealed class SearchTool
     private ToolResult ServerError(string errorKey, string fallback) =>
         new(_promptLoader?.RenderError(errorKey) ?? fallback, ToolResultDirection.ToServer);
 
+    /// <summary>Escapes <paramref name="value"/> for use inside a single-quoted OData string
+    /// literal (a literal <c>'</c> is written as <c>''</c>), so a value can never terminate the
+    /// literal early and inject extra filter clauses. A value with no quotes is returned
+    /// unchanged.</summary>
+    private static string EscapeODataString(string value) => value.Replace("'", "''", StringComparison.Ordinal);
+
     private string FormatRecord(JsonElement record)
     {
         string identifier = GetString(record, _config.IdentifierField) ?? GetString(record, "id") ?? "unknown";
@@ -289,7 +300,7 @@ internal sealed class SearchTool
 
         try
         {
-            object body = BuildSearchBody(query, selectFields, includeVector, semantic, filter);
+            Dictionary<string, object?> body = BuildSearchBody(query, selectFields, includeVector, semantic, filter);
             string url = $"{_config.Endpoint.TrimEnd('/')}/indexes('{Uri.EscapeDataString(_indexName)}')" +
                       $"/docs/search.post.search?api-version={SearchEndpointConfig.ApiVersion}";
 
@@ -316,9 +327,9 @@ internal sealed class SearchTool
         }
     }
 
-    private object BuildSearchBody(string query, IReadOnlyList<string> selectFields, bool includeVector, bool semantic, string? filter)
+    private Dictionary<string, object?> BuildSearchBody(string query, IReadOnlyList<string> selectFields, bool includeVector, bool semantic, string? filter)
     {
-        var body = new Dictionary<string, object?>
+        var body = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["search"] = query,
             ["top"] = _searchConfig.TopResults,

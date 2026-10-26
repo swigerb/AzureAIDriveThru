@@ -25,11 +25,12 @@ namespace Backend.Personas;
 /// per-session <c>MenuCatalog</c>-equivalent in the C# backend yet for it to also guard, so a
 /// single call site is correct here (unlike Python's "belt and suspenders" two call sites).
 /// </summary>
-internal static class MenuKeyValidator
+internal static partial class MenuKeyValidator
 {
     // Strips a parenthesized customization suffix, e.g. "Tots (Extra Crispy)" -> "Tots".
     // Mirrors menu_utils.py's _MODIFIER_SUFFIX_RE exactly (r"\s*\([^)]*\)\s*").
-    private static readonly Regex s_modifierSuffixRegex = new(@"\s*\([^)]*\)\s*", RegexOptions.Compiled);
+    [GeneratedRegex(@"\s*\([^)]*\)\s*")]
+    private static partial Regex ModifierSuffixRegex();
 
     /// <summary>Mirrors menu_utils.py's <c>strip_modifiers</c>: strips every parenthesized
     /// customization group anywhere in the string (not just a trailing one), collapsing the
@@ -37,7 +38,7 @@ internal static class MenuKeyValidator
     /// <c>str.split()</c>).</summary>
     public static string StripModifiers(string? itemName)
     {
-        string collapsed = s_modifierSuffixRegex.Replace(itemName ?? "", " ");
+        string collapsed = ModifierSuffixRegex().Replace(itemName ?? "", " ");
         string[] parts = collapsed.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
         return string.Join(" ", parts);
     }
