@@ -22,9 +22,9 @@
       },
       "Microsoft.AspNetCore.Authentication.JwtBearer": {
         "type": "Direct",
-        "requested": "[11.0.0-rc.2.26504.105, )",
-        "resolved": "11.0.0-rc.2.26504.105",
-        "contentHash": "FhacRIFIHObbRYDOEY07cJ6lqoAPx56+RP4mIJqjHB8vMbdsaNA5RVOohdvod7lHXA3jCZUySGHoJwCq/Wufog==",
+        "requested": "[11.0.0-rc.3.26522.148, )",
+        "resolved": "11.0.0-rc.3.26522.148",
+        "contentHash": "ZAdY1XmFxNOp3ZN6x25tI7BrpBiYSNiD7dEJiUIQoOY43AA4b+MfJD1clvW0OMuDF3NiA6SNveVkBFA7mVfFyg==",
         "dependencies": {
           "Microsoft.IdentityModel.Protocols.OpenIdConnect": "8.19.2"
         }
