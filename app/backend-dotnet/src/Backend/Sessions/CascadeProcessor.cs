@@ -313,9 +313,10 @@ internal sealed class CascadeProcessor : IPipelineProcessor
                 {
                     data = JsonNode.Parse(frame.Payload) as JsonObject;
                 }
-                catch (JsonException ex)
+                catch (JsonException)
                 {
-                    _logger?.CascadeMalformedJson(ex, context.SessionId);
+                    // The exception text can embed the client's bytes (bad literals echo the rest of the frame).
+                    _logger?.CascadeMalformedJson(context.SessionId);
                     continue;
                 }
                 if (data is null)

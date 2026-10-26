@@ -1845,6 +1845,29 @@ public sealed class CascadeProcessorTests
     }
 
     [Fact]
+    public async Task RunSessionAsync_MalformedClientJsonIsLoggedWithoutTheClientsBytes()
+    {
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
+        var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
+        var logger = new RecordingLogger();
+        CascadeProcessor processor = NewProcessor(new RoutingFoundryHandler(), new StubToolExecutor(["search"]), loader, logger: logger);
+
+        // A bad literal makes the parser's message echo the rest of the frame, line break included.
+        byte[] forged = Encoding.UTF8.GetBytes("{\"type\": t\r\nFORGED log record");
+        var socket = new DelayedFakeWebSocket(
+            [(forged, WebSocketMessageType.Text), ([], WebSocketMessageType.Close)],
+            s_receiveDelay);
+
+        await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "forged-sess", TestContext.Current.CancellationToken);
+
+        var malformed = logger.Entries.Where(e => e.Message.Contains("Malformed JSON from cascade browser client", StringComparison.Ordinal)).ToList();
+        Assert.Single(malformed);
+        Assert.Null(malformed[0].Exception);
+        Assert.DoesNotContain(logger.Entries, e => e.Message.Contains("FORGED", StringComparison.Ordinal)
+            || e.Exception?.ToString().Contains("FORGED", StringComparison.Ordinal) == true);
+    }
+
+    [Fact]
     public async Task RunSessionAsync_NudgeFiresAfterSilenceFollowingAResumedRehydration()
     {
         (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
