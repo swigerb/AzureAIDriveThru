@@ -16,7 +16,7 @@ public sealed class LogSanitizerTests
 
     [Theory]
     [InlineData("")]
-    [InlineData("sonic")]
+    [InlineData("acme")]
     [InlineData("gpt-realtime-2.1-mini")]
     [InlineData("localhost:5173")]
     [InlineData("[::1]:5000")]
@@ -32,9 +32,9 @@ public sealed class LogSanitizerTests
     [Fact]
     public void Sanitize_ForgedLogLine_CannotStartAnotherRow()
     {
-        string result = LogSanitizer.Sanitize("sonic\r\nfail: Backend[0] forged entry");
+        string result = LogSanitizer.Sanitize("acme\r\nfail: Backend[0] forged entry");
 
-        Assert.Equal("sonic__fail: Backend[0] forged entry", result);
+        Assert.Equal("acme__fail: Backend[0] forged entry", result);
         Assert.DoesNotContain("\r", result, StringComparison.Ordinal);
         Assert.DoesNotContain("\n", result, StringComparison.Ordinal);
     }

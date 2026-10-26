@@ -180,7 +180,7 @@ public sealed class PersonaPackContentSecurityPolicyTests
               "$id": "https://github.com/org/repo/schema.json",
               "description": "See https://docs.example.com for details",
               "https://named.example.com": "plain value",
-              "logo": "/personas/sonic/assets/logo.svg"
+              "logo": "/personas/acme/assets/logo.svg"
             }
             """;
 

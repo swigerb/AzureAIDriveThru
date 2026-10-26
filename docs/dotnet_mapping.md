@@ -925,7 +925,7 @@ Why each allowance exists (checked against the shipped SPA, not assumed):
   `body[data-scroll-locked]` rules when a Radix dialog (Settings) opens. Confirmed by mutation:
   without it the Browser row fails with `style-src-elem` violations, two on load and three once
   Settings is open.
-- Google Fonts: a persona with `ui.theme.font.importUrl` (dunkin, mcdonalds, sonic; tacobell has
+- Google Fonts: a persona with `ui.theme.font.importUrl` (three of the shipped packs; one has
   none) gets a `<link id="persona-font-link">`, and `index.css` imports the same family. `font-src`
   has no `data:`.
 - `img-src 'self' data:`: persona logos are same-origin and the bundle inlines a few `data:` SVGs.
