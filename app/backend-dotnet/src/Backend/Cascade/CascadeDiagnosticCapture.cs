@@ -32,7 +32,7 @@ internal sealed class CascadeDiagnosticGate(IConfiguration configuration, TimePr
                 DateTimeStyles.AssumeUniversal, out DateTimeOffset expires)
             || expires <= now || expires - now > TimeSpan.FromMinutes(15))
         {
-            logger.LogWarning("Synthetic cascade diagnostics disabled: invalid or expired configuration.");
+            logger.CascadeDiagnosticsInvalidConfiguration();
             return null;
         }
         if (!entraMode || !authenticated
@@ -42,14 +42,14 @@ internal sealed class CascadeDiagnosticGate(IConfiguration configuration, TimePr
         {
             if (!string.IsNullOrEmpty(marker))
             {
-                logger.LogWarning("Synthetic cascade diagnostic request rejected: scope mismatch.");
+                logger.CascadeDiagnosticScopeMismatch();
             }
 
             return null;
         }
         if (Interlocked.CompareExchange(ref _claimed, 1, 0) != 0)
         {
-            logger.LogWarning("Synthetic cascade diagnostic request rejected: process claim already used.");
+            logger.CascadeDiagnosticClaimAlreadyUsed();
             return null;
         }
         var capture = new CascadeDiagnosticCapture(sessionId, expires, clock, logger);
@@ -58,7 +58,7 @@ internal sealed class CascadeDiagnosticGate(IConfiguration configuration, TimePr
     }
 }
 
-internal sealed class CascadeDiagnosticCapture(
+internal sealed partial class CascadeDiagnosticCapture(
     string sessionId, DateTimeOffset expires, TimeProvider clock, ILogger logger,
     Func<string, string>? sanitize = null)
 {
@@ -128,7 +128,7 @@ internal sealed class CascadeDiagnosticCapture(
     {
         if (Interlocked.Exchange(ref _stopped, 1) == 0)
         {
-            logger.LogWarning("Synthetic cascade diagnostic capture stopped: text frame limit reached.");
+            logger.CascadeDiagnosticStoppedFrameLimit();
         }
     }
 
@@ -261,7 +261,7 @@ internal sealed class CascadeDiagnosticCapture(
         {
             if (Interlocked.Exchange(ref _stopped, 1) == 0)
             {
-                logger.LogWarning("Synthetic cascade diagnostic capture stopped: expiry or event limit reached.");
+                logger.CascadeDiagnosticStoppedExpiryOrEventLimit();
             }
 
             return;
@@ -270,16 +270,17 @@ internal sealed class CascadeDiagnosticCapture(
         payload["responseId"] = ResponseId;
         payload["sequence"] = sequence;
         payload["stage"] = stage;
-        if (payload.ToJsonString().Length > 16000)
+        string diagnostic = payload.ToJsonString();
+        if (diagnostic.Length > 16000)
         {
             if (Interlocked.Exchange(ref _stopped, 1) == 0)
             {
-                logger.LogWarning("Synthetic cascade diagnostic capture stopped: payload limit reached.");
+                logger.CascadeDiagnosticStoppedPayloadLimit();
             }
 
             return;
         }
-        logger.LogInformation("Synthetic cascade diagnostic {Diagnostic}", payload.ToJsonString());
+        logger.CascadeDiagnosticCaptured(diagnostic);
     }
 
     private JsonArray ToolCalls(JsonArray? calls)
@@ -317,7 +318,7 @@ internal sealed class CascadeDiagnosticCapture(
         {
             if (Interlocked.Exchange(ref _stopped, 1) == 0)
             {
-                logger.LogWarning("Synthetic cascade diagnostic capture stopped: sanitization timed out.");
+                logger.CascadeDiagnosticStoppedSanitizationTimeout();
             }
         }
     }
@@ -327,11 +328,17 @@ internal sealed class CascadeDiagnosticCapture(
         // Do not retain arbitrary opaque values, URLs, addresses, codes or credentials echoed
         // into synthetic assistant speech. Arguments and non-assistant text never enter here.
         string value = text[..Math.Min(text.Length, 1200)];
-        value = Regex.Replace(value,
-            @"(?i)(?:https?://|www\.)\S+|\b[\w.+-]+@[\w.-]+\b|\bDEMO-[\w-]+\b|(?:\+?\d[\d ().-]{6,}\d)|\b(?=[A-Za-z0-9-]*\d)[A-Za-z0-9-]{4,}\b|\b[A-Za-z0-9_+/=-]{20,}\b",
-            "[redacted]", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
-        return Regex.Replace(value,
-            @"(?i)\b(?:code|token|password|secret|key|authorization)(?:\s*[:=]\s*|\s+)\S+",
-            "[redacted]", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+        value = OpaqueValueRegex().Replace(value, "[redacted]");
+        return CredentialRegex().Replace(value, "[redacted]");
     }
+
+    [GeneratedRegex(
+        @"(?i)(?:https?://|www\.)\S+|\b[\w.+-]+@[\w.-]+\b|\bDEMO-[\w-]+\b|(?:\+?\d[\d ().-]{6,}\d)|\b(?=[A-Za-z0-9-]*\d)[A-Za-z0-9-]{4,}\b|\b[A-Za-z0-9_+/=-]{20,}\b",
+        RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
+    private static partial Regex OpaqueValueRegex();
+
+    [GeneratedRegex(
+        @"(?i)\b(?:code|token|password|secret|key|authorization)(?:\s*[:=]\s*|\s+)\S+",
+        RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
+    private static partial Regex CredentialRegex();
 }

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net.WebSockets;
 using System.Text.Json.Nodes;
 using Backend.Cascade;
@@ -11,6 +12,8 @@ namespace Backend.Sessions;
 /// </summary>
 internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
 {
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Turn-cancel boundary: whatever the cancelled turn faulted with is logged; teardown and barge-in must proceed regardless.")]
     public async Task CancelCurrentTurnAsync(string reason)
     {
         Task? task;
@@ -49,6 +52,8 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         cts?.Dispose();
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Fire-and-forget barge-in tail: a failed speech_started send is logged and must never fault the background task.")]
     public void BargeIn()
     {
         Task? task;
@@ -88,6 +93,8 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         });
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Awaits an already-cancelled turn purely to drain it; any fault it ends with is logged, never rethrown.")]
     public async Task AwaitQuietlyAsync(Task? task)
     {
         if (task is null)
@@ -107,6 +114,8 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         }
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Fire-and-forget turn boundary: a faulted background turn is logged and must never surface as an unobserved task exception.")]
     public (CancellationTokenSource Cts, Task Task) Spawn(
         Func<CancellationToken, Task> body,
         string label)
@@ -190,6 +199,8 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         cts?.Dispose();
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Turn boundary: any chat-completion failure is logged and closed out with a failed response.done so the browser never waits on a dead turn.")]
     public async Task RunTurnAndSpeakAsync(CancellationToken turnCt, string? greetingInstructions = null)
     {
         string responseId = MiddleTierItemIds.NewId();
@@ -265,6 +276,8 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
             context.CancellationToken).ConfigureAwait(false);
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Turn boundary: any text-to-speech failure is logged and closed out with a failed response.done so the browser never waits on a dead turn.")]
     private async Task<bool> SendFinalTextAsync(string responseId, string finalText, CancellationToken turnCt)
     {
         await CascadeProcessor.SendTextAsync(context.BrowserSocket, new JsonObject
@@ -336,6 +349,8 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         }
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Turn boundary: any transcription failure is logged and releases the carried audio instead of faulting the turn.")]
     public async Task ProcessTurnAsync(byte[] turnAudio, CancellationToken turnCt)
     {
         if (turnAudio.Length == 0)
@@ -390,6 +405,8 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         await RunTurnAndSpeakAsync(turnCt).ConfigureAwait(false);
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Malformed persona greeting config can fail as a cast, null, or JSON type error; any failure is logged and skips the greeting.")]
     public async Task SendGreetingAsync(CancellationToken turnCt)
     {
         if (context.PromptLoader is null)

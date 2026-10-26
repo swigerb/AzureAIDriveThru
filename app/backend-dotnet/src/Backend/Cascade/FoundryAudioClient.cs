@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Http.Headers;
 using System.Text.Json.Nodes;
 using Backend.Realtime;
@@ -34,6 +35,10 @@ internal sealed class FoundryAudioClient(HttpClient httpClient, string endpoint,
     {
         byte[] wavBytes = WavEncoder.PcmToWav(pcm16Bytes, sampleRate);
 
+        // CA2000: each part is handed to the multipart content right after it is built (setting a
+        // constant Content-Type cannot throw); from then on MultipartFormDataContent owns it and
+        // disposes it with itself (the `using` below).
+#pragma warning disable CA2000
         using var content = new MultipartFormDataContent
         {
             { new StringContent(deployment), "model" },
@@ -41,6 +46,7 @@ internal sealed class FoundryAudioClient(HttpClient httpClient, string endpoint,
         var fileContent = new ByteArrayContent(wavBytes);
         fileContent.Headers.ContentType = new MediaTypeHeaderValue("audio/wav");
         content.Add(fileContent, "file", "turn.wav");
+#pragma warning restore CA2000
 
         using var request = new HttpRequestMessage(HttpMethod.Post, TranscriptionUrl(_endpoint, deployment))
         {
@@ -92,6 +98,8 @@ internal sealed class FoundryAudioClient(HttpClient httpClient, string endpoint,
         return await response.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Best-effort error-body read: any failure falls back to a status-code-only message.")]
     private static async Task<string> ReadBodySafelyAsync(HttpResponseMessage response, CancellationToken ct)
     {
         try

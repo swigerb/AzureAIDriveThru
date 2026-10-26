@@ -294,7 +294,7 @@ internal sealed class RealtimeClientRelay(RealtimeSessionContext context)
             context.Logger.VoiceDeferredToNextConversation(newVoice, context.SessionId);
             return;
         }
-        string voiceUpdate = context.State.Guard.Track(context.BuildVoiceUpdateFrame(newVoice).ToJsonString());
+        string voiceUpdate = context.State.Guard.Track(RealtimeSessionContext.BuildVoiceUpdateFrame(newVoice).ToJsonString());
         await FramePump.SendTextAsync(context.Upstream, voiceUpdate, context.CancellationToken).ConfigureAwait(false);
     }
 }

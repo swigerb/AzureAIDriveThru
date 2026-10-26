@@ -159,7 +159,7 @@ internal sealed class RealtimeServerRelay(RealtimeSessionContext context)
         List<string> ToolNames,
         List<string> SpokenParts);
 
-    private FilteredResponseOutput FilterResponseOutput(JsonObject response, JsonArray output)
+    private static FilteredResponseOutput FilterResponseOutput(JsonObject response, JsonArray output)
     {
         bool isToolCallResponse = false;
         var toolNames = new List<string>();
@@ -191,7 +191,7 @@ internal sealed class RealtimeServerRelay(RealtimeSessionContext context)
         return new FilteredResponseOutput(isToolCallResponse, toolNames, spokenParts);
     }
 
-    private void AddSpokenParts(JsonArray contentParts, List<string> spokenParts)
+    private static void AddSpokenParts(JsonArray contentParts, List<string> spokenParts)
     {
         foreach (JsonNode? part in contentParts)
         {

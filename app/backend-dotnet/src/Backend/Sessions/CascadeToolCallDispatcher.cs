@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Backend.Cascade;
@@ -21,7 +22,7 @@ internal sealed class CascadeToolCallDispatcher(
     {
         if (context.Diagnostic is { } diagnostic && diagnostic.SessionId != context.SessionId)
         {
-            context.Logger.LogWarning("Synthetic cascade diagnostics disabled: session binding changed.");
+            context.Logger.CascadeDiagnosticsDisabledSessionBindingChanged();
             context.Diagnostic = null;
         }
         return await CascadeRateLimit.WithRetryAsync(
@@ -32,6 +33,8 @@ internal sealed class CascadeToolCallDispatcher(
             context.TimeProvider).ConfigureAwait(false);
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Tool boundary: any tool or argument-parse failure is logged and becomes a synthetic tool message plus a ticket refresh so the turn still completes; barge-in cancellation is rethrown by the clause above.")]
     private async Task ExecuteToolCallAsync(JsonObject toolCall, string previousItemId, CancellationToken turnCt)
     {
         string callId = CascadeProcessor.GetString(toolCall, "id") ?? "";
@@ -123,6 +126,8 @@ internal sealed class CascadeToolCallDispatcher(
         }
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Best-effort ticket read through IOrderTicketSource, whose implementations can fail in any way; the failure is logged and the refresh is skipped.")]
     private async Task RefreshTicketAsync(string previousItemId, CancellationToken turnCt)
     {
         if (context.ToolExecutor is not IOrderTicketSource ticketSource)

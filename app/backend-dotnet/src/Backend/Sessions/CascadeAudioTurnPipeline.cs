@@ -72,12 +72,11 @@ internal sealed class CascadeAudioTurnPipeline(
                 for (int offset = 0; offset < pcm.Length; offset += CascadeProcessor.TtsChunkBytes)
                 {
                     int chunkLength = Math.Min(CascadeProcessor.TtsChunkBytes, pcm.Length - offset);
-                    byte[] chunk = pcm.AsSpan(offset, chunkLength).ToArray();
                     await CascadeProcessor.SendTextAsync(browserSocket, new JsonObject
                     {
                         ["type"] = "response.audio.delta",
                         ["response_id"] = responseId,
-                        ["delta"] = Convert.ToBase64String(chunk),
+                        ["delta"] = Convert.ToBase64String(pcm, offset, chunkLength),
                     }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
                 }
             },

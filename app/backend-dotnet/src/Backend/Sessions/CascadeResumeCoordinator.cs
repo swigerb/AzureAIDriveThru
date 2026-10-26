@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net.WebSockets;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -145,6 +146,8 @@ internal sealed class CascadeResumeCoordinator(CascadeSessionContext context)
         return false;
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Best-effort order read through IOrderTicketSource, whose implementations can fail in any way; the failure is logged and an empty summary is used.")]
     private string SafeOrderSummaryJson(IOrderTicketSource source)
     {
         try

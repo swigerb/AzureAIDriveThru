@@ -2,7 +2,7 @@ namespace Backend.Sessions;
 
 /// <summary>
 /// Source-generated <see cref="ILogger"/> partial methods for <see cref="FramePump"/>. These
-/// three moved here verbatim from <see cref="RealtimeProcessor.Log"/> as part of issue #338's
+/// three moved here verbatim from <c>RealtimeProcessor.Log.cs</c> as part of issue #338's
 /// extraction -- same message templates, same levels, same EventIds (1038-1040, grandfathered
 /// from RealtimeProcessor's reserved 1000-1999 range rather than renumbered), because the
 /// conformance suite matches on log text and moving a log call must never change either.
