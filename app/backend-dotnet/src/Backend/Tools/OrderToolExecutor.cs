@@ -109,7 +109,7 @@ internal sealed partial class OrderToolExecutor : IToolExecutor, IOrderSessionSe
         // menu's own canonical name happening to contain parens (e.g. "Milk Jug (1%) - White").
         string? customizationSuffix = "";
 
-        if (action is "add" or "modify")
+        if (action is "add" or "modify" or "replace")
         {
             ToolResult? rejection = CheckAddOrModifyGates(action, ref itemName, ref size, out customizationSuffix);
             if (rejection is not null)
@@ -131,7 +131,7 @@ internal sealed partial class OrderToolExecutor : IToolExecutor, IOrderSessionSe
             (itemName, customizationSuffix) = CanonicalizeForRemove(itemName);
         }
 
-        if (action == "add")
+        if (action is "add" or "replace")
         {
             ToolResult? machineRejection = CheckMachineAvailability(itemName);
             if (machineRejection is not null)
@@ -183,7 +183,38 @@ internal sealed partial class OrderToolExecutor : IToolExecutor, IOrderSessionSe
         int beforeRemoveQuantity = _menu.SpeechStyle == "naturalDriveThru" && action == "remove"
             ? _order.Items.Where(i => i.Item == itemName && i.Size == _menu.CanonicalSizeKey(size)).Sum(i => i.Quantity)
             : 0;
-        OrderUpdateResult resultInfo = _order.HandleOrderUpdate(action, itemName, size, quantity, callerPrice);
+        string? originalItemName = null;
+        int? comboIndex = null;
+        if (action == "replace")
+        {
+            if (args.TryGetProperty("original_item_name", out JsonElement original) && original.ValueKind == JsonValueKind.String)
+            {
+                (originalItemName, _) = CanonicalizeForRemove(original.GetString() ?? "");
+            }
+            if (args.TryGetProperty("combo_index", out JsonElement selector) && selector.ValueKind != JsonValueKind.Null)
+            {
+                comboIndex = selector.ValueKind == JsonValueKind.Number && selector.TryGetInt32(out int index) ? index : -1;
+            }
+        }
+        OrderUpdateResult resultInfo = _order.HandleOrderUpdate(action, itemName, size, quantity, callerPrice, originalItemName, comboIndex);
+        if (resultInfo.ReplacementRejected is { } replacementReason)
+        {
+            string message = replacementReason switch
+            {
+                "invalid_replacement" => "Nothing changed. To replace one included side or drink, provide original_item_name and quantity 1.",
+                "incompatible_replacement" => "Nothing changed. The replacement must be a menu item for the same included side or drink slot, not an extra.",
+                "ambiguous_replacement" => "Nothing changed. More than one combo contains that item. Call get_order, clarify which meal the guest means, then supply its zero-based ticket line as combo_index.",
+                _ => "Nothing changed. That exact item is not filling a combo slot. Call get_order and clarify which included item to replace; do not add an extra item instead.",
+            };
+            return new ToolResult(new Dictionary<string, object?>
+            {
+                ["status"] = "rejected",
+                ["item_added"] = false,
+                ["reason"] = replacementReason,
+                ["item_name"] = itemName,
+                ["message"] = message,
+            }, ToolResultDirection.ToServer);
+        }
 
         // PR #184 round 4 (Rick's review, item 3): a "wholeBundleSize" pack's
         // ComboComponentResizeRejected flag means NOTHING was mutated (OrderState.
@@ -439,7 +470,7 @@ internal sealed partial class OrderToolExecutor : IToolExecutor, IOrderSessionSe
         // persona with no features.dayparts always resolves menuMode to null, and
         // MenuCatalog.ItemAvailableNow is a no-op (returns true) for a null active mode -- so
         // this block never rejects anything for those packs.
-        if (action == "add" && !_menu.ItemAvailableNow(itemName, _menuMode))
+        if (action is "add" or "replace" && !_menu.ItemAvailableNow(itemName, _menuMode))
         {
             string message = _promptLoader?.RenderError(
                 "item_out_of_mode", Vars(("item_name", menuItem.Name), ("mode_label", menuItem.MenuPeriod ?? "")))
@@ -757,6 +788,12 @@ internal sealed partial class OrderToolExecutor : IToolExecutor, IOrderSessionSe
         string spokenItemName = _menu.Spoken(itemName);
         string spokenDisplayName = _menu.Spoken(displayName);
 
+        if (resultInfo.ReplacedFromItem is { } originalItem)
+        {
+            string upchargeText = resultInfo.ComboComponentUpchargeDisplay is { Length: > 0 } upcharge
+                ? $" with a {upcharge} upcharge" : "";
+            return $"Replaced {_menu.Spoken(originalItem)} with {spokenDisplayName} in your combo{upchargeText} — your total is now {summary.FinalTotalSpoken}";
+        }
         if (resultInfo.AbsorbedIntoCombo)
         {
             return resultInfo.ComboComponentUpchargeDisplay is { Length: > 0 } upcharge

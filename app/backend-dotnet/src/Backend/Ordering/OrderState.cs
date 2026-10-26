@@ -43,6 +43,8 @@ internal sealed class OrderUpdateResult
     // than removing a raw order line.
     public string? VacatedComboComponent { get; set; }
     public string? VacatedDisplay { get; set; }
+    public string? ReplacedFromItem { get; set; }
+    public string? ReplacementRejected { get; set; }
 }
 
 /// <summary>Result of <see cref="OrderState.GetComboRequirements"/> -- mirrors order_state.py's
@@ -253,7 +255,8 @@ internal sealed class OrderState
     /// (#104) and never trusting <paramref name="callerPrice"/> except as a fallback when the menu
     /// has no price on file at all, and always ending by recomputing <see cref="Summary"/>.</summary>
     public OrderUpdateResult HandleOrderUpdate(
-        string action, string itemName, string size, int quantity, decimal? callerPrice)
+        string action, string itemName, string size, int quantity, decimal? callerPrice,
+        string? originalItemName = null, int? comboIndex = null)
     {
         lock (_mutationLock)
         {
@@ -262,12 +265,12 @@ internal sealed class OrderState
                 throw new InvalidOperationException("Reset the completed demo order before changing it.");
             }
 
-            return HandleOrderUpdateCore(action, itemName, size, quantity, callerPrice);
+            return HandleOrderUpdateCore(action, itemName, size, quantity, callerPrice, originalItemName, comboIndex);
         }
     }
 
     private OrderUpdateResult HandleOrderUpdateCore(
-        string action, string itemName, string size, int quantity, decimal? callerPrice)
+        string action, string itemName, string size, int quantity, decimal? callerPrice, string? originalItemName, int? comboIndex)
     {
         var result = new OrderUpdateResult();
 
@@ -300,6 +303,9 @@ internal sealed class OrderState
                 break;
             case "remove":
                 HandleRemove(itemName, size, quantity, result);
+                break;
+            case "replace":
+                HandleReplace(itemName, size, quantity, display, originalItemName, comboIndex, result);
                 break;
         }
 
@@ -698,6 +704,53 @@ internal sealed class OrderState
             SetComponentUpchargeResult(result, itemName, size);
             break;
         }
+    }
+
+    private void HandleReplace(
+        string itemName, string size, int quantity, string display, string? originalItemName, int? comboIndex, OrderUpdateResult result)
+    {
+        if (quantity != 1 || string.IsNullOrWhiteSpace(originalItemName) || comboIndex < 0)
+        {
+            result.ReplacementRejected = "invalid_replacement";
+            return;
+        }
+        string component = _menu.InferComboComponent(itemName);
+        if (component is not ("sides" or "drinks") || _menu.IsExtraItem(itemName) ||
+            _menu.InferComboComponent(originalItemName) != component)
+        {
+            result.ReplacementRejected = "incompatible_replacement";
+            return;
+        }
+        // Match a filled slot explicitly; never fall back to a vacant slot or a standalone add.
+        var matches = _items.Select((combo, line) => (Combo: combo, Line: line))
+            .Where(candidate => comboIndex is null || candidate.Line == comboIndex)
+            .Where(candidate => candidate.Combo.BundleSlots.TryGetValue(component, out List<BundleSlot>? slots) &&
+                slots.Any(slot => slot.Item == originalItemName))
+            .ToList();
+        if (matches.Count > 1)
+        {
+            result.ReplacementRejected = "ambiguous_replacement";
+            return;
+        }
+        if (matches.Count == 1)
+        {
+            OrderItem combo = matches[0].Combo;
+            List<BundleSlot> slots = combo.BundleSlots[component];
+            int index = slots.FindIndex(slot => slot.Item == originalItemName);
+            (bool accepted, bool _, OrderItem updated) = FillBundleComponent(combo, index, component, itemName, size, display);
+            if (!accepted)
+            {
+                result.ComboComponentResizeRejected = component;
+                result.ComboComponentResizeRejectedBundle = combo.Item;
+                result.ComboComponentResizeRejectedBundleSize = combo.Size;
+                return;
+            }
+            result.ReplacedFromItem = originalItemName;
+            result.ComboDisplay = updated.Display;
+            SetComponentUpchargeResult(result, itemName, size);
+            return;
+        }
+        result.ReplacementRejected = "replacement_target_not_found";
     }
 
     private void HandleRemove(string itemName, string size, int quantity, OrderUpdateResult result)

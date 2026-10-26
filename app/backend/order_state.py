@@ -787,7 +787,8 @@ class OrderState:
                         return True
         return False
 
-    def handle_order_update(self, session_id: str, action: str, item_name: str, size: str, quantity: int, price: float) -> dict:
+    def handle_order_update(self, session_id: str, action: str, item_name: str, size: str, quantity: int, price: float,
+                            original_item_name: str | None = None, combo_index: int | None = None) -> dict:
         self._check_owner(session_id)
         if self.rewards_completed(session_id):
             raise ValueError("Reset the completed demo order before changing it.")
@@ -1250,6 +1251,46 @@ class OrderState:
                         "Modify requested for '%s' but it isn't in the order for session %s -- no-op",
                         item_name, session_id,
                     )
+
+        elif action == "replace":
+            if quantity != 1 or not isinstance(original_item_name, str) or not original_item_name.strip() or (
+                combo_index is not None and (type(combo_index) is not int or combo_index < 0)
+            ):
+                result_info["replacement_rejected"] = "invalid_replacement"
+            else:
+                component = menu.infer_combo_component(item_name)
+                if component not in ("sides", "drinks") or menu.is_extra_item(item_name) or (
+                    menu.infer_combo_component(original_item_name) != component
+                ):
+                    result_info["replacement_rejected"] = "incompatible_replacement"
+                else:
+                    # Only a filled, explicitly named slot can be replaced, never a standalone line.
+                    matches = [
+                        (combo, next(index for index, slot in enumerate(combo._bundle_slots[component])
+                                     if slot.get("item") == original_item_name))
+                        for line, combo in enumerate(order_state)
+                        if (combo_index is None or combo_index == line) and
+                        any(slot.get("item") == original_item_name for slot in combo._bundle_slots.get(component, []))
+                    ]
+                    if not matches:
+                        result_info["replacement_rejected"] = "replacement_target_not_found"
+                    elif len(matches) > 1:
+                        result_info["replacement_rejected"] = "ambiguous_replacement"
+                    else:
+                        combo, index = matches[0]
+                        accepted, _, updated = self._fill_bundle_component(
+                            order_state, combo, index, menu, component, item_name, size, display,
+                        )
+                        if accepted:
+                            result_info["replaced_from_item"] = original_item_name
+                            result_info["combo_display"] = updated.display
+                            upcharge = self._component_upcharge(menu, item_name, size)
+                            if upcharge > 0:
+                                result_info["combo_component_upcharge_display"] = format_money_spoken(upcharge)
+                        else:
+                            result_info["combo_component_resize_rejected"] = component
+                            result_info["combo_component_resize_rejected_bundle"] = combo.item
+                            result_info["combo_component_resize_rejected_bundle_size"] = combo.size
 
         elif action == "remove":
             remaining = quantity

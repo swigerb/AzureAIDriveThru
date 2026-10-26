@@ -454,6 +454,31 @@ against the bound persona pack first.
     (real "modify a Happy Meal to a large" flow) and
     any future pack's own `modify`-listing tool schema route through -- there is no persona-specific
     `modify` variant.
+  - **Atomic included-component replacement (both backends, realtime and cascade).**
+    `update_order` action `replace` takes the NEW `item_name` and `size`, the exact OLD
+    `original_item_name` from `get_order`, and `quantity: 1`. It replaces the first filled matching
+    physical combo side/drink slot, not a standalone line. Multiple matching lines require
+    clarification and an explicit `combo_index` (zero-based `get_order.items` index); otherwise
+    `ambiguous_replacement` rejects the call unchanged. One of identical units on that line changes.
+    Both names are canonicalized, and the replacement must pass menu, size, daypart, machine and
+    customization validation and have the same `comboSlot` as the original (never an extra).
+    Validation happens before mutation; no remove/add gap or duplicate standalone charge is exposed.
+    Missing targets, incompatible slots and invalid replacement arguments return structured
+    `replacement_target_not_found`, `incompatible_replacement` or `invalid_replacement` rejections.
+    Existing bundle pricing/splitting rules are reused: Sonic's Medium components are included,
+    positive size deltas are charged from the new item's own prices, and a Standard-only special
+    such as Medium Cherry Flavor Bubble Slush stays Standard and adds no invented upcharge.
+    An ordinary `add` of a different drink to a full combo still means an extra standalone drink;
+    `modify` still means resize, not rename. Food-line substitutions retain their existing contracts.
+  - **Finish intent takes precedence over open-order prompts.** Sonic, McDonald's and Dunkin
+    previously required "Anything else?" unconditionally. Their shared prompt packs now scope that
+    question and upsells to active ordering: an explicit finish calls `get_order` once, reads back
+    the current order/total once and gives the persona's handoff. Repeated finish intent without a
+    change gets only a brief farewell, not another read-back, tool call or question. Late changes
+    remain editable and get a fresh closing. This is a model instruction contract, not a
+    server-side transcript filter or purchase/completion action. Local fake callers verify tool
+    dispatch, schema/instructions and ticket state; live speech adherence still requires an
+    explicitly authorized model session.
 - **Every keyword fallback is removed** (combo slot, happy hour and category), along with the `offMenu` schema
   block (#73). That removes the whole class of substring bugs ("tea" in "steak") for every persona.
 - **Menus must be complete.** Every brand's `menuItems.json` is completed from its source data before the
