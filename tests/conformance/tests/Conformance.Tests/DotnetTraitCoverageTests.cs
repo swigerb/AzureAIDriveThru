@@ -887,13 +887,14 @@ public sealed class DotnetTraitCoverageTests
 #pragma warning disable xUnit1000 // test class must be public -- intentionally non-public, see above
 #pragma warning disable xUnit1026 // unused Theory parameter -- the parameter is never bound, see above
 #pragma warning disable xUnit1015 // MemberData must reference an existing member -- that's the point of UnresolvableSource
+#pragma warning disable IDE0060 // unused parameter -- the Theory parameter is never bound, see above
     private abstract class ZeroRowGuardFixtures
     {
-        public static IEnumerable<object[]> EmptyProperty => [];
+        public static TheoryData<int> EmptyProperty => [];
 
-        public static readonly IEnumerable<object[]> EmptyField = [];
+        public static readonly TheoryData<int> EmptyField = [];
 
-        public static IEnumerable<object[]> NonEmptyProperty => [[1]];
+        public static TheoryData<int> NonEmptyProperty => [1];
 
         [Theory(SkipTestWithoutData = true)]
         [MemberData(nameof(EmptyProperty))]
@@ -911,6 +912,7 @@ public sealed class DotnetTraitCoverageTests
         [MemberData("DoesNotExist")]
         public void UnresolvableSource(int value) { }
     }
+#pragma warning restore IDE0060
 #pragma warning restore xUnit1015
 #pragma warning restore xUnit1026
 #pragma warning restore xUnit1000

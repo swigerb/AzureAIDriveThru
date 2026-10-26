@@ -121,7 +121,7 @@ public static class ComboBundleDiscovery
     /// <summary>This pack's own persona.json `machines` block entries currently reported `"down"`
     /// -- mirrors <see cref="GoldenMenuCategoryData.LoadCurrentlyDownMachines"/>, generalized to any
     /// pack id instead of a hardcoded single pack name.</summary>
-    private static IReadOnlySet<string> CurrentlyDownMachines(string personasDir, string personaId)
+    private static HashSet<string> CurrentlyDownMachines(string personasDir, string personaId)
     {
         string personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
         using var doc = JsonDocument.Parse(File.ReadAllText(personaJsonPath));
@@ -196,7 +196,7 @@ public static class ComboBundleDiscovery
         return size;
     }
 
-    private static IReadOnlyList<CandidateItem> ReadMenuItems(string personasDir, string personaId)
+    private static List<CandidateItem> ReadMenuItems(string personasDir, string personaId)
     {
         string menuItemsPath = Path.Combine(personasDir, personaId, "menu", "menuItems.json");
         using var doc = JsonDocument.Parse(File.ReadAllText(menuItemsPath));
@@ -267,12 +267,12 @@ public static class ComboBundleDiscovery
             return null;
         }
 
-        IReadOnlyList<CandidateItem> items = ReadMenuItems(personasDir, personaId);
+        List<CandidateItem> items = ReadMenuItems(personasDir, personaId);
 
         static bool IsMachineGated(CandidateItem item, IReadOnlySet<string> downMachines) =>
             item.RequiresMachine is { } machine && downMachines.Contains(machine);
 
-        IReadOnlySet<string> downMachines = CurrentlyDownMachines(personasDir, personaId);
+        HashSet<string> downMachines = CurrentlyDownMachines(personasDir, personaId);
 
         foreach (CandidateItem? bundleItem in items.Where(i => i.BundleSlots is not null))
         {
@@ -359,12 +359,12 @@ public static class ComboBundleDiscovery
             return null;
         }
 
-        IReadOnlyList<CandidateItem> items = ReadMenuItems(personasDir, personaId);
+        List<CandidateItem> items = ReadMenuItems(personasDir, personaId);
 
         static bool IsMachineGated(CandidateItem item, IReadOnlySet<string> downMachines) =>
             item.RequiresMachine is { } machine && downMachines.Contains(machine);
 
-        IReadOnlySet<string> downMachines = CurrentlyDownMachines(personasDir, personaId);
+        HashSet<string> downMachines = CurrentlyDownMachines(personasDir, personaId);
 
         var openDrinkBundles = items
             .Where(i => i.BundleSlots is not null
@@ -438,8 +438,8 @@ public static class ComboBundleDiscovery
             return null;
         }
 
-        IReadOnlyList<CandidateItem> items = ReadMenuItems(personasDir, personaId);
-        IReadOnlySet<string> downMachines = CurrentlyDownMachines(personasDir, personaId);
+        List<CandidateItem> items = ReadMenuItems(personasDir, personaId);
+        HashSet<string> downMachines = CurrentlyDownMachines(personasDir, personaId);
 
         foreach (CandidateItem? bundleItem in items.Where(i => i.BundleSlots is not null))
         {
@@ -488,8 +488,8 @@ public static class ComboBundleDiscovery
             return null;
         }
 
-        IReadOnlyList<CandidateItem> items = ReadMenuItems(personasDir, personaId);
-        IReadOnlySet<string> downMachines = CurrentlyDownMachines(personasDir, personaId);
+        List<CandidateItem> items = ReadMenuItems(personasDir, personaId);
+        HashSet<string> downMachines = CurrentlyDownMachines(personasDir, personaId);
 
         foreach (CandidateItem? bundleItem in items.Where(i => i.BundleSlots is not null))
         {
@@ -689,7 +689,7 @@ public sealed class ComboComponentResizeConformanceTests
     private static void AssertResizedComboOnlyNoStandaloneDrink(
         ComboBundleDiscovery.BundleResizeCase bundleCase, string orderSummaryJson)
     {
-        JsonElement order = JsonDocument.Parse(orderSummaryJson).RootElement;
+        var order = JsonElement.Parse(orderSummaryJson);
         var items = order.GetProperty("items").EnumerateArray().ToList();
 
         Assert.Single(items); // exactly one combo line, never a standalone drink duplicate
@@ -747,7 +747,7 @@ public sealed class ComboComponentResizeConformanceTests
     // guard above instead of being silently skipped.
     [Theory(SkipTestWithoutData = true)]
     [Trait("Dotnet", "ready")]
-    [MemberData(nameof(DiscoveredBundleResizeCases))]
+    [MemberData(nameof(DiscoveredBundleResizeCases), DisableDiscoveryEnumeration = true)]
     public async Task Discovered_pack_resizes_the_combo_drink_via_remove_then_add(
         ComboBundleDiscovery.BundleResizeCase bundleCase)
     {
@@ -780,7 +780,7 @@ public sealed class ComboComponentResizeConformanceTests
     // comment above -- re-tagged `ready` for the same reason (fixture pack + floor guard).
     [Theory(SkipTestWithoutData = true)]
     [Trait("Dotnet", "ready")]
-    [MemberData(nameof(DiscoveredBundleResizeCases))]
+    [MemberData(nameof(DiscoveredBundleResizeCases), DisableDiscoveryEnumeration = true)]
     public async Task Discovered_pack_resizes_the_combo_drink_via_explicit_modify(
         ComboBundleDiscovery.BundleResizeCase bundleCase)
     {
@@ -816,7 +816,7 @@ public sealed class ComboComponentResizeConformanceTests
     // comment above -- re-tagged `ready` for the same reason (fixture pack + floor guard).
     [Theory(SkipTestWithoutData = true)]
     [Trait("Dotnet", "ready")]
-    [MemberData(nameof(DiscoveredBundleResizeCases))]
+    [MemberData(nameof(DiscoveredBundleResizeCases), DisableDiscoveryEnumeration = true)]
     public async Task Discovered_pack_charges_the_same_total_large_up_front_or_resized_later(
         ComboBundleDiscovery.BundleResizeCase bundleCase)
     {
@@ -914,7 +914,7 @@ public sealed class ComboComponentResizeConformanceTests
     // distinctly-named bundle gives DiscoverTwoInstance a real row too).
     [Theory(SkipTestWithoutData = true)]
     [Trait("Dotnet", "ready")]
-    [MemberData(nameof(DiscoveredTwoInstanceResizeCases))]
+    [MemberData(nameof(DiscoveredTwoInstanceResizeCases), DisableDiscoveryEnumeration = true)]
     public async Task Discovered_pack_with_two_bundle_instances_resizes_only_the_holder(
         ComboBundleDiscovery.TwoInstanceCase twoCase)
     {
@@ -942,7 +942,7 @@ public sealed class ComboComponentResizeConformanceTests
             ToolCallResult seeded = await OrderScenarioHelpers.RunOrderStepsAsync(
                 connection, browser, seedSteps, roundTripIndex, ct, callIdPrefix: "call_seed_two");
 
-            var seededItems = JsonDocument.Parse(seeded.ToolResultJson!).RootElement
+            var seededItems = JsonElement.Parse(seeded.ToolResultJson!)
                 .GetProperty("items").EnumerateArray().ToList();
             Assert.Equal(2, seededItems.Count);
 
@@ -957,7 +957,7 @@ public sealed class ComboComponentResizeConformanceTests
                 [("modify", twoCase.DrinkToSize.Name, twoCase.DrinkToSize.Size, 1, twoCase.DrinkToSize.Price)],
                 seeded.RoundTripIndex, ct, callIdPrefix: "call_resize_holder");
 
-            var items = JsonDocument.Parse(result.ToolResultJson!).RootElement
+            var items = JsonElement.Parse(result.ToolResultJson!)
                 .GetProperty("items").EnumerateArray().ToList();
             Assert.Equal(2, items.Count);
 
@@ -1027,7 +1027,7 @@ public sealed class WholeBundleSizeResizeConformanceTests
 
     [Theory]
     [Trait("Dotnet", "ready")]
-    [MemberData(nameof(DiscoveredWholeBundleResizeCases))]
+    [MemberData(nameof(DiscoveredWholeBundleResizeCases), DisableDiscoveryEnumeration = true)]
     public async Task Discovered_whole_bundle_size_pack_resizes_the_meal_and_relabels_its_slots(
         ComboBundleDiscovery.WholeBundleResizeCase bundleCase)
     {
@@ -1059,7 +1059,7 @@ public sealed class WholeBundleSizeResizeConformanceTests
                 [("modify", bundleCase.BundleName, bundleCase.ToSize, 1, bundleCase.ToPrice)],
                 seeded.RoundTripIndex, ct, callIdPrefix: "call_resize_meal");
 
-            JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+            var order = JsonElement.Parse(result.ToolResultJson!);
             var items = order.GetProperty("items").EnumerateArray().ToList();
             Assert.Single(items); // the meal resize is one line, never split into a second one
 
@@ -1097,7 +1097,7 @@ public sealed class WholeBundleSizeResizeConformanceTests
 
     [Theory]
     [Trait("Dotnet", "ready")]
-    [MemberData(nameof(DiscoveredWholeBundleFirstAbsorptionCases))]
+    [MemberData(nameof(DiscoveredWholeBundleFirstAbsorptionCases), DisableDiscoveryEnumeration = true)]
     public async Task Discovered_whole_bundle_size_pack_first_absorption_is_path_independent(
         ComboBundleDiscovery.WholeBundleFirstAbsorptionCase bundleCase)
     {

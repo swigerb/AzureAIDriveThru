@@ -15,15 +15,15 @@ namespace Conformance.Tests;
 /// exemption to an explicit allow-list of the two known-legitimate splice sites, by
 /// <c>(file name, exact trimmed line)</c>, rather than "this file mentions the helper somewhere".
 /// </summary>
-public static class RealtimeUriLiteralScanner
+public static partial class RealtimeUriLiteralScanner
 {
     // Matches a `/realtime` path segment ending a request URI (or the start of one, in an
     // interpolated string) -- immediately followed by `?` (a query string), a closing `"` (the
     // bare path with nothing after it), or `{` (an interpolation hole appended right after it) --
     // but NOT the fake upstream server's own `/openai/v1/realtime` path (a completely different
     // endpoint, on a completely different fake process, that never needs the backend's auth).
-    private static readonly Regex s_realtimePathLiteral =
-        new(@"(?<!openai/v1)/realtime(?=[?""{]|$)", RegexOptions.Compiled);
+    [GeneratedRegex(@"(?<!openai/v1)/realtime(?=[?""{]|$)")]
+    private static partial Regex RealtimePathLiteral { get; }
 
     /// <summary>
     /// The only known-legitimate hand-spliced <c>/realtime</c> request lines in the whole
@@ -37,7 +37,7 @@ public static class RealtimeUriLiteralScanner
     /// a raw <see cref="System.Net.Sockets.TcpClient"/> handshake (mirroring
     /// <c>HeartbeatPongSurvivalTests.cs</c>'s own splice exactly) specifically to send a custom,
     /// deliberately portless <c>Host:</c> header that <see cref="System.Net.WebSockets.ClientWebSocket"/>
-    /// can't be made to forge. Anything else that matches <see cref="s_realtimePathLiteral"/> is a
+    /// can't be made to forge. Anything else that matches <see cref="RealtimePathLiteral"/> is a
     /// violation, full stop -- adding a new legitimate site requires adding it here explicitly, by
     /// exact trimmed line text, so a typo'd or credential-less near-miss still fails loudly instead
     /// of silently matching a loose pattern.
@@ -73,7 +73,7 @@ public static class RealtimeUriLiteralScanner
         for (int i = 0; i < lines.Count; i++)
         {
             string line = lines[i];
-            if (!s_realtimePathLiteral.IsMatch(line))
+            if (!RealtimePathLiteral.IsMatch(line))
             {
                 continue;
             }

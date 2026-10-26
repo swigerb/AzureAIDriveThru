@@ -75,7 +75,7 @@ public sealed class AuthRowLoggingTests(ConformanceFixture fixture)
         // that reads too early passes not because nothing leaked, but because the evidence simply
         // wasn't there yet to catch it.
         bool accessLineLogged = await backend.WaitForDiagnosticsAsync(
-            d => d.Contains("/realtime", StringComparison.Ordinal), TimeSpan.FromSeconds(10), ct, sinceWatermark: watermark)
+            d => d.Contains("/realtime", StringComparison.Ordinal), TimeSpan.FromSeconds(10), sinceWatermark: watermark, cancellationToken: ct)
             .ConfigureAwait(false);
         Assert.True(accessLineLogged,
             $"Row 14: expected the backend's captured stdout/stderr to eventually contain a \"/realtime\" " +

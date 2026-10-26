@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -24,8 +25,7 @@ public sealed class FakeSearchServer : IAsyncDisposable
 {
     private readonly IReadOnlyDictionary<string, string> _indexNameToMenuItemsJsonPath;
     private WebApplication? _app;
-    private IReadOnlyDictionary<string, IReadOnlyList<MenuDocument>> _documentsByIndex =
-        new Dictionary<string, IReadOnlyList<MenuDocument>>(StringComparer.Ordinal);
+    private Dictionary<string, IReadOnlyList<MenuDocument>> _documentsByIndex = [with(StringComparer.Ordinal)];
 
     public FrameLog ReceivedRequests { get; } = new();
 
@@ -117,14 +117,16 @@ public sealed class FakeSearchServer : IAsyncDisposable
         _indexNameToMenuItemsJsonPath = indexNameToMenuItemsJsonPath;
     }
 
-    public async Task StartAsync(CancellationToken cancellationToken = default, int? fixedPort = null)
+    public Task StartAsync(CancellationToken cancellationToken = default) => StartAsync(fixedPort: null, cancellationToken);
+
+    public async Task StartAsync(int? fixedPort, CancellationToken cancellationToken = default)
     {
         _documentsByIndex = _indexNameToMenuItemsJsonPath.ToDictionary(
             kv => kv.Key, kv => MenuIndex.Load(kv.Value), StringComparer.Ordinal);
 
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
-        builder.WebHost.UseUrls($"http://127.0.0.1:{fixedPort?.ToString() ?? "0"}");
+        builder.WebHost.UseUrls($"http://127.0.0.1:{fixedPort?.ToString(CultureInfo.InvariantCulture) ?? "0"}");
         WebApplication app = builder.Build();
         app.MapGet("/", () => Results.Ok());
         app.MapPost("/indexes('{indexName}')/docs/search.post.search", HandleSearchAsync);

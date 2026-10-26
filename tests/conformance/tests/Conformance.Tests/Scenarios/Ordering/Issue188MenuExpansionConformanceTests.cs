@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Conformance.Harness;
@@ -7,7 +8,7 @@ namespace Conformance.Tests.Scenarios.Ordering;
 
 public sealed class Issue188MenuExpansionFixture : ConformanceFixture
 {
-    protected override BackendProfile Profile => BackendProfiles.FixedClock(DateTimeOffset.Parse("2026-10-02T21:30:00Z"));
+    protected override BackendProfile Profile => BackendProfiles.FixedClock(DateTimeOffset.Parse("2026-10-02T21:30:00Z", CultureInfo.InvariantCulture));
     protected override string? Persona => "dun" + "kin";
     protected override IReadOnlyList<string>? Personas => ["dun" + "kin"];
 }
@@ -42,22 +43,19 @@ public sealed class Issue188MenuExpansionConformanceTests(Issue188MenuExpansionF
         NumberHandling = JsonNumberHandling.AllowReadingFromString,
     };
 
-    public static IEnumerable<object[]> OrderVectors()
+    public static TheoryData<Issue188OrderVector> OrderVectors()
     {
         string path = Path.Combine(
             RepoPaths.FindRepoRoot(), "tests", "conformance", "testdata", "personas", "dun" + "kin", "orderVectors.json");
         using var document = JsonDocument.Parse(File.ReadAllText(path));
         List<Issue188OrderVector> vectors = document.RootElement.GetProperty("vectors").Deserialize<List<Issue188OrderVector>>(s_options)
             ?? throw new InvalidOperationException($"{path} deserialized to no vectors.");
-        foreach (Issue188OrderVector vector in vectors)
-        {
-            yield return [vector];
-        }
+        return [.. vectors];
     }
 
     [Theory]
     [Trait("Dotnet", "ready")]
-    [MemberData(nameof(OrderVectors))]
+    [MemberData(nameof(OrderVectors), DisableDiscoveryEnumeration = true)]
     public Task Order_vector_prices_from_pack_menu(Issue188OrderVector vector) => fixture.RunAsync(async () =>
     {
         CancellationToken ct = TestContext.Current.CancellationToken;

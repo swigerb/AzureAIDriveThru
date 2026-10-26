@@ -20,7 +20,7 @@ public sealed class FakeFixedPortBindingTests
         int requestedPort = NetworkUtils.GetFreeTcpPort();
         await using var realtime = new FakeRealtimeUpstreamServer();
 
-        await realtime.StartAsync(TestContext.Current.CancellationToken, fixedPort: requestedPort);
+        await realtime.StartAsync(requestedPort, TestContext.Current.CancellationToken);
 
         Assert.Equal(requestedPort, realtime.BaseUri.Port);
     }
@@ -34,7 +34,7 @@ public sealed class FakeFixedPortBindingTests
             RepoPaths.PersonasDirectory(repoRoot), [ConformancePersonas.DefaultPersonaId]);
         await using var search = new FakeSearchServer(indexPaths);
 
-        await search.StartAsync(TestContext.Current.CancellationToken, fixedPort: requestedPort);
+        await search.StartAsync(requestedPort, TestContext.Current.CancellationToken);
 
         Assert.Equal(requestedPort, search.BaseUri.Port);
     }

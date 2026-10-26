@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using Conformance.Harness;
@@ -122,9 +123,10 @@ public sealed class DotnetBackendLauncherPortRaceTests
         occupyingListener.Start();
 
         var observedPorts = new List<string?>();
+        var observedPortsGate = new Lock();
         DotnetBackendLauncher.TestOnlyProcessStartInfoObserver = startInfo =>
         {
-            lock (observedPorts)
+            lock (observedPortsGate)
             {
                 observedPorts.Add(startInfo.Environment.TryGetValue("PORT", out string? port) ? port : null);
             }
@@ -151,7 +153,7 @@ public sealed class DotnetBackendLauncherPortRaceTests
                 $"{observedPorts.Count} attempt(s): {string.Join(", ", observedPorts)}.");
 
             // First attempt: whatever the caller explicitly requested (the occupied port, here).
-            Assert.Equal(occupiedPort.ToString(), observedPorts[0]);
+            Assert.Equal(occupiedPort.ToString(CultureInfo.InvariantCulture), observedPorts[0]);
 
             // Every retry (everything after the first attempt) must always request port 0.
             for (int i = 1; i < observedPorts.Count; i++)

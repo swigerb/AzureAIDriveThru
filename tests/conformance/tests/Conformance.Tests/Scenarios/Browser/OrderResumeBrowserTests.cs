@@ -112,7 +112,7 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
     private static Task<JsonElement> SentAsync(IPage page, int index) =>
         page.EvaluateAsync<JsonElement>($"window.__sockets[{index}] ? window.__sockets[{index}].sent : []");
 
-    private static Task DropLastSocketAsync(IPage page) => page.EvaluateAsync<bool?>("window.__dropLastSocket()");
+    private static Task<bool?> DropLastSocketAsync(IPage page) => page.EvaluateAsync<bool?>("window.__dropLastSocket()");
 
     private static string? SessionTokenOf(JsonElement frames, string type) =>
         frames.EnumerateArray()
@@ -161,7 +161,7 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
         }
     }
 
-    private static async Task<(IBrowserContext Context, IPage Page)> NewPageAsync(IBrowser browser, CancellationToken ct)
+    private static async Task<(IBrowserContext Context, IPage Page)> NewPageAsync(IBrowser browser)
     {
         IBrowserContext context = await browser.NewContextAsync(new BrowserNewContextOptions { Permissions = ["microphone"] })
             .ConfigureAwait(false);
@@ -175,7 +175,7 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
         fixture.RunAsync(async () =>
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!, ct);
+        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!);
         await using IBrowserContext _ = context;
 
         Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
@@ -312,7 +312,7 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
     public Task Idle_close_does_not_reconnect_a_tap_starts_a_fresh_session() => fixture.RunAsync(async () =>
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!, ct);
+        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!);
         await using IBrowserContext _ = context;
 
         Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
@@ -356,7 +356,7 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
     public Task Reloading_the_page_restores_the_session_and_waits_for_a_tap_to_continue() => fixture.RunAsync(async () =>
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!, ct);
+        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!);
         await using IBrowserContext _ = context;
 
         Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
@@ -418,7 +418,7 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
     public Task Tapping_the_mic_while_reconnecting_still_sends_resume_as_the_literal_first_frame() => fixture.RunAsync(async () =>
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!, ct);
+        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!);
         await using IBrowserContext _ = context;
 
         Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
@@ -483,7 +483,7 @@ public sealed class OrderResumeBrowserTests(BrowserConformanceFixture fixture)
             }).ConfigureAwait(false);
             try
             {
-                (IBrowserContext? context, IPage? page) = await NewPageAsync(strictBrowser, ct);
+                (IBrowserContext? context, IPage? page) = await NewPageAsync(strictBrowser);
                 await using IBrowserContext _ = context;
 
                 Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);

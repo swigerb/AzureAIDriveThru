@@ -92,7 +92,7 @@ public sealed class CascadeResumeRehydrationAndNudgeTests(CascadeConformanceFixt
         fixture.Realtime.NextTtsAudio = PlaybackClip(1.5);
         CascadeConnection connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(fixture, fixture.Chat, "gpt-5-mini", ct, waitOutAcousticTail: false);
         await using RealtimeBrowserClient browser = connection.Browser;
-        fixture.Realtime.NextTtsAudio = [1, 2, 3, 4];
+        fixture.Realtime.NextTtsAudio = new byte[] { 1, 2, 3, 4 };
 
         // "Echo" arrives DURING the greeting's estimated playback: no speech_started, no turn.
         await CascadeScenarioHelpers.SendGuestTurnAsync(browser, ct);
@@ -119,7 +119,7 @@ public sealed class CascadeResumeRehydrationAndNudgeTests(CascadeConformanceFixt
         fixture.Realtime.NextTtsAudio = PlaybackClip(0.5);
         CascadeConnection connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(fixture, fixture.Chat, "gpt-5-mini", ct, waitOutAcousticTail: false);
         await using RealtimeBrowserClient browser = connection.Browser;
-        fixture.Realtime.NextTtsAudio = [1, 2, 3, 4];
+        fixture.Realtime.NextTtsAudio = new byte[] { 1, 2, 3, 4 };
 
         // Playback is ~0.5s and the acoustic tail 300ms; reply ~200ms after that window closes
         // (#187/#190: a quick "yes"/"no thanks" must never be swallowed by a long deaf window).

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using Conformance.Harness;
@@ -105,7 +106,7 @@ public sealed class MenuModeRejectionConformanceTests(MenuModeConformanceFixture
             connection, browser,
             [("add", "Delta Lunch Meal", "regular", 1, 6.49m)],
             roundTripIndex, ct);
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
 
         ToolCallResult rejected = await OrderScenarioHelpers.CallToolAsync(
@@ -147,7 +148,7 @@ public sealed class MenuModeRejectionConformanceTests(MenuModeConformanceFixture
         // capture before the leak check below runs, so a too-early read can't pass vacuously.
         bool rejectionLineLogged = await backend.WaitForDiagnosticsAsync(
             d => d.Contains("Rejected WebSocket for invalid menu mode", StringComparison.Ordinal),
-            TimeSpan.FromSeconds(10), ct, sinceWatermark: watermark);
+            TimeSpan.FromSeconds(10), sinceWatermark: watermark, cancellationToken: ct);
         Assert.True(rejectionLineLogged,
             $"Expected the backend's captured stdout/stderr to eventually contain the menu-mode " +
             $"rejection's own log line -- without it, the leak check below would pass vacuously, " +
@@ -157,6 +158,6 @@ public sealed class MenuModeRejectionConformanceTests(MenuModeConformanceFixture
         Assert.DoesNotContain(Needle, dump, StringComparison.Ordinal);
         Assert.DoesNotContain("brunch", dump, StringComparison.Ordinal);
         Assert.Contains(MenuModeConformanceFixture.DaypartsPersona, dump, StringComparison.Ordinal);
-        Assert.Contains(Needle.Length.ToString(), dump, StringComparison.Ordinal);
+        Assert.Contains(Needle.Length.ToString(CultureInfo.InvariantCulture), dump, StringComparison.Ordinal);
     });
 }

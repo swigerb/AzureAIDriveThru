@@ -33,7 +33,7 @@ public sealed class CascadePronunciationLexiconConformanceTests(CascadeConforman
     /// across every pack -- mirrors <see cref="ConformancePersonas.DiscoverFromDisk()"/>'s own
     /// disk-discovery convention. Plain strings (not a custom record) so xunit's MemberData
     /// serialization needs nothing beyond its built-in support.</summary>
-    private static IReadOnlyList<(string PersonaId, string RawKey, string SpokenForm)> DiscoverPronunciationEntries()
+    private static List<(string PersonaId, string RawKey, string SpokenForm)> DiscoverPronunciationEntries()
     {
         string personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
         var entries = new List<(string, string, string)>();
@@ -57,8 +57,16 @@ public sealed class CascadePronunciationLexiconConformanceTests(CascadeConforman
         return entries;
     }
 
-    public static IEnumerable<object[]> PronunciationEntries() =>
-        DiscoverPronunciationEntries().Select(entry => new object[] { entry.PersonaId, entry.RawKey, entry.SpokenForm });
+    public static TheoryData<string, string, string> PronunciationEntries()
+    {
+        TheoryData<string, string, string> rows = [];
+        foreach ((string personaId, string rawKey, string spokenForm) in DiscoverPronunciationEntries())
+        {
+            rows.Add(personaId, rawKey, spokenForm);
+        }
+
+        return rows;
+    }
 
     [Fact]
     public void At_least_one_shipped_pack_declares_a_pronunciation_entry()
@@ -98,7 +106,8 @@ public sealed class CascadePronunciationLexiconConformanceTests(CascadeConforman
             f => f.Sequence > connection.GreetingWatermark && f.Type == "response.audio.delta", s_frameTimeout, ct);
         Assert.True(audioDelta is not null, "Expected at least one response.audio.delta chunk from cascade TTS.");
 
-        string? ttsInput = fixture.Realtime.TtsRequestInputs.LastOrDefault();
+        IReadOnlyList<string> ttsInputs = fixture.Realtime.TtsRequestInputs;
+        string? ttsInput = ttsInputs.Count > 0 ? ttsInputs[^1] : null;
         Assert.NotNull(ttsInput);
         Assert.Contains(spokenForm, ttsInput);
         Assert.DoesNotContain(rawKey, ttsInput);

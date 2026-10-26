@@ -30,8 +30,6 @@ namespace Conformance.Tests;
 [Collection(ConformanceCollection.Name)]
 public sealed class SpokenReadBackConformanceTests(ConformanceFixture fixture)
 {
-    private static readonly TimeSpan s_frameTimeout = OrderScenarioHelpers.FrameTimeout;
-
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Get_order_function_call_output_carries_the_server_composed_spoken_read_back() => fixture.RunAsync(async () =>

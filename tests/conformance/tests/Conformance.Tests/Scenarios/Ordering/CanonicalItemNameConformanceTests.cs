@@ -40,7 +40,7 @@ public sealed class CanonicalItemNameConformanceTests(ZetaConformanceFixture fix
             roundTripIndex, ct);
 
         Assert.NotNull(result.ToolResultJson);
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson);
         JsonElement items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Equal(MarkedName, items[0].GetProperty("item").GetString());
@@ -62,7 +62,7 @@ public sealed class CanonicalItemNameConformanceTests(ZetaConformanceFixture fix
             ],
             roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         JsonElement items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Equal(2, items[0].GetProperty("quantity").GetInt32());
@@ -86,7 +86,7 @@ public sealed class CanonicalItemNameConformanceTests(ZetaConformanceFixture fix
             ],
             roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         Assert.Equal(0, order.GetProperty("items").GetArrayLength());
     });
 
@@ -105,7 +105,7 @@ public sealed class CanonicalItemNameConformanceTests(ZetaConformanceFixture fix
             [("add", ParenName, "regular", 1, ParenItemPrice)],
             roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         JsonElement items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Equal(ParenName, items[0].GetProperty("item").GetString());
@@ -127,7 +127,7 @@ public sealed class CanonicalItemNameConformanceTests(ZetaConformanceFixture fix
             ],
             roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         JsonElement items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Equal(2, items[0].GetProperty("quantity").GetInt32());
@@ -161,7 +161,7 @@ public sealed class CanonicalItemNameModifyConformanceTests(ConformanceFixture f
             ],
             roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         JsonElement items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Equal("Coca-Cola\u00ae", items[0].GetProperty("item").GetString());

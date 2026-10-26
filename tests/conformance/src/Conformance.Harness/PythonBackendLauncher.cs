@@ -29,7 +29,7 @@ public sealed class ConformanceBackendUnavailableException(string message) : Exc
 internal sealed class PortBindRaceException(string message) : Exception(message);
 
 /// <summary>Starts the Python backend (app/backend, via .venv) on a free port, pointed at the fakes.</summary>
-public static class PythonBackendLauncher
+public static partial class PythonBackendLauncher
 {
     private static readonly TimeSpan s_healthTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan s_healthPollInterval = TimeSpan.FromMilliseconds(250);
@@ -44,8 +44,8 @@ public static class PythonBackendLauncher
     /// resolves to the real OS-assigned port once bound, even when 0 was requested -- so this
     /// banner always names the actual listening port, never the literal "0" that was asked for.
     /// </summary>
-    private static readonly Regex s_runningOnPortPattern = new(
-        @"Running on https?://[^\s:]+:(\d+)", RegexOptions.Compiled);
+    [GeneratedRegex(@"Running on https?://[^\s:]+:(\d+)")]
+    private static partial Regex RunningOnPortPattern { get; }
 
     /// <summary>
     /// Bounded so a genuinely unbindable environment (e.g. loopback sockets exhausted) fails
@@ -168,49 +168,77 @@ public static class PythonBackendLauncher
         // retry loop computed in isolation. Never set outside tests; a no-op in production.
         TestOnlyProcessStartInfoObserver?.Invoke(startInfo);
 
-        var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-        var output = new CapturedProcessOutput();
-        output.Attach(process);
-
-        DateTimeOffset startedAt = DateTimeOffset.UtcNow;
-        if (!process.Start())
-        {
-            throw new InvalidOperationException($"Failed to start Python backend process '{pythonExe} app.py'.");
-        }
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-
-        // Defence-in-depth against orphaned python.exe processes (PR #22 review item 17): if this
-        // .NET test process itself is killed forcibly (Stop-Process, a crash, a CI runner reaping
-        // an orphaned job) with no chance to run IAsyncDisposable/ProcessExit cleanup, Windows
-        // closes every handle the killed process owned -- including this job handle -- which
-        // (because of KILL_ON_JOB_CLOSE) makes the OS itself kill the Python process tree. No-op
-        // on non-Windows (see WindowsJobObject's own docs for why).
-        var jobObject = WindowsJobObject.TryCreateAndAssign(process.Id);
-
-        // Belt-and-suspenders for the *graceful* exit paths that skip normal disposal (e.g. an
-        // unhandled exception unwinding past IAsyncDisposable, or a hard Environment.Exit call
-        // elsewhere in the process) -- runs on every platform, unlike the job object.
+        // Ownership of the process, its job object and its ProcessExit handler passes to the
+        // returned ProcessBackend only on success; every failure path (a failed Start, an early
+        // exit, a port-bind race that StartAsync retries, a health timeout, cancellation)
+        // unhooks the handler and kills the process tree in the catch below, then disposes the
+        // Process and job object in the finally, so a retried attempt never leaves its
+        // predecessor's Process handle or job object behind.
+        Process? process = new();
+        WindowsJobObject? jobObject = null;
         EventHandler? processExitHandler = null;
-        processExitHandler = (_, _) => TryKill(process);
-        AppDomain.CurrentDomain.ProcessExit += processExitHandler;
-
-        Uri baseUri;
-
         try
         {
-            baseUri = await WaitForListeningAndHealthyAsync(process, output, startedAt, cancellationToken)
+            process.StartInfo = startInfo;
+            process.EnableRaisingEvents = true;
+
+            var output = new CapturedProcessOutput();
+            output.Attach(process);
+
+            DateTimeOffset startedAt = DateTimeOffset.UtcNow;
+            if (!process.Start())
+            {
+                throw new InvalidOperationException($"Failed to start Python backend process '{pythonExe} app.py'.");
+            }
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            // Defence-in-depth against orphaned python.exe processes (PR #22 review item 17): if this
+            // .NET test process itself is killed forcibly (Stop-Process, a crash, a CI runner reaping
+            // an orphaned job) with no chance to run IAsyncDisposable/ProcessExit cleanup, Windows
+            // closes every handle the killed process owned -- including this job handle -- which
+            // (because of KILL_ON_JOB_CLOSE) makes the OS itself kill the Python process tree. No-op
+            // on non-Windows (see WindowsJobObject's own docs for why).
+            jobObject = WindowsJobObject.TryCreateAndAssign(process.Id);
+
+            // Belt-and-suspenders for the *graceful* exit paths that skip normal disposal (e.g. an
+            // unhandled exception unwinding past IAsyncDisposable, or a hard Environment.Exit call
+            // elsewhere in the process) -- runs on every platform, unlike the job object.
+            Process launched = process;
+            processExitHandler = (_, _) => TryKill(launched);
+            AppDomain.CurrentDomain.ProcessExit += processExitHandler;
+
+            Uri baseUri = await WaitForListeningAndHealthyAsync(process, output, startedAt, cancellationToken)
                 .ConfigureAwait(false);
+
+            var backend = new ProcessBackend(process, baseUri, output, jobObject, processExitHandler);
+            process = null;
+            jobObject = null;
+            processExitHandler = null;
+            return backend;
         }
         catch
         {
-            AppDomain.CurrentDomain.ProcessExit -= processExitHandler;
-            TryKill(process);
-            jobObject?.Dispose();
+            if (processExitHandler is not null)
+            {
+                AppDomain.CurrentDomain.ProcessExit -= processExitHandler;
+            }
+
+            if (process is not null)
+            {
+                TryKill(process);
+            }
+
             throw;
         }
-
-        return new ProcessBackend(process, baseUri, output, jobObject, processExitHandler);
+        finally
+        {
+            // Unconditional (and separate from the kill above), so an unexpected Kill failure
+            // (e.g. Win32Exception) still can't leak the Process handle or the job object. Both
+            // locals are null on the success path, where ProcessBackend now owns them.
+            process?.Dispose();
+            jobObject?.Dispose();
+        }
     }
 
     /// <summary>
@@ -220,7 +248,7 @@ public static class PythonBackendLauncher
     /// Now that the backend is launched with <c>PORT=0</c> (the OS assigns a genuinely free
     /// ephemeral port atomically at bind time), the real listening address is only known once
     /// aiohttp has actually bound it and printed its "Running on" banner (see
-    /// <see cref="s_runningOnPortPattern"/>) -- so this method discovers that address AND waits for
+    /// <see cref="RunningOnPortPattern"/>) -- so this method discovers that address AND waits for
     /// `/health` to come up, under one shared <see cref="s_healthTimeout"/> deadline, returning the
     /// discovered <see cref="Uri"/> once both are satisfied.
     /// </summary>
@@ -249,7 +277,7 @@ public static class PythonBackendLauncher
 
             if (baseUri is null)
             {
-                Match match = s_runningOnPortPattern.Match(output.Dump());
+                Match match = RunningOnPortPattern.Match(output.Dump());
                 if (match.Success)
                 {
                     int boundPort = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
@@ -321,9 +349,9 @@ internal sealed class ProcessBackend(
     public Task<bool> WaitForDiagnosticsAsync(
         Func<string, bool> predicate,
         TimeSpan timeout,
-        CancellationToken cancellationToken = default,
-        int sinceWatermark = 0) =>
-        output.WaitForDiagnosticsAsync(predicate, timeout, cancellationToken, sinceWatermark);
+        int sinceWatermark = 0,
+        CancellationToken cancellationToken = default) =>
+        output.WaitForDiagnosticsAsync(predicate, timeout, sinceWatermark, cancellationToken);
 
     public int DiagnosticsWatermark => output.Watermark;
 

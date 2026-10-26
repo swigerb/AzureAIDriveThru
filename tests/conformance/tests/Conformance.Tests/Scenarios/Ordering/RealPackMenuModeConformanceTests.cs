@@ -62,7 +62,7 @@ internal static class PersonaMenuModeVectors
 
 file sealed class RealPackMenuModeFixture(string personaId) : ConformanceFixture
 {
-    protected override BackendProfile Profile => BackendProfiles.FixedClock(DateTimeOffset.Parse("2026-10-02T21:30:00Z"));
+    protected override BackendProfile Profile => BackendProfiles.FixedClock(DateTimeOffset.Parse("2026-10-02T21:30:00Z", CultureInfo.InvariantCulture));
     protected override string? Persona => personaId;
     protected override IReadOnlyList<string>? Personas => [personaId];
 }
@@ -127,7 +127,7 @@ public sealed class RealPackMenuModeConformanceTests
             [("add", item.Name, item.Size, 1, item.MenuPrice)],
             roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(item.MenuPrice, OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
             $"A session bound to {mode} mode must accept '{item.Name}' at its own menu price.");

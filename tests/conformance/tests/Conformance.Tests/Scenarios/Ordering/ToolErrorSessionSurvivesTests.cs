@@ -81,7 +81,7 @@ public sealed class ToolErrorSessionSurvivesTests(ConformanceFixture fixture)
             connection, browser,
             [("add", "Tots", "medium", 1, 2.79m)],
             errored.RoundTripIndex, ct);
-        JsonElement order = JsonDocument.Parse(next.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(next.ToolResultJson!);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
     });
 
@@ -158,7 +158,7 @@ public sealed class ToolErrorSessionSurvivesTests(ConformanceFixture fixture)
             connection, browser,
             [("add", "Tots", "medium", 1, 2.79m)],
             nextIndex, ct);
-        JsonElement order = JsonDocument.Parse(next.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(next.ToolResultJson!);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
     }, allowedNewBackendErrors: 0);
     // #66 (non-blocking, verified): tools.py::update_order's #36 fix (see the required-argument

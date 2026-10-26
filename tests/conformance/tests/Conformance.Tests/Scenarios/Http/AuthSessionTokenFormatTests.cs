@@ -19,9 +19,10 @@ namespace Conformance.Tests;
 /// </summary>
 [Collection(ConformanceCollection.Name)]
 [Trait("Dotnet", "ready")]
-public sealed class AuthSessionTokenFormatTests(ConformanceFixture fixture)
+public sealed partial class AuthSessionTokenFormatTests(ConformanceFixture fixture)
 {
-    private static readonly Regex s_hexSha256 = new("^[0-9a-f]{64}$", RegexOptions.Compiled);
+    [GeneratedRegex("^[0-9a-f]{64}$")]
+    private static partial Regex HexSha256 { get; }
 
     [Fact]
     public Task Token_is_a_base64url_json_payload_and_a_sha256_hex_signature_joined_by_a_dot() => fixture.RunAsync(async () =>
@@ -42,7 +43,7 @@ public sealed class AuthSessionTokenFormatTests(ConformanceFixture fixture)
         Assert.Equal(2, parts.Length);
 
         (string? payloadB64, string? signature) = (parts[0], parts[1]);
-        Assert.Matches(s_hexSha256, signature);
+        Assert.Matches(HexSha256, signature);
 
         string payloadJson = Encoding.UTF8.GetString(Base64UrlDecode(payloadB64));
         using var payloadDocument = JsonDocument.Parse(payloadJson);

@@ -28,10 +28,14 @@ namespace Conformance.Harness;
 /// cancelled shared task, so a build that failed -- or was ever left cancelled -- is retried by the
 /// next caller instead of wedging the rest of the run.
 /// </summary>
-internal sealed class DotnetBackendBuildGate(Func<string, CancellationToken, Task> runBuild)
+internal sealed class DotnetBackendBuildGate(Func<string, CancellationToken, Task> runBuild) : IDisposable
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
     private Task<string>? _buildTask;
+
+    /// <summary>Releases <see cref="_gate"/>. The launcher's shared instance lives for the whole
+    /// process; this exists so test-owned instances can be scoped with <c>using</c>.</summary>
+    public void Dispose() => _gate.Dispose();
 
     /// <summary>
     /// Builds Backend.csproj EXACTLY ONCE for the lifetime of this gate instance -- never

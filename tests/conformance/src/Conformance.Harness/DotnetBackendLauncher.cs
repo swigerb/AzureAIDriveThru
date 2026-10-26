@@ -31,7 +31,7 @@ internal static class DotnetBackendEnvironment
         var env = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["HOST"] = BackendContract.Host,
-            ["PORT"] = contract.Port.ToString(),
+            ["PORT"] = contract.Port.ToString(CultureInfo.InvariantCulture),
 
             ["AZURE_OPENAI_EASTUS2_API_KEY"] = BackendContract.OpenAiApiKey,
             ["AZURE_SEARCH_API_KEY"] = BackendContract.SearchApiKey,
@@ -122,7 +122,7 @@ internal static class DotnetBackendEnvironment
 /// launcher throws internally (declared in PythonBackendLauncher.cs, scoped to the shared
 /// <c>Conformance.Harness</c> namespace, not duplicated here).
 /// </summary>
-public static class DotnetBackendLauncher
+public static partial class DotnetBackendLauncher
 {
     private static readonly TimeSpan s_healthTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan s_healthPollInterval = TimeSpan.FromMilliseconds(250);
@@ -141,8 +141,8 @@ public static class DotnetBackendLauncher
     /// exact substring, which is all this regex needs since it is applied against the whole
     /// dump, not anchored to line start.
     /// </summary>
-    private static readonly Regex s_listeningOnPortPattern = new(
-        @"Now listening on:\s*https?://[^\s:]+:(\d+)", RegexOptions.Compiled);
+    [GeneratedRegex(@"Now listening on:\s*https?://[^\s:]+:(\d+)")]
+    private static partial Regex ListeningOnPortPattern { get; }
 
     /// <summary>
     /// Same rationale and same value as <see cref="PythonBackendLauncher"/>'s own
@@ -259,43 +259,71 @@ public static class DotnetBackendLauncher
         // retry loop computed in isolation. Never set outside tests; a no-op in production.
         TestOnlyProcessStartInfoObserver?.Invoke(startInfo);
 
-        var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-        var output = new CapturedProcessOutput();
-        output.Attach(process);
-
-        DateTimeOffset startedAt = DateTimeOffset.UtcNow;
-        if (!process.Start())
-        {
-            throw new InvalidOperationException($"Failed to start C# backend process 'dotnet \"{dllPath}\"'.");
-        }
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-
-        // Same defence-in-depth against orphaned dotnet.exe processes as PythonBackendLauncher --
-        // see WindowsJobObject's own doc comment for why this is Windows-only and why the
-        // ProcessExit handler below covers every platform as a second line of defence.
-        var jobObject = WindowsJobObject.TryCreateAndAssign(process.Id);
-
+        // Ownership of the process, its job object and its ProcessExit handler passes to the
+        // returned ProcessBackend only on success; every failure path (a failed Start, an early
+        // exit, a port-bind race that StartAsync retries, a health timeout, cancellation)
+        // unhooks the handler and kills the process tree in the catch below, then disposes the
+        // Process and job object in the finally, so a retried attempt never leaves its
+        // predecessor's Process handle or job object behind.
+        Process? process = new();
+        WindowsJobObject? jobObject = null;
         EventHandler? processExitHandler = null;
-        processExitHandler = (_, _) => TryKill(process);
-        AppDomain.CurrentDomain.ProcessExit += processExitHandler;
-
-        Uri baseUri;
-
         try
         {
-            baseUri = await WaitForListeningAndHealthyAsync(process, output, startedAt, cancellationToken)
+            process.StartInfo = startInfo;
+            process.EnableRaisingEvents = true;
+
+            var output = new CapturedProcessOutput();
+            output.Attach(process);
+
+            DateTimeOffset startedAt = DateTimeOffset.UtcNow;
+            if (!process.Start())
+            {
+                throw new InvalidOperationException($"Failed to start C# backend process 'dotnet \"{dllPath}\"'.");
+            }
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            // Same defence-in-depth against orphaned dotnet.exe processes as PythonBackendLauncher --
+            // see WindowsJobObject's own doc comment for why this is Windows-only and why the
+            // ProcessExit handler below covers every platform as a second line of defence.
+            jobObject = WindowsJobObject.TryCreateAndAssign(process.Id);
+
+            Process launched = process;
+            processExitHandler = (_, _) => TryKill(launched);
+            AppDomain.CurrentDomain.ProcessExit += processExitHandler;
+
+            Uri baseUri = await WaitForListeningAndHealthyAsync(process, output, startedAt, cancellationToken)
                 .ConfigureAwait(false);
+
+            var backend = new ProcessBackend(process, baseUri, output, jobObject, processExitHandler);
+            process = null;
+            jobObject = null;
+            processExitHandler = null;
+            return backend;
         }
         catch
         {
-            AppDomain.CurrentDomain.ProcessExit -= processExitHandler;
-            TryKill(process);
-            jobObject?.Dispose();
+            if (processExitHandler is not null)
+            {
+                AppDomain.CurrentDomain.ProcessExit -= processExitHandler;
+            }
+
+            if (process is not null)
+            {
+                TryKill(process);
+            }
+
             throw;
         }
-
-        return new ProcessBackend(process, baseUri, output, jobObject, processExitHandler);
+        finally
+        {
+            // Unconditional (and separate from the kill above), so an unexpected Kill failure
+            // (e.g. Win32Exception) still can't leak the Process handle or the job object. Both
+            // locals are null on the success path, where ProcessBackend now owns them.
+            process?.Dispose();
+            jobObject?.Dispose();
+        }
     }
 
     /// <summary>
@@ -305,7 +333,7 @@ public static class DotnetBackendLauncher
     /// Now that the backend is launched with <c>PORT=0</c> (the OS assigns a genuinely free
     /// ephemeral port atomically at bind time), the real listening address is only known once
     /// Kestrel has actually bound it and logged "Now listening on" (<see
-    /// cref="s_listeningOnPortPattern"/>) -- so this method discovers that address AND waits for
+    /// cref="ListeningOnPortPattern"/>) -- so this method discovers that address AND waits for
     /// `/health` to come up, under one shared <see cref="s_healthTimeout"/> deadline, returning the
     /// discovered <see cref="Uri"/> once both are satisfied.
     /// </summary>
@@ -334,7 +362,7 @@ public static class DotnetBackendLauncher
 
             if (baseUri is null)
             {
-                Match match = s_listeningOnPortPattern.Match(output.Dump());
+                Match match = ListeningOnPortPattern.Match(output.Dump());
                 if (match.Success)
                 {
                     int boundPort = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);

@@ -259,7 +259,7 @@ public sealed class PersonaAssetRouteConformanceTests(ConformanceFixture fixture
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
         Uri backendUri = fixture.Backend!.BaseUri;
-        string personaId = ConformancePersonas.DiscoverFromDisk().First();
+        string personaId = ConformancePersonas.DiscoverFromDisk()[0];
         string token = fixture.EntraIssuer!.Mint();
 
         using var tcp = new TcpClient();

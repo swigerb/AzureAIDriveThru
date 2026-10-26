@@ -112,8 +112,8 @@ public sealed class RewardsDemoCascadeTests(CascadeConformanceFixture fixture)
                 && f.Json.GetProperty("tool_name").GetString() == "update_order",
             CascadeScenarioHelpers.FrameTimeout, ct);
         Assert.NotNull(added);
-        Assert.Equal("$3.98", JsonDocument.Parse(added.Json.GetProperty("tool_result").GetString()!)
-            .RootElement.GetProperty("totalDisplay").GetString());
+        Assert.Equal("$3.98", JsonElement.Parse(added.Json.GetProperty("tool_result").GetString()!)
+            .GetProperty("totalDisplay").GetString());
         Assert.NotNull(await browser.ReceivedFrames.WaitForAsync(
             f => f.Sequence > added.Sequence && f.Type == "response.done", CascadeScenarioHelpers.FrameTimeout, ct));
 

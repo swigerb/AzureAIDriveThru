@@ -505,6 +505,8 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
             {
                 // Best-effort teardown of the accept loop.
             }
+
+            _cts.Dispose();
         }
     }
 
@@ -603,6 +605,8 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
             {
                 // Best-effort teardown of the accept loop.
             }
+
+            _cts.Dispose();
         }
     }
 

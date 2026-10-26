@@ -573,7 +573,7 @@ public sealed class FakeRealtimeScriptingModelTests
 
     private static RecordedFrame MakeDummyFrame()
     {
-        JsonElement json = JsonDocument.Parse("""{"type":"input_audio_buffer.append","audio":"dGVzdA=="}""").RootElement;
+        var json = JsonElement.Parse("""{"type":"input_audio_buffer.append","audio":"dGVzdA=="}""");
         return new FrameLog().Add(json);
     }
 
