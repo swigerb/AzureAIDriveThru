@@ -14,7 +14,7 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// MONEY CONTRACT (PR #38 review item 1): every money-typed property below is `decimal`, not
 /// `double`. The golden JSON stores each money value as a quoted, exact decimal string (see the
 /// dataset's own top-level `description` for the full contract), and `JsonNumberHandling
-/// .AllowReadingFromString` (set on <see cref="Options"/>) lets System.Text.Json deserialize a
+/// .AllowReadingFromString` (set on <see cref="GoldenOrderPricingData.s_options"/>) lets System.Text.Json deserialize a
 /// quoted JSON string directly into a `decimal` property with no intermediate `double` — the same
 /// guarantee scenario code gets from `JsonElement.GetDecimal()` when parsing the live backend's
 /// wire responses (see OrderScenarioHelpers.cs). Never re-introduce a `double` money property here

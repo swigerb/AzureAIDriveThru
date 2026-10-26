@@ -162,8 +162,8 @@ internal static class PersonaExtrasMenuData
 }
 
 /// <summary>
-/// One backend PER discovered pack, same shape as <see cref="MealNumberFixture"/> -- extras have
-/// no time dependency, so (unlike <see cref="RealPackHappyHourFixture"/>) no <c>FixedClock</c>
+/// One backend PER discovered pack, same shape as <c>MealNumberFixture</c> -- extras have
+/// no time dependency, so (unlike <c>RealPackHappyHourFixture</c>) no <c>FixedClock</c>
 /// pinning is needed. <c>PersonasDir</c> is deliberately left null (the base class's default, real
 /// <c>personas/</c> root) since every row here is a REAL pack, never a fixture pack.
 /// </summary>

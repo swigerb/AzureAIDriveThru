@@ -233,8 +233,8 @@ public sealed partial class CapturedProcessOutput
     /// <summary>
     /// Waits until no new stdout/stderr line has been captured for at least
     /// <paramref name="idleWindow"/> (an explicit quiet-period signal, not a blind sleep), giving
-    /// up after <paramref name="maxWait"/> total regardless. Fixes #62: <see
-    /// cref="Conformance.Tests.ConformanceFixture.RunAsync(Func{Task}, int)"/> snapshots a
+    /// up after <paramref name="maxWait"/> total regardless. Fixes #62:
+    /// <c>Conformance.Tests.ConformanceFixture.RunAsync(Func{Task}, int)</c> snapshots a
     /// per-scenario baseline error count before running the scenario body; if a *previous*
     /// scenario's own already-accounted-for stderr line was still in flight through the
     /// ThreadPool callback at that instant, it could land just after this baseline snapshot and
@@ -250,7 +250,7 @@ public sealed partial class CapturedProcessOutput
     /// how long it takes when there is nothing to detect.
     /// </para>
     /// <para>
-    /// #103 (PR #123 review): <paramref name="idleWindow"/>/<paramref name="quietFor"/> are
+    /// #103 (PR #123 review): <paramref name="idleWindow"/>/<c>quietFor</c> are
     /// derived from <see cref="_lastAppendUtc"/> (a <see cref="DateTimeOffset"/>), but the actual
     /// wait below is a <c>Task.Delay</c> timer, whose resolution is coarser than that clock
     /// (~1ms on Linux, ~15.6ms on Windows) -- so a delay armed for exactly "however long is left
@@ -337,7 +337,7 @@ public sealed partial class CapturedProcessOutput
 
     /// <summary>
     /// Counts unhandled-error incidents in captured stderr — a python.exe subprocess implementation
-    /// of the language-neutral <see cref="IBackendUnderTest.UnhandledErrorCount"/> signal (PR #22
+    /// of the language-neutral <see cref="IBackendUnderTest.UnhandledErrorCount()"/> signal (PR #22
     /// review item N5). Before this, scenarios asserted directly on <c>DumpDiagnostics()</c>
     /// containing/not-containing the literal string "Traceback", coupling every scenario to
     /// Python's exact log format. A C# backend (S2) will never print a Python traceback, so those
@@ -357,7 +357,7 @@ public sealed partial class CapturedProcessOutput
     /// call. That buffer is a bounded ring (<see cref="MaxLines"/>) that silently evicts its
     /// oldest lines once a long-running suite process crosses the cap — so a re-scan would forget
     /// about incidents whose lines had already scrolled out, making the return value able to go
-    /// *down* between calls. <see cref="ConformanceFixture.RunAsync(Func{Task}, int)"/> depends on
+    /// *down* between calls. <c>ConformanceFixture.RunAsync(Func{Task}, int)</c> depends on
     /// this being monotonically non-decreasing (it asserts <c>actual &lt;= baseline + allowed</c>
     /// across the scenario body) — a wrap partway through a suite run could otherwise make that
     /// delta go negative and silently hide a real new backend error. The count is now accumulated
@@ -373,7 +373,7 @@ public sealed partial class CapturedProcessOutput
     }
 
     /// <summary>Feeds one freshly-captured line into the incident-counting state machine (moved
-    /// here, off the dump buffer, per <see cref="CountUnhandledErrors"/>'s doc comment). Locked
+    /// here, off the dump buffer, per <see cref="CountUnhandledErrors()"/>'s doc comment). Locked
     /// because <see cref="Attach"/> wires stdout and stderr to independent process callbacks that
     /// can run on different threads concurrently.</summary>
     private void ScanLine(string stream, string content)
@@ -458,7 +458,7 @@ public sealed partial class CapturedProcessOutput
     /// incident -- but an incident whose full captured text (every content line from its header
     /// through its last frame/summary line, in order) satisfies <paramref name="isBenignIncident"/>
     /// is skipped entirely instead of counted. Added for issue #10/#26's Browser scenarios -- see
-    /// <see cref="Conformance.Tests.Scenarios.Browser.BrowserConformanceFixture"/>'s own doc
+    /// <c>Conformance.Tests.Scenarios.Browser.BrowserConformanceFixture</c>'s own doc
     /// comment for the one signature it actually filters and why. This overload never changes what
     /// <see cref="CountUnhandledErrors()"/> itself returns for any existing caller, and re-scans
     /// <see cref="_lines"/> directly rather than sharing #28 N13's incremental <see cref="ScanLine"/>

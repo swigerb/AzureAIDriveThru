@@ -12,7 +12,7 @@ namespace Conformance.Tests;
 /// precisely so these tests can do this -- see that member's own doc comment) instead of racing a
 /// real child process's own ThreadPool callback timing, which is exactly the nondeterminism these
 /// methods exist to protect production callers from in the first place. <see
-/// cref="CapturedProcessOutputTests"/> covers <see cref="CapturedProcessOutput.CountUnhandledErrors"/>
+/// cref="CapturedProcessOutputTests"/> covers <see cref="CapturedProcessOutput.CountUnhandledErrors()"/>
 /// against a real process; <see cref="Fixture_level_M1_late_error_from_scenario_A_is_attributed_to_A"/>
 /// below covers the M1 fixture-level scenario-boundary case, which for realism needs a real process
 /// on the real async stderr-capture path (this file's other tests do not).
@@ -336,7 +336,7 @@ public sealed class CapturedProcessOutputWaitTests
     /// <see cref="ScenarioErrorAttribution.EndScenario"/> check runs and passes strictly BEFORE the
     /// error is even written to the child process's stdin, so it structurally cannot observe it --
     /// not "probably won't", cannot. Then <see cref="CapturedProcessOutput.WaitForDiagnosticsAsync"/>
-    /// polls the real, ever-increasing <see cref="CapturedProcessOutput.CountUnhandledErrors"/>
+    /// polls the real, ever-increasing <see cref="CapturedProcessOutput.CountUnhandledErrors()"/>
     /// value itself -- re-evaluated after every <see cref="CapturedProcessOutput.Append"/>, i.e.
     /// after <c>ScanLine</c> has actually incremented the count -- rather than a string match
     /// against the dumped text (<c>Append</c> enqueues a line before <c>ScanLine</c> increments the

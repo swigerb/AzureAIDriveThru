@@ -74,7 +74,7 @@ public static class AuthRowCapability
 /// never <c>Passed</c>/<c>Failed</c>, whenever <see cref="AuthRowCapability.Enforces"/> resolves
 /// false for the backend under test.
 ///
-/// <see cref="Conformance.Tests.DotnetTraitCoverageTests"/> uses this attribute, instead of a
+/// <c>Conformance.Tests.DotnetTraitCoverageTests</c> uses this attribute, instead of a
 /// hand-maintained list of "currently gated" type full names, to decide which
 /// <c>[Trait("Dotnet", "ready")]</c> methods may legitimately be excluded from its dotnet-ready
 /// coverage floor: a method on a class carrying this attribute counts toward the floor only while

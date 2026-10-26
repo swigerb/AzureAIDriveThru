@@ -29,7 +29,7 @@ namespace Conformance.Tests;
 /// which call <c>Assert.Skip</c> (via <see cref="Conformance.Harness.AuthRowCapability.ShouldSkipCurrentBackend"/>)
 /// before any backend interaction: they show up as skipped, not run, on the dotnet leg until issue
 /// #147 flips <c>DotnetEnforcesAuth</c>. Tagging them was safe (skipped tests can't fail the dotnet
-/// leg), but <see cref="AuthRowGatedTypeNames"/> excludes them from THIS floor: counting a
+/// leg), but <c>AuthRowGatedTypeNames</c> excludes them from THIS floor: counting a
 /// skip-only method here would let a real regression (removing genuinely-passing coverage
 /// elsewhere) hide behind these always-skipped rows staying tagged, which defeats the point of a
 /// coverage floor. The other four Auth classes -- <c>AuthRowCasesTests</c>/
@@ -206,7 +206,7 @@ namespace Conformance.Tests;
 /// rate-limit ladder): per Rick's explicit "recount fresh, don't do arithmetic" instruction, a
 /// fresh run of <see cref="CountFloorEligibleDotnetReadyTestMethods"/> (same as
 /// <c>Conformance.Tests.exe -list methods -trait Dotnet=ready</c>, minus the 18
-/// <see cref="AuthRowGatedTypeNames"/> methods) was taken on this branch tip after rebasing onto
+/// <c>AuthRowGatedTypeNames</c> methods) was taken on this branch tip after rebasing onto
 /// origin/dev (which by then carried #226/#147's C# auth work, #235's rate-limit ladder, #237,
 /// #241, and everything else merged ahead of this PR) by temporarily asserting on the actual
 /// count, then reverting -- **256**. This matches the "+#226 = 256" projection from Rick's own
@@ -224,7 +224,7 @@ namespace Conformance.Tests;
 /// <c>RealPackCapabilityCoverageTests</c> was removed (it verbatim-duplicated the Fact already
 /// owned by <c>RealPackExtrasCoverageTests</c>), dropping the floor-eligible count by exactly one
 /// method, 262 to <b>261</b>. Re-measured directly with <c>Conformance.Tests.exe -list methods
-/// -trait Dotnet=ready</c> (279 methods) minus the 18 <see cref="AuthRowGatedTypeNames"/> methods
+/// -trait Dotnet=ready</c> (279 methods) minus the 18 <c>AuthRowGatedTypeNames</c> methods
 /// -- a fresh reflection count, never arithmetic.
 ///
 /// Issue #147 (ADR-002, PR #226): app/backend-dotnet now enforces Entra JwtBearer authentication
@@ -380,7 +380,7 @@ namespace Conformance.Tests;
 ///
 /// PR #266 merge with origin/dev (coordinator, 2026-10-05): with both #253's 4 cascade rows and
 /// this PR's auto-fill rows present, a fresh <c>Conformance.Tests.exe -list methods -trait
-/// Dotnet=ready</c> lists 283 methods; minus the 18 <see cref="AuthRowGatedTypeNames"/> methods
+/// Dotnet=ready</c> lists 283 methods; minus the 18 <c>AuthRowGatedTypeNames</c> methods
 /// that gives <b>265</b>, the floor asserted below. Any PR still rebasing on top of this MUST
 /// re-measure fresh at its own rebase time the same way, not add a historical delta to 265 blindly.
 ///
@@ -405,7 +405,7 @@ namespace Conformance.Tests;
 /// <c>At_least_262_...</c>) per this same issue's own item C.
 /// Issue #274 merge with origin/dev (coordinator, 2026-10-05): after #244 landed on dev (floor
 /// 302), a fresh <c>Conformance.Tests.exe -list methods -trait Dotnet=ready</c> on the merged tip
-/// lists 317 methods; minus the 18 <see cref="AuthRowGatedTypeNames"/> methods that gives <b>299</b>
+/// lists 317 methods; minus the 18 <c>AuthRowGatedTypeNames</c> methods that gives <b>299</b>
 /// (follow-up C +1, follow-up E -4), the floor asserted below.
 ///
 /// Issues #247/#262 (Summer, 2026-10-05): <c>CascadeConformanceTests</c> (already class-level
@@ -413,8 +413,8 @@ namespace Conformance.Tests;
 /// truncation fix (#247) and the non-429 chat-completion/TTS failure-to-`response.done` fix
 /// (#262) -- verified green against the C# backend across 3 consecutive local runs with no
 /// flakiness (and against the Python backend the same way). A fresh <c>Conformance.Tests.exe
-/// -list methods -trait Dotnet=ready</c> lists 286 methods; minus the same 18 <see
-/// cref="AuthRowGatedTypeNames"/> methods gives <b>268</b>, the floor asserted below. This raises
+/// -list methods -trait Dotnet=ready</c> lists 286 methods; minus the same 18
+/// <c>AuthRowGatedTypeNames</c> methods gives <b>268</b>, the floor asserted below. This raises
 /// the floor 265 to 268.
 ///
 /// Issue #274 merge with origin/dev after #226/#279 (coordinator, 2026-10-05): with
@@ -529,7 +529,7 @@ namespace Conformance.Tests;
 /// floor stays at 359, now backed by a real measurement instead of an unverified carry-forward.
 ///
 /// Issue #315 (coordinator dispatch, Birdperson): the fake realtime upstream's
-/// <c>session.update</c> handling (<see cref="GaSessionValidator"/>) did not validate
+/// <c>session.update</c> handling (<see cref="Conformance.Fakes.GaSessionValidator"/>) did not validate
 /// <c>tools[*].parameters</c> against a JSON-Schema metaschema the way the real API does, so a
 /// malformed schema (e.g. a bare <c>false</c> literal where an object/boolean keyword is required)
 /// was silently accepted by the dotnet conformance leg instead of being rejected with

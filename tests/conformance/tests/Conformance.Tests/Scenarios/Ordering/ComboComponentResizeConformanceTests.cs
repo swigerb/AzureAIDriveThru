@@ -19,9 +19,9 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// another real pack's own autoFill'd side, needs none), add the drink at its smaller real size (absorbed into the
 /// open slot for free -- ordinary bundle-pivot absorption, not part of #179 itself), then resize
 /// that SAME drink to its larger real size two different ways: via `remove` then `add` (
-/// <see cref="Discovered_pack_resizes_the_combo_drink_via_remove_then_add"/>, the exact live
+/// <see cref="ComboComponentResizeConformanceTests.Discovered_pack_resizes_the_combo_drink_via_remove_then_add"/>, the exact live
 /// sequence) and via the explicit `modify` action (
-/// <see cref="Discovered_pack_resizes_the_combo_drink_via_explicit_modify"/>, #179's other
+/// <see cref="ComboComponentResizeConformanceTests.Discovered_pack_resizes_the_combo_drink_via_explicit_modify"/>, #179's other
 /// required path). Both must land on exactly the SAME observable state: one combo line showing the
 /// LARGER drink, no standalone drink line at all, and a total of EXACTLY this pack's own bundle
 /// price (#179 round 2, issue #184, Rick's required item 1: every pack's own bundle price already
@@ -36,7 +36,7 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// fundamentally different -- resizing ANY absorbed slot cascades into resizing the WHOLE bundle,
 /// see <see cref="ComboBundleDiscovery.BundleResizeRule"/> and
 /// <see cref="WholeBundleSizeResizeConformanceTests"/>, the dedicated scenario for that rule) is
-/// naturally absent from <see cref="DiscoveredBundleResizeCases"/>'s Theory rows rather than
+/// naturally absent from <see cref="ComboComponentResizeConformanceTests.DiscoveredBundleResizeCases"/>'s Theory rows rather than
 /// failing -- see <see cref="ComboBundleDiscovery.Discover"/>.
 ///
 /// Runs under a FixedClock pinned just before the happy-hour window opens (same fixture shape as
@@ -58,13 +58,13 @@ public static class ComboBundleDiscovery
         SizedItem? Side,
         SizedItem DrinkFromSize,
         SizedItem DrinkToSize,
-        /// <summary>
-        /// #283: null for a REAL pack under the repo's own <c>personas/</c> root (<see
-        /// cref="RepoPaths.PersonasDirectory"/>); set to <see cref="RepoPaths.FixturePersonasDirectory"/>
-        /// for a synthetic, TEST-ONLY fixture pack (e.g. <c>test-zeta</c>) discovered from that
-        /// second root instead, so <see cref="ComboBundleResizeFixture"/> knows which PERSONAS_DIR
-        /// to launch the backend-under-test against for this row.
-        /// </summary>
+        // <summary>
+        // #283: null for a REAL pack under the repo's own <c>personas/</c> root (<see
+        // cref="RepoPaths.PersonasDirectory"/>); set to <see cref="RepoPaths.FixturePersonasDirectory"/>
+        // for a synthetic, TEST-ONLY fixture pack (e.g. <c>test-zeta</c>) discovered from that
+        // second root instead, so <see cref="ComboBundleResizeFixture"/> knows which PERSONAS_DIR
+        // to launch the backend-under-test against for this row.
+        // </summary>
         string? PersonasDir = null)
     {
         public override string ToString() => PersonaId;
@@ -85,8 +85,8 @@ public static class ComboBundleDiscovery
         SizedItem DrinkFromSize,
         SizedItem DrinkToSize,
         SizedItem SecondDrink,
-        /// <summary>#283: see <see cref="BundleResizeCase.PersonasDir"/>'s own doc comment --
-        /// identical null-means-real-pack convention.</summary>
+        // <summary>#283: see <see cref="BundleResizeCase.PersonasDir"/>'s own doc comment --
+        // identical null-means-real-pack convention.</summary>
         string? PersonasDir = null)
     {
         public override string ToString() => PersonaId;

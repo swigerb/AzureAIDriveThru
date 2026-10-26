@@ -51,7 +51,7 @@ public sealed class AuthRowRealtimeAssertionsTests
         Assert.Contains("token=resolved-session-token", query);
     }
 
-    /// <summary>R3 pin: when <paramref name="attachSessionToken"/> is false (18.11 row 10's "no
+    /// <summary>R3 pin: when <c>attachSessionToken</c> is false (18.11 row 10's "no
     /// session token" case), the <c>token</c> query param must be omitted entirely, not sent
     /// empty -- matching <see cref="Conformance.Harness.RealtimeBrowserClient.ConnectAsync"/>'s
     /// own behaviour exactly.</summary>

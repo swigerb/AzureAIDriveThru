@@ -5,7 +5,7 @@ using Xunit;
 namespace Conformance.Tests;
 
 /// <summary>
-/// Pure unit tests for <see cref="CapturedProcessOutput.CountUnhandledErrors"/> (PR #22 review
+/// Pure unit tests for <see cref="CapturedProcessOutput.CountUnhandledErrors()"/> (PR #22 review
 /// item N5) — drives a real short-lived Python process (the venv interpreter this suite already
 /// depends on, via -c) that prints known stderr content, so the test exercises the actual
 /// stdout/stderr capture wiring (<see cref="CapturedProcessOutput.Attach"/>,

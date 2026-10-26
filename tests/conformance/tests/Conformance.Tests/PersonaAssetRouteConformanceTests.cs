@@ -225,7 +225,7 @@ public sealed class PersonaAssetRouteConformanceTests(ConformanceFixture fixture
     /// unauthenticated request before `_resolve_persona_asset_path`'s own containment check ever
     /// runs, and this test previously accepted 401 as a passing outcome, so it could never actually
     /// exercise (or catch a regression in) either backend's resolver. Fixed by minting a real
-    /// token from this fixture's own <see cref="FakeEntraIssuer"/> (<c>fixture.EntraIssuer!.Mint()</c>,
+    /// token from this fixture's own <see cref="Conformance.Fakes.FakeEntraIssuer"/> (<c>fixture.EntraIssuer!.Mint()</c>,
     /// the same source <see cref="ConformanceHttpClient"/> uses for every other row in this class)
     /// and sending it on the raw request line, so both backends now reach their own resolver code
     /// for this row, same as the `%2f`/`%5c` InlineData rows above. With a valid token attached:

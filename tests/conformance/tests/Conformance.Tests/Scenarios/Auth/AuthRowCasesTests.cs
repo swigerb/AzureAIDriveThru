@@ -40,7 +40,7 @@ public sealed class AuthRowCasesTests : IAsyncLifetime
     /// <see cref="JwtSecurityTokenHandler"/>'s own claim aggregation would otherwise collapse a
     /// single same-Type claim to (exactly what Rick's own probe found: <c>"roles":"DriveThru.User"</c>).
     /// Inspects the raw decoded payload JSON directly, the same way that probe did, rather than
-    /// relying on <see cref="Claim"/>'s own array bookkeeping. A mutation that drops the
+    /// relying on <see cref="System.Security.Claims.Claim"/>'s own array bookkeeping. A mutation that drops the
     /// post-construction <c>token.Payload["roles"] = roles.ToArray()</c> fix would fail this test:
     /// the decoded <c>roles</c> value would be a JSON string, not a JSON array.</summary>
     [Fact]

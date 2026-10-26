@@ -15,7 +15,7 @@ namespace Conformance.Tests;
 /// <see cref="Omitted_persona_binds_to_the_default_persona_visible_in_session_metadata"/> stays
 /// UNTAGGED: it needs the real upstream relay to actually reach `session.created` and echo
 /// `extension.session_metadata` (rtmt.py's `_websocket_handler`/`ConnectionForwarder`) --
-/// <see cref="RealtimeProcessor"/> this wave is a deliberate stub (issue #13 lands the real
+/// <c>RealtimeProcessor</c> this wave is a deliberate stub (issue #13 lands the real
 /// relay), so this row still only runs against the Python backend.
 ///
 /// Rick's PR #120 review round 2, required item 4: <c>Api_persona_detail_returns_200_for_the_default_persona</c>

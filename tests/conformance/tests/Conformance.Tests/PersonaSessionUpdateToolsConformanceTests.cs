@@ -14,12 +14,12 @@ namespace Conformance.Tests;
 /// <c>rtmt.tools</c> from one shared loader; C# already used the bound persona's own loader) -- so
 /// a guest bound to a non-default persona heard that persona's own menu and prompt, but its tool
 /// descriptions still named the DEFAULT persona's own brand and ticket/order-screen name. This is
-/// the exact same coverage gap <see cref="PersonaSessionUpdateInstructionsConformanceTests"/>
+/// the exact same coverage gap <c>PersonaSessionUpdateInstructionsConformanceTests</c>
 /// closed for `session.instructions`, now closed for `session.tools[].description`: connect with
 /// `?persona=&lt;id&gt;`, send the real client session.update, and assert the forwarded upstream
 /// session's `search` tool description contains THAT pack's own text and none of the others'.
 ///
-/// Same reasoning as <see cref="PersonaSessionUpdateInstructionsConformanceTests"/>: shared C#
+/// Same reasoning as <c>PersonaSessionUpdateInstructionsConformanceTests</c>: shared C#
 /// here carries NO persona-specific literal of its own. Every persona's own
 /// `toolDescriptionSubstring` lives in its own tests/conformance/testdata/personas/&lt;id&gt;/
 /// smoke.json (same file both <see cref="PersonaSmokeExpectations"/> and <see
@@ -117,7 +117,7 @@ internal static class PersonaSessionUpdateToolsExpectations
 }
 
 /// <summary>Shared R4 scenario body -- run once per persona id by both Theory classes below.
-/// <paramref name="allPersonaIdsOnThisFixture"/> is every persona id enabled on the SAME fixture
+/// <c>allPersonaIdsOnThisFixture</c> is every persona id enabled on the SAME fixture
 /// the Theory itself iterates (the full real-pack set for <see cref="ConformanceFixture"/>, or
 /// exactly test-alpha/test-beta for <see cref="TwoPersonaConformanceFixture"/>) so the
 /// "none of the others" half of the assertion never reaches across fixtures into packs that were

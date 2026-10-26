@@ -14,7 +14,7 @@ namespace Conformance.Harness;
 /// `startSession()`. Sends an `Origin` header on the handshake like a real browser would — by
 /// default the backend's own HTTP origin, since app/backend/static serves the built frontend
 /// same-origin in production (no separate dev-server origin to fake). Permessage-deflate is
-/// still opt-in per connection via <paramref name="offerDeflate"/> — real browsers always offer
+/// still opt-in per connection via <c>offerDeflate</c> — real browsers always offer
 /// it, but the harness defaults to off so tests that don't care about compression aren't coupled
 /// to it.
 /// </summary>
@@ -92,7 +92,7 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
     /// left null, mint/fetch a fresh valid pair with zero changes needed at any of this method's
     /// ~100 existing call sites: <paramref name="accessToken"/> defaults to
     /// <see cref="EntraDefaultCredentials.TryGetAccessToken"/> for <paramref name="backendBaseUri"/>
-    /// (null on a <see cref="DevelopmentPassThroughFixture"/>'s backend, which has nothing
+    /// (null on a <c>DevelopmentPassThroughFixture</c>'s backend, which has nothing
     /// registered -- so no `?access_token` is sent there either way), and
     /// <paramref name="sessionToken"/> defaults to a real <c>GET /api/auth/session</c> fetch using
     /// that same access token as its Bearer header. Set either <c>attach*</c> flag to false to
@@ -232,7 +232,7 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
     /// <see cref="AbortAsync"/>'s await of its reader task -- not just its early-return when no
     /// reader is running at all -- needs a way to start one against the fake socket first. Starts
     /// the same loop <see cref="ConnectAsync"/> would have, with no real handshake and no real
-    /// timing: whatever the fake socket's <see cref="WebSocket.ReceiveAsync"/> does (including
+    /// timing: whatever the fake socket's <see cref="WebSocket.ReceiveAsync(ArraySegment{byte}, CancellationToken)"/> does (including
     /// throwing synchronously) happens on this loop's very first iteration, deterministically.
     /// </summary>
     internal void StartReaderLoopForTesting() => _readerTask = PumpReceivedFramesAsync(_readerCts.Token);
@@ -246,7 +246,7 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
     /// down, the abrupt-drop case already covered elsewhere) and a graceful
     /// <see cref="CloseAsync"/>: cancelling only <see cref="_readerCts"/> stops this client's own
     /// background <see cref="PumpReceivedFramesAsync"/> loop from ever calling
-    /// <see cref="WebSocket.ReceiveAsync"/> again, which is exactly where .NET's managed WebSocket
+    /// <see cref="WebSocket.ReceiveAsync(ArraySegment{byte}, CancellationToken)"/> again, which is exactly where .NET's managed WebSocket
     /// would otherwise notice an incoming Close frame and send back the answering one -- so no
     /// close handshake can ever complete from this side, exactly like a real stuck/hung peer.
     /// </summary>

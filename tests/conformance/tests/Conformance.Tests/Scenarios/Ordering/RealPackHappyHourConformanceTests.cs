@@ -34,7 +34,7 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// because just ONE of its two fixture personas has a non-null window) is not safe here -- this
 /// file instead launches one dedicated <see cref="RealPackHappyHourFixture"/> backend PER pack PER
 /// instant, at an instant computed fresh from THAT pack's own window/timezone
-/// (<see cref="LocalWallClockInstant"/>), "just outside" always being exactly one second before
+/// (<see cref="RealPackHappyHourConformanceTests.LocalWallClockInstant"/>), "just outside" always being exactly one second before
 /// the pack's own opening instant (so it is correct regardless of which timezone or which hour a
 /// future pack's own window starts at, DST included).
 ///

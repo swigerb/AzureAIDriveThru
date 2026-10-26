@@ -10,7 +10,7 @@ namespace Conformance.Tests;
 /// PR #22 review item N3 regression: a backend closing its upstream socket mid-stream (a normal,
 /// expected occurrence — it happens on every browser drop) must never be misattributed as a
 /// handler fault on a *later*, unrelated scenario sharing the same fixture. This exercises
-/// <see cref="ConformanceFixture.RunAsync"/> directly (not a bare <see cref="FakeRealtimeUpstreamServer"/>)
+/// <see cref="ConformanceFixture.RunAsync(Func{Task})"/> directly (not a bare <see cref="FakeRealtimeUpstreamServer"/>)
 /// because the bug this guards against was specifically a race in <c>RunAsync</c>'s own teardown
 /// ordering: scenario A's own checks used to run immediately after its body returned, before the
 /// connection it dropped had actually finished tearing down server-side — so A passed clean, and

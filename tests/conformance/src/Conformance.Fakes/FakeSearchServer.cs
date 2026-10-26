@@ -81,7 +81,7 @@ public sealed class FakeSearchServer : IAsyncDisposable
     /// scenario that sets this flag and then never actually sends a matching search request
     /// (an assertion failing early, a copy-paste mistake) would otherwise leave it armed to
     /// silently reject an unrelated later scenario's search request instead — called from
-    /// <see cref="Conformance.Tests.ConformanceFixture.RunAsync"/> before every scenario body
+    /// <c>Conformance.Tests.ConformanceFixture.RunAsync</c> before every scenario body
     /// runs, exactly like the realtime server's equivalent check.
     /// </summary>
     /// <exception cref="InvalidOperationException">A previous scenario armed

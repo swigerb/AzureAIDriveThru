@@ -95,7 +95,7 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
     /// <see cref="RealtimeBrowserClient.WaitForCloseAsync"/>, as the two tests above do) always
     /// produced that same abrupt-drop signature, whether or not the scenario cared.
     /// <para/>
-    /// Deliberately does <em>not</em> run against the real backend (<see cref="fixture"/>): a real
+    /// Deliberately does <em>not</em> run against the real backend (<c>fixture</c>): a real
     /// backend answers a close near-instantly, which races the reader loop's own cancellation —
     /// mutation-testing this against it caught a reverted fix only 3-4 times out of 5 (confirmed
     /// while writing this test). <see cref="DelayedCloseFakeBackend"/> instead answers the client's
@@ -290,14 +290,14 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
     /// <summary>
     /// #28 flake hunt (post-#54-merge, run 16/25 on <c>ResumeRehydrationAndNudgeTests</c>):
     /// deterministic, zero-timing proof of the exact gap that failure exposed --
-    /// <see cref="AbortAsync"/> awaiting its reader task when that task's in-flight
+    /// <see cref="RealtimeBrowserClient.AbortAsync"/> awaiting its reader task when that task's in-flight
     /// <c>ReceiveAsync</c> observed the just-aborted socket as an <see cref="ObjectDisposedException"/>
     /// rather than the two shapes already handled (<see cref="OperationCanceledException"/>,
     /// <see cref="WebSocketException"/>). <see cref="ThrowingReceiveFakeSocket"/>'s
     /// <c>ReceiveAsync</c> throws synchronously on its very first call, so this needs no real
     /// abort race at all -- <see cref="RealtimeBrowserClient.StartReaderLoopForTesting"/> starts the
     /// same reader loop <see cref="RealtimeBrowserClient.ConnectAsync"/> would, and whichever
-    /// exception the fake throws is what the loop -- and then <see cref="AbortAsync"/>'s await of
+    /// exception the fake throws is what the loop -- and then <see cref="RealtimeBrowserClient.AbortAsync"/>'s await of
     /// it -- has to tolerate.
     ///
     /// Mutation-check: removing <c>WebSocketJson.ReceiveJsonOrCloseAsync</c>'s new
@@ -321,7 +321,7 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
 
     /// <summary>
     /// Companion to <see cref="AbortAsync_does_not_throw_when_the_reader_observes_a_disposed_socket"/>:
-    /// the first of the two shapes <see cref="AbortAsync"/> already handled before the ODE fix,
+    /// the first of the two shapes <see cref="RealtimeBrowserClient.AbortAsync"/> already handled before the ODE fix,
     /// exercised through the exact same deterministic seam so all three shapes are pinned the same
     /// way instead of only the new one having a test.
     /// </summary>
@@ -339,7 +339,7 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
 
     /// <summary>
     /// Companion to <see cref="AbortAsync_does_not_throw_when_the_reader_observes_a_disposed_socket"/>:
-    /// the second of the two shapes <see cref="AbortAsync"/> already handled before the ODE fix.
+    /// the second of the two shapes <see cref="RealtimeBrowserClient.AbortAsync"/> already handled before the ODE fix.
     /// </summary>
     [Fact]
     public async Task AbortAsync_does_not_throw_when_the_reader_observes_a_fault()
@@ -356,8 +356,8 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
     /// <summary>
     /// PR #52 CI follow-up (swigerb/SonicAIDriveThru#28 N10 aftermath, CI runs 36085091969):
     /// deterministic proof of the exact failure -- and exact fix -- for the resume scenarios'
-    /// keepalive loops (<see cref="ResumeRehydrationClientVisibilityTests"/>,
-    /// <see cref="WholeSessionLeakTests"/>). <see cref="AbruptPeerFakeBackend"/> reliably confirms
+    /// keepalive loops (<see cref="Scenarios.Security.ResumeRehydrationClientVisibilityTests"/>,
+    /// <see cref="Scenarios.Security.WholeSessionLeakTests"/>). <see cref="AbruptPeerFakeBackend"/> reliably confirms
     /// (see this test's own mutation-check below) that a send on a socket that has settled into
     /// <see cref="WebSocketState.Aborted"/> throws exactly a <see cref="WebSocketException"/> ("The
     /// WebSocket is in an invalid state ('Aborted') for this operation") -- the same exception type
@@ -365,12 +365,12 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
     /// and the type <see cref="Conformance.Harness.KeepAlive.RunAsync"/> now also catches alongside
     /// <see cref="OperationCanceledException"/>. This reproduces that class of failure without
     /// needing the real Python backend's idle-sweep timing to cooperate (which, per
-    /// <see cref="ResumeMarginRegressionTests"/>'s own doc comment, could not be forced reliably
+    /// <see cref="Scenarios.Security.ResumeMarginRegressionTests"/>'s own doc comment, could not be forced reliably
     /// via wall-clock delay on this machine for a *send* specifically, only for the *resume
     /// rejection* Fix A addresses).
     ///
-    /// Round 5 (Rick's PR #52 review, S2): this test, <see cref="ResumeRehydrationClientVisibilityTests"/>,
-    /// and <see cref="WholeSessionLeakTests"/> previously each had their own hand-copied keepalive
+    /// Round 5 (Rick's PR #52 review, S2): this test, <see cref="Scenarios.Security.ResumeRehydrationClientVisibilityTests"/>,
+    /// and <see cref="Scenarios.Security.WholeSessionLeakTests"/> previously each had their own hand-copied keepalive
     /// loop with its own <c>catch</c> clauses -- so this self-test's own copy passing proved
     /// nothing about whether either scenario's *separate* copy still had the fix applied. Now all
     /// three call the same <see cref="Conformance.Harness.KeepAlive.RunAsync"/> helper, so there is
@@ -378,7 +378,7 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
     ///
     /// Mutation-check: removing <c>KeepAlive.RunAsync</c>'s <c>catch (WebSocketException)</c> turns
     /// this test red with exactly the exception type above, AND turns
-    /// <see cref="ResumeRehydrationClientVisibilityTests"/>/<see cref="WholeSessionLeakTests"/> red
+    /// <see cref="Scenarios.Security.ResumeRehydrationClientVisibilityTests"/>/<see cref="Scenarios.Security.WholeSessionLeakTests"/> red
     /// too (their own idle-sweep-vs-nudge race depends on the same swallowed exception); restoring
     /// it turns all three green again. See the PR #52 CI follow-up report for the run log.
     /// </summary>

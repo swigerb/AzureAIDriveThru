@@ -275,7 +275,7 @@ public sealed class CascadeConformanceTests(CascadeConformanceFixture fixture)
 
     /// <summary>Bounds the final negative wait below. By the time that wait starts, the first
     /// turn's own /chat/completions request has already been asserted <c>Aborted</c> -- so unlike
-    /// <see cref="RateLimitGuestSpeechCancellationTests"/>'s own bounded negative waits (which
+    /// <see cref="Conformance.Tests.Scenarios.RateLimit.RateLimitGuestSpeechCancellationTests"/>'s own bounded negative waits (which
     /// race a real, still-possible scheduled retry), there is no plausible mechanism left that
     /// could still deliver the first turn's answer; this only guards against a regression that
     /// somehow buffers/replays it. Comfortably short is fine -- same order of magnitude as that

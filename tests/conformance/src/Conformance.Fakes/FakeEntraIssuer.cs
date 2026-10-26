@@ -167,7 +167,7 @@ public sealed class FakeEntraIssuer : IAsyncDisposable
     /// blocked on this type assuming there's only ever one.</summary>
     public string Tenant { get; }
 
-    /// <summary>Set once <see cref="StartAsync"/> returns -- `http://127.0.0.1:{port}/`, matching
+    /// <summary>Set once <see cref="StartAsync(CancellationToken)"/> returns -- `http://127.0.0.1:{port}/`, matching
     /// ENTRA_INSTANCE's exact shape (trailing slash) in persona-architecture.md 18.5/18.11.</summary>
     public Uri BaseUri { get; private set; } = new("http://127.0.0.1:0/");
 

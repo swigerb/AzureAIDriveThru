@@ -15,7 +15,7 @@ namespace Conformance.Harness;
 /// today, so <see cref="DiscoverFromDisk()"/> resolves all three as enabled with no harness code
 /// change required -- it was written to make a second/third pack "visible for free" and that is
 /// exactly what happened. <see cref="DefaultPersonaId"/> ("sonic") stays the harness's own
-/// DEFAULT_PERSONA unless a fixture explicitly overrides <see cref="ConformanceFixture.Persona"/>,
+/// DEFAULT_PERSONA unless a fixture explicitly overrides <c>ConformanceFixture.Persona</c>,
 /// matching PersonaCatalog.load()'s own "sonic wins if enabled" tie-break in
 /// <see cref="ResolveDefault"/> below.
 /// </summary>

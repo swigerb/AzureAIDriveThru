@@ -75,7 +75,7 @@ namespace Conformance.Tests.Scenarios.Browser;
 /// this order -- start a new order to switch" lock re-engaging specifically once a RELOAD
 /// RESUMES a non-empty order. This case builds a real order (a scripted <c>update_order</c> call
 /// attached to the server-side session), reloads, asserts the picker is still enabled and the
-/// switch now opens <see cref="PersonaSwitchConfirmDialog"/> instead of switching immediately or
+/// switch now opens <c>PersonaSwitchConfirmDialog</c> instead of switching immediately or
 /// silently refusing, confirms the switch, taps, and then reuses the same five-property check
 /// below plus one more: the old persona's order text is gone from the page entirely (no leak).
 /// Issue #180 round 3 (R10) additionally inserts a Cancel round trip before the real switch,
@@ -669,7 +669,7 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
     ///    a new order to switch" and no further &lt;select&gt; interaction could reach test-beta
     ///    at all (the issue's own repro).
     ///  - Selecting test-beta on that non-empty resumed order opens
-    ///    <see cref="PersonaSwitchConfirmDialog"/> instead of switching immediately (cases A-E2's
+    ///    <c>PersonaSwitchConfirmDialog</c> instead of switching immediately (cases A-E2's
     ///    empty-order path never shows this dialog) or silently refusing the switch (the old
     ///    lock).
     ///  - The OLD persona's order never leaks into the new one: test-alpha's order item (added

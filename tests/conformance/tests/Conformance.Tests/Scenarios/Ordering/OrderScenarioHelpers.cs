@@ -139,6 +139,14 @@ public static class OrderScenarioHelpers
 
     /// <summary>One scripted `update_order`/`get_order`/`reset_order`/`search` call and everything
     /// the caller needs from its round trip.</summary>
+    /// <param name="connection">The fake upstream connection the scripted function call is queued on.</param>
+    /// <param name="browser">The browser client that triggers the turn and receives the tool response.</param>
+    /// <param name="toolName">The tool the scripted function call invokes.</param>
+    /// <param name="argumentsJson">The scripted function call's JSON arguments.</param>
+    /// <param name="callId">The scripted function call's <c>call_id</c>.</param>
+    /// <param name="previousRoundTripIndex">The last <c>roundTripIndex</c> the caller has already
+    /// observed; only a strictly greater one completes this call.</param>
+    /// <param name="ct">Cancels the waits.</param>
     /// <param name="toClient">True if this tool's <c>ToolResultDirection</c> reaches the browser
     /// (TO_CLIENT/TO_BOTH) — <c>search</c> never does (TO_SERVER only), so callers scripting a
     /// search call must pass false or the wait below would time out waiting for a frame that

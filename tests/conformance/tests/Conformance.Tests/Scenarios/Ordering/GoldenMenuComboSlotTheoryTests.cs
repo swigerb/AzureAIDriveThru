@@ -8,7 +8,7 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// PR #50 review must-fix: a comprehensive data-driven Theory over ALL 180 rows of
 /// tests/conformance/testdata/golden-menu-categories.json, added specifically to replace
 /// "illustrative subset" coverage with an exhaustive regression net for the combo side-slot
-/// pricing bug Rick caught in review (menu_utils.py's old wide "Extras & Sides"/"Hot Dogs & Tots"
+/// pricing bug Rick caught in review (menu_utils.py's old wide "Extras &amp; Sides"/"Hot Dogs &amp; Tots"
 /// category-to-"sides" mapping silently absorbed 9+ non-Tots/Fries items for free into a combo's
 /// side slot -- e.g. Cheeseburger Combo + Crispy Tenders 5pc totalled $8.49 instead of $15.98).
 ///
@@ -17,7 +17,7 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// for free ("sides"/"drinks") or charged in full ("none"). This must catch:
 ///   - Rick's X4 (the Corn Dog "hot dog entree" exception removed, so Corn Dog wrongly absorbs
 ///     into the combo side slot again)
-///   - Rick's X6 (the "Extras & Sides"/"Hot Dogs & Tots" wide category-to-"sides" bucket
+///   - Rick's X6 (the "Extras &amp; Sides"/"Hot Dogs &amp; Tots" wide category-to-"sides" bucket
 ///     reintroduced, so e.g. Crispy Tenders/Onion Rings/Ched 'R' Peppers wrongly absorb again)
 /// regardless of the underlying implementation detail, because it asserts the OBSERVABLE
 /// end-to-end price for every real menu item, not an internal classification helper.

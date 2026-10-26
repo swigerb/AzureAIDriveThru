@@ -10,7 +10,7 @@ namespace Conformance.Tests;
 /// `session.tools[*].parameters` against the JSON Schema metaschema the same way the real
 /// realtime API does (<see cref="GaSessionValidator"/>'s new tool-schema check). This file closes
 /// the loop the issue asked for -- boot EVERY shipped persona pack (<see
-/// cref="ConformancePersonas.DiscoverFromDisk"/>, the real packs under personas/, not the
+/// cref="ConformancePersonas.DiscoverFromDisk()"/>, the real packs under personas/, not the
 /// test-only fixture packs) and assert that pack's own bootstrap AND browser-triggered
 /// `session.update` are both ACCEPTED by the stricter fake, i.e. this repo never ships a
 /// `tool_schemas.yaml` that the real API would itself reject.

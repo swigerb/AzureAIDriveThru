@@ -12,9 +12,9 @@ namespace Conformance.Harness;
 /// and <see cref="RealtimeBrowserClient"/> both consult this registry only when a caller didn't
 /// explicitly pass its own token.
 ///
-/// An Entra-mode <see cref="ConformanceFixture"/> registers a minting delegate here right after
+/// An Entra-mode <c>ConformanceFixture</c> registers a minting delegate here right after
 /// its backend starts (<c>InitializeAsync</c>) and unregisters it in <c>DisposeAsync</c>. A
-/// <see cref="FakeEntraIssuer"/>-backed delegate mints a *fresh* token on every call (rather than
+/// <see cref="Conformance.Fakes.FakeEntraIssuer"/>-backed delegate mints a *fresh* token on every call (rather than
 /// caching one string) so a long-running collection never risks a token's `exp`/`nbf` window
 /// going stale relative to "now" partway through a slow test run.
 /// </summary>
@@ -36,7 +36,7 @@ public static class EntraDefaultCredentials
     public static void Unregister(Uri backendBaseUri) => s_mintersByAuthority.TryRemove(backendBaseUri.Authority, out _);
 
     /// <summary>Mints and returns a fresh default access token for <paramref name="requestUri"/>'s
-    /// authority, or null if nothing is registered for it (a <see cref="DevelopmentPassThroughFixture"/>'s
+    /// authority, or null if nothing is registered for it (a <c>DevelopmentPassThroughFixture</c>'s
     /// backend, an unrelated host, or a fixture that hasn't started yet).</summary>
     public static string? TryGetAccessToken(Uri requestUri) =>
         s_mintersByAuthority.TryGetValue(requestUri.Authority, out Func<string>? mint) ? mint() : null;

@@ -48,7 +48,7 @@ public sealed record AuthRowTokenCase(
     /// <summary>
     /// Every row this file covers, in 18.11's own order. Row 1 ("no token") has a null
     /// <see cref="MintToken"/> result -- callers must omit the Authorization header/access_token
-    /// entirely, not send an empty one, matching <see cref="RealtimeBrowserClient"/>'s own
+    /// entirely, not send an empty one, matching <see cref="Conformance.Harness.RealtimeBrowserClient"/>'s own
     /// attachAccessToken=false contract (Conformance.Harness).
     /// </summary>
     public static readonly AuthRowTokenCase[] All =

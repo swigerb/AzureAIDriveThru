@@ -4,7 +4,7 @@ namespace Conformance.Harness;
 /// Attributes unhandled-backend-error counts to the scenario that actually caused them, even when
 /// the count only crosses because a stderr line lands asynchronously after that scenario's own
 /// post-body check already ran (PR #66 M1). Extracted out of
-/// <see cref="Conformance.Tests.ConformanceFixture.RunAsync(Func{Task}, int)"/> as a small, pure,
+/// <c>Conformance.Tests.ConformanceFixture.RunAsync(Func{Task}, int)</c> as a small, pure,
 /// independently-testable bookkeeping seam — everything it needs is passed in as plain ints and a
 /// name, so it never has to spin up (or race) a real backend process to be exercised
 /// deterministically.
@@ -38,7 +38,7 @@ namespace Conformance.Harness;
 public sealed class ScenarioErrorAttribution
 {
     /// <summary>
-    /// Pseudo-scenario name <see cref="Conformance.Tests.ConformanceFixture.InitializeAsync"/>
+    /// Pseudo-scenario name <c>Conformance.Tests.ConformanceFixture.InitializeAsync</c>
     /// seeds this attribution with, once, right after the shared backend process finishes
     /// starting and before any real scenario runs (PR #66 re-review, R1(c)) — so a stray error
     /// line landing in the narrow gap between backend-ready and the very first scenario's own
@@ -54,7 +54,7 @@ public sealed class ScenarioErrorAttribution
     /// <summary>
     /// Name used when a stranded error is charged against a scenario boundary that was never
     /// actually recorded by name — should not be reachable in production once
-    /// <see cref="Conformance.Tests.ConformanceFixture"/> always seeds via
+    /// <c>Conformance.Tests.ConformanceFixture</c> always seeds via
     /// <see cref="StartupScenarioName"/> before the first scenario runs, but kept as a defensive
     /// fallback for any other caller of this class that doesn't.
     /// </summary>

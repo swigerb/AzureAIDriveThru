@@ -131,13 +131,13 @@ public class ConformanceFixture : IAsyncLifetime
     /// Issue #143/ADR-002: whether this fixture launches its backend in Entra mode against a
     /// fresh <see cref="EntraIssuer"/> (the default -- persona-architecture.md 18.11: "the default
     /// fixture runs in Entra mode against the fake issuer") or leaves Entra entirely unconfigured
-    /// (<see cref="DevelopmentPassThroughFixture"/> overrides this to false for the mode rows and
+    /// (<see cref="Scenarios.Auth.DevelopmentPassThroughFixture"/> overrides this to false for the mode rows and
     /// the Playwright UX runs, which need a non-Production, unconfigured backend instead).
     /// </summary>
     protected virtual bool UseEntraMode => true;
 
     /// <summary>Non-null only when <see cref="UseEntraMode"/> is true (every fixture except
-    /// <see cref="DevelopmentPassThroughFixture"/>). Row tests mint arbitrary tokens against this
+    /// <see cref="Scenarios.Auth.DevelopmentPassThroughFixture"/>). Row tests mint arbitrary tokens against this
     /// directly (e.g. <c>fixture.EntraIssuer!.Mint(new() { ... })</c>) -- the fixture itself only
     /// ever mints the one "valid token" default via <see cref="EntraDefaultCredentials"/>.</summary>
     public FakeEntraIssuer? EntraIssuer { get; private set; }
@@ -322,7 +322,7 @@ public class ConformanceFixture : IAsyncLifetime
     }
 
     /// <summary>How long a scenario's connections get to finish closing before <see
-    /// cref="RunAsync"/> gives up and fails with a clear message — matches the <c>FrameTimeout</c>
+    /// cref="RunAsync(Func{Task}, int)"/> gives up and fails with a clear message — matches the <c>FrameTimeout</c>
     /// convention used throughout the scenario tests themselves (PR #22 review item N3).</summary>
     private static readonly TimeSpan s_scenarioTeardownTimeout = TimeSpan.FromSeconds(30);
 
@@ -387,7 +387,7 @@ public class ConformanceFixture : IAsyncLifetime
     /// unrelated upstream error) that the backend legitimately logs at ERROR level as part of
     /// proving recovery actually happened. <paramref name="allowedNewBackendErrors"/> is an
     /// UPPER BOUND on the number of new backend ERROR-level log lines (per
-    /// <see cref="Conformance.Harness.CapturedProcessOutput.CountUnhandledErrors"/>) this
+    /// <see cref="Conformance.Harness.CapturedProcessOutput.CountUnhandledErrors()"/>) this
     /// scenario's own body may deliberately, deterministically cause — asserted as
     /// <c>actual &lt;= baseline + allowed</c>, never exact equality. How many ERROR-level lines a
     /// backend chooses to log for a given recovered condition (one line, two lines, or logged at

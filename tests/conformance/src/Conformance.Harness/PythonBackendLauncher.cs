@@ -7,7 +7,7 @@ namespace Conformance.Harness;
 /// <summary>Thrown by <see cref="BackendLauncherFactory"/> for CONFORMANCE_BACKEND=dotnet when
 /// <see cref="DotnetPlaceholderPolicy.ShouldSkip"/> allows skipping (PR #22 review item 15:
 /// CONFORMANCE_ALLOW_SKIP=1 and not CI) — a placeholder until the S2 .NET backend exists.
-/// <see cref="ConformanceFixture"/> catches only this specific type and turns it into a skip; any
+/// <c>ConformanceFixture</c> catches only this specific type and turns it into a skip; any
 /// other exception type (see <see cref="ConformanceBackendUnavailableException"/>) fails the
 /// suite normally.</summary>
 public sealed class ConformanceBackendNotImplementedException(string message) : Exception(message);
@@ -15,7 +15,7 @@ public sealed class ConformanceBackendNotImplementedException(string message) : 
 /// <summary>Thrown by <see cref="BackendLauncherFactory"/> for CONFORMANCE_BACKEND=dotnet when
 /// <see cref="DotnetPlaceholderPolicy.ShouldSkip"/> does not allow skipping (the default, and
 /// always in CI) -- deliberately a *different* type than
-/// <see cref="ConformanceBackendNotImplementedException"/> so <see cref="ConformanceFixture"/>'s
+/// <see cref="ConformanceBackendNotImplementedException"/> so <c>ConformanceFixture</c>'s
 /// narrow catch clause never accidentally swallows it: it propagates out of
 /// <c>InitializeAsync</c> and fails every test in the collection (PR #22 review item 15 --
 /// CI must never silently skip real backend coverage just because the S2 .NET backend doesn't
@@ -58,13 +58,13 @@ public static partial class PythonBackendLauncher
     /// <summary>
     /// Refs #259 (Rick's #267 review, required item (b)): injectable test-only seam -- a hook
     /// into the exact <see cref="ProcessStartInfo"/> (including its <c>Environment["PORT"]</c>)
-    /// this launcher is about to hand to <see cref="Process.Start"/> for a given attempt,
+    /// this launcher is about to hand to <see cref="Process.Start()"/> for a given attempt,
     /// invoked once per attempt (first attempt and every retry). Lets a test assert directly on
     /// what was actually launched -- e.g. that a forced-collision first attempt used the
     /// caller-requested port while every subsequent retry always requested port 0, never a fresh
     /// <see cref="NetworkUtils.GetFreeTcpPort"/> reservation (reintroducing the exact TOCTOU race
     /// port 0 exists to remove) -- instead of only proving the retry loop recovers *some* way
-    /// (already covered end-to-end by <see cref="DotnetBackendLauncherPortRaceTests"/>'s
+    /// (already covered end-to-end by <c>DotnetBackendLauncherPortRaceTests</c>'s
     /// counterpart). Backed by <see cref="AsyncLocal{T}"/> (not a plain static field) so a test
     /// that sets this is only ever observed by launches reachable from that same test's own async
     /// call chain -- many other fixtures across many xunit collections launch the Python backend

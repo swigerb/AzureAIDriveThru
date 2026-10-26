@@ -164,7 +164,7 @@ public sealed class CustomisedItemMenuLookupTests
         /// an explicit, exact-match alias, never a substring check. The "must stay charged"
         /// regression net for real-but-different Tots items and off-menu near-misses already
         /// exists just below/above (<see cref="Customised_chili_cheese_tots_is_charged_in_full_alongside_a_combo_not_absorbed"/>,
-        /// <see cref="Off_menu_side_like_item_is_charged_in_full_alongside_a_combo_not_absorbed"/>)
+        /// <c>Off_menu_side_like_item_is_charged_in_full_alongside_a_combo_not_absorbed</c>)
         /// and is untouched by this alias.</summary>
         [Theory]
         [Trait("Dotnet", "ready")]
@@ -419,15 +419,15 @@ public sealed class CustomisedItemMenuLookupTests
             });
 
         /// <summary>Rick's Z2: a customised sundae must not silently fill a combo's drink slot
-        /// even though "Shakes & Ice Cream" (its JSON category) is otherwise a combo-drink
+        /// even though "Shakes &amp; Ice Cream" (its JSON category) is otherwise a combo-drink
         /// category -- Brian's #39 decision (sundaes aren't a drink) must survive customization,
         /// exactly like the plain-sundae case already pinned in
-        /// <see cref="InferComboComponentGoldenCategoryTests"/> (Python) /
+        /// <c>InferComboComponentGoldenCategoryTests</c> (Python) /
         /// <c>GoldenMenuComboSlotTheoryTests</c> (C#).
         ///
         /// #77: Sonic's real persona.json now has machines.ice_cream_machine "down", so the new
         /// add-time machine_unavailable gate rejects this item before combo-slot classification
-        /// is ever reached -- exactly like every other "Shakes & Ice Cream" item (see
+        /// is ever reached -- exactly like every other "Shakes &amp; Ice Cream" item (see
         /// GoldenMenuComboSlotTheoryTests.RequiresACurrentlyDownMachine). The customization-aware
         /// combo-slot lookup this test exists to pin is unit-tested directly (with no machine
         /// gate in the way) by menu_utils.py's own infer_combo_component -- so this end-to-end

@@ -96,11 +96,11 @@ public sealed class BrowserConformanceFixture : IAsyncLifetime
     }
 
     /// <summary>
-    /// Wraps a scenario body exactly like <see cref="ConformanceFixture.RunAsync"/> (whose
+    /// Wraps a scenario body exactly like <see cref="ConformanceFixture.RunAsync(Func{Task})"/> (whose
     /// diagnostics-on-failure and no-leaked-connections checks this still gets, via
     /// delegation) but additionally honours a missing-browser-channel skip, and re-verifies (never
     /// blindly swallows) a "new backend error(s) above the baseline" failure that turns out to be
-    /// composed entirely of <see cref="IsBenignProactorTeardownIncident"/> matches (see that
+    /// composed entirely of <see cref="IsBenignProactorTeardownIncident(IReadOnlyList{string})"/> matches (see that
     /// method's own doc comment for the root cause and evidence).
     ///
     /// This test category is the only one in the suite that drives a *real* browser (Playwright's
@@ -114,8 +114,8 @@ public sealed class BrowserConformanceFixture : IAsyncLifetime
     /// ProactorEventLoop teardown path and log one benign, well-known
     /// <c>ConnectionResetError: [WinError 10054]</c> that has nothing to do with this scenario's
     /// own assertions or with rtmt.py's own application logic -- see
-    /// <see cref="IsBenignProactorTeardownIncident"/>. Swallowing that specific, positively
-    /// re-verified failure here (rather than loosening <see cref="ConformanceFixture.RunAsync"/>'s
+    /// <see cref="IsBenignProactorTeardownIncident(IReadOnlyList{string})"/>. Swallowing that specific, positively
+    /// re-verified failure here (rather than loosening <see cref="ConformanceFixture.RunAsync(Func{Task})"/>'s
     /// shared, zero-tolerance check, or granting every Browser scenario a blind numeric error
     /// allowance that could just as easily mask two unrelated real bugs) keeps every other
     /// scenario in the suite -- Browser or not -- exactly as strict as before.

@@ -10,7 +10,7 @@ namespace Conformance.Fakes;
 /// (`POST {endpoint}/chat/completions`), issue #82's cascade pipeline. `CascadeProcessor`
 /// (app/backend/cascade_processor.py) posts one request per tool-calling round via
 /// `azure.ai.inference.aio.ChatCompletionsClient.complete(messages=, model=, tools=)`, which
-/// serialises to a plain `{"messages": [...], "model": "<deployment>", "tools": [...]}` JSON
+/// serialises to a plain `{"messages": [...], "model": "&lt;deployment&gt;", "tools": [...]}` JSON
 /// body against `/chat/completions?api-version=...`, authenticated with a bearer token from
 /// `DefaultAzureCredential` (real deployments) or the conformance harness's own fake credential
 /// (see `conformance_hooks.py`'s `cascade_credential()` / `CONFORMANCE_CASCADE_FAKE_TOKEN`).
@@ -197,7 +197,7 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
     /// that the underlying HTTP connection itself is NOT corrupted by this -- the bug is purely
     /// this stale FIFO entry, not connection-pooling/keep-alive state.
     ///
-    /// Tests never call this directly: <see cref="ConformanceFixture.AssertNoPendingExtraFakeState"/>
+    /// Tests never call this directly: <c>ConformanceFixture.AssertNoPendingExtraFakeState</c>
     /// (overridden by the cascade fixtures to call this method) calls it automatically AFTER every
     /// scenario's body returns (see <c>ConformanceFixture.RunAsync</c>'s own call site) -- not
     /// before the NEXT scenario's body runs, the way <see cref="FakeRealtimeUpstreamServer
@@ -213,7 +213,7 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
     /// check is self-healing: the scenario that actually caused the leak still fails (the
     /// `InvalidOperationException` below), but the queue is empty again by the time this method
     /// returns, so the NEXT scenario starts clean regardless of whether this one's caller observes
-    /// the exception. See <see cref="ConformanceFixture.RunAsync"/>'s own
+    /// the exception. See <c>ConformanceFixture.RunAsync</c>'s own
     /// <c>ResetExtraFakeState</c> finally-block call for the complementary fix: a scenario body
     /// that THROWS before ever reaching this method (the likeliest way a leak happens in the
     /// first place -- see this class's own doc comment above) used to leave the leftover

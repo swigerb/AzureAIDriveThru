@@ -12,7 +12,7 @@ namespace Conformance.Tests;
 /// `models.realtime.allowed` list is narrower than the full real catalog (the real `sonic` pack
 /// allows BOTH real catalogued realtime models, so no persona in the shipped repo can ever
 /// exercise "catalogued but not allowed for THIS persona" on its own). Reuses the same TEST-ONLY
-/// fixture-pack convention <see cref="PersonaConformanceFixtures"/> already established
+/// fixture-pack convention <c>PersonaConformanceFixtures</c> already established
 /// (test-alpha/test-beta) rather than touching a real pack under `personas/**` (explicitly out
 /// of scope for #75's revision) -- adds a third pack, test-gamma, whose realtime `allowed` is
 /// `["gpt-realtime-2.1-mini"]` only, deliberately excluding the real catalog's OTHER realtime model

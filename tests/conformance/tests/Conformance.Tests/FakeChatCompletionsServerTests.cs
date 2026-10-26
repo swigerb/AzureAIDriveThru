@@ -123,7 +123,7 @@ public sealed class FakeChatCompletionsServerTests
 
     /// <summary>
     /// Rick's PR #253 re-review: <see cref="FakeChatCompletionsServer.HoldNextResponse"/> arms
-    /// <c>_pendingResponseGate</c>, but only <see cref="FakeChatCompletionsServer.HandleCompletionAsync"/>
+    /// <c>_pendingResponseGate</c>, but only <c>FakeChatCompletionsServer.HandleCompletionAsync</c>
     /// (triggered by a REQUEST actually landing) used to ever clear it -- <see cref="FakeChatCompletionsServer.Drain"/>
     /// emptied the scripted-response queue but left an armed, never-claimed gate untouched. A
     /// scenario that calls <see cref="FakeChatCompletionsServer.HoldNextResponse"/> (e.g. to prove

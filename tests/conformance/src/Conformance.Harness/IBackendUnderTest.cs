@@ -37,7 +37,7 @@ public interface IBackendUnderTest : IAsyncDisposable
     /// Same contract as <see cref="UnhandledErrorCount()"/>, but an unhandled-error incident whose
     /// full text satisfies <paramref name="isBenignIncident"/> is excluded from the count. Added
     /// for issue #10/#26's Browser scenarios (see
-    /// <see cref="Conformance.Tests.Scenarios.Browser.BrowserConformanceFixture"/>) to recognise
+    /// <c>Conformance.Tests.Scenarios.Browser.BrowserConformanceFixture</c>) to recognise
     /// one narrow, well-known, Windows-only CPython event-loop teardown race by its exact logged
     /// content — never by count alone — without weakening <see cref="UnhandledErrorCount()"/>'s
     /// own zero-tolerance default for every other scenario. Default-implemented as a passthrough
@@ -68,7 +68,7 @@ public interface IBackendUnderTest : IAsyncDisposable
 
     /// <summary>
     /// Opaque low/high-water mark for <see cref="WaitForDiagnosticsAsync"/>'s
-    /// <paramref name="sinceWatermark"/> (see <see cref="Harness.CapturedProcessOutput.Watermark"/>)
+    /// <c>sinceWatermark</c> (see <see cref="Harness.CapturedProcessOutput.Watermark"/>)
     /// — take this before triggering the condition under test, then pass it back in so the
     /// predicate only ever sees output captured at or after that point (#66 S2), not (for example)
     /// an identically-worded diagnostic line an earlier scenario sharing this collection's backend

@@ -20,7 +20,7 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// cref="FakeSearchServer.ReceivedRequests"/>, already recorded for every request -- see <see
 /// cref="Conformance.Tests.Scenarios.Ordering.SearchToolTests"/>'s existing use of the same log),
 /// never the search RESULTS: the fake matches any word and falls back to the whole catalog (see
-/// <see cref="FakeSearchServer.Filter"/>), so a results-based assertion would be vacuous.
+/// <c>FakeSearchServer.Filter</c>), so a results-based assertion would be vacuous.
 ///
 /// Deliberately reads EVERY brand-specific fact it asserts -- the strategy itself (<see
 /// cref="PersonaSearchStrategy.Read"/>, that SAME pack's own persona.json), the guest's own query
@@ -28,7 +28,7 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// and the expected item name(s) (<see cref="PersonaMealNumberItems.Read"/>, that SAME pack's own
 /// menu/menuItems.json) -- so this file itself carries no brand-specific literal (no pack id, no
 /// menu item name) of its own, other than the single neutral "number 1" literal every non-opt-in
-/// pack's row uses (see <see cref="NeutralQuery"/>'s own doc comment for why that's safe). A
+/// pack's row uses (see <see cref="RealPackMealNumberConformanceTests.NeutralQuery"/>'s own doc comment for why that's safe). A
 /// data-only pack PR (matching #111/#112's own pattern) adds its own pack's meal-number smoke
 /// coverage by adding ONE optional block to its OWN
 /// tests/conformance/testdata/personas/&lt;id&gt;/smoke.json, without touching this file -- required

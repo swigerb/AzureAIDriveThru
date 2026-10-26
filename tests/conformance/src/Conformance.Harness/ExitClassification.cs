@@ -7,7 +7,7 @@ namespace Conformance.Harness;
 /// classify" step both <see cref="DotnetBackendLauncher"/> and <see cref="PythonBackendLauncher"/>
 /// run the instant their process's <see cref="Process.HasExited"/> flips true while waiting for
 /// `/health`. Factored out of both launchers (which used to each inline an identical copy) so that
-/// <see cref="Conformance.Tests.OutputDrainAfterExitTests"/> can assert against this one method
+/// <c>Conformance.Tests.OutputDrainAfterExitTests</c> can assert against this one method
 /// instead of a hand-rolled re-implementation of the pattern: removing the drain from here now
 /// fails that test directly, instead of only proving the general <see cref="Process.WaitForExit()"/>
 /// contract in isolation.
@@ -20,7 +20,7 @@ internal static class ExitClassification
     /// cref="PortBindRaceException"/>) or a genuine early exit (<see
     /// cref="InvalidOperationException"/>), returning the exception to throw rather than throwing
     /// it directly -- callers decide whether/how to surface it (both launchers throw it
-    /// immediately, but <see cref="Conformance.Tests.OutputDrainAfterExitTests"/> only inspects its
+    /// immediately, but <c>Conformance.Tests.OutputDrainAfterExitTests</c> only inspects its
     /// message).
     ///
     /// <para>

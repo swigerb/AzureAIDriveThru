@@ -84,7 +84,7 @@ public sealed class CloseCodeTests(ConformanceFixture fixture)
     /// is a healthy client that always answers). <see cref="RealtimeBrowserClient.StopReaderLoopForTesting"/>
     /// simulates exactly that -- A's socket itself is left completely untouched (no Abort, no
     /// local close), only this harness's own background pump stops calling
-    /// <see cref="System.Net.WebSockets.WebSocket.ReceiveAsync"/>, so A can never notice (let alone
+    /// <see cref="System.Net.WebSockets.WebSocket.ReceiveAsync(ArraySegment{byte}, CancellationToken)"/>, so A can never notice (let alone
     /// echo) the server's close frame, exactly like a real stuck browser tab. The regression this
     /// guards is the one Rick found and this PR fixed: HandleResumeFirstFrameAsync used to cancel
     /// <c>outcome.StaleCts</c> (which also drives A's own relay loop) BEFORE awaiting the

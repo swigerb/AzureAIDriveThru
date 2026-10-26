@@ -8,7 +8,7 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// holds BOTH genuine stand-alone sides (Cheese Tots) AND modifier-only extras (Flavor Add-In, Add
 /// Bacon, Whipped Topping, Sweet Cream, Jalapeños) that are added as their own order line to
 /// accompany/flavor an existing item, not chosen as a side themselves. #168's hints.yaml fix
-/// correctly added "extras & sides" to the side bucket's own trigger_categories so a genuine side
+/// correctly added "extras &amp; sides" to the side bucket's own trigger_categories so a genuine side
 /// gets the dedicated "...a refreshing Drink or Slush to complete their meal!" hint, but that
 /// change also made an extra wrongly inherit the same hint -- e.g. right after the drink hint had
 /// already suggested the very same thing for the drink the extra is flavoring. Pinned to a

@@ -137,8 +137,8 @@ internal sealed class ConnectionRegistry
     }
 
     /// <summary>
-    /// Polls <paramref name="tryGetResult"/> once per new-arrival signal (never on a fixed
-    /// interval). <paramref name="tryGetResult"/> must be called while <see cref="_gate"/> is
+    /// Polls <paramref name="tryGetResultUnderLock"/> once per new-arrival signal (never on a fixed
+    /// interval). <paramref name="tryGetResultUnderLock"/> must be called while <see cref="_gate"/> is
     /// already held — it is invoked from inside the lock below, not by the caller.
     /// </summary>
     private async Task<T?> WaitUntilAsync<T>(Func<T?> tryGetResultUnderLock, TimeSpan timeout, CancellationToken cancellationToken)

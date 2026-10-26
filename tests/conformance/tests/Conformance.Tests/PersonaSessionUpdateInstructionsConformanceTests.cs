@@ -23,7 +23,7 @@ namespace Conformance.Tests;
 /// that gap generically, for every discovered persona pack, on both legs: connect with
 /// `?persona=&lt;id&gt;`, send the real client session.update, and assert the forwarded upstream
 /// session's `instructions` contains THAT pack's own identity text and none of the others' --
-/// plus (reusing <see cref="PersonaSmokeExpectations.GreetingSubstring"/>) that the greeting still
+/// plus (reusing <c>PersonaSmokeExpectations.GreetingSubstring</c>) that the greeting still
 /// matches that same pack, so a persona mix-up can never slip through on the instructions check
 /// alone while the greeting silently stays right (or vice versa).
 ///
@@ -70,7 +70,7 @@ internal static class PersonaSessionUpdateExpectations
 }
 
 /// <summary>Shared #170 scenario body -- run once per persona id by both Theory classes below.
-/// <paramref name="allPersonaIdsOnThisFixture"/> is every persona id enabled on the SAME fixture
+/// <c>allPersonaIdsOnThisFixture</c> is every persona id enabled on the SAME fixture
 /// the Theory itself iterates (the full real-pack set for <see cref="ConformanceFixture"/>, or
 /// exactly test-alpha/test-beta for <see cref="TwoPersonaConformanceFixture"/>) so the
 /// "none of the others" half of the assertion never reaches across fixtures into packs that were

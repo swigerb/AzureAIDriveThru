@@ -208,7 +208,7 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
     /// it armed to silently misfire against a completely unrelated later scenario's connection,
     /// which is a confusing, hard-to-diagnose failure far from its real cause (PR #22 review item
     /// N9). Tests call this once at the very start of a scenario (via
-    /// <see cref="Conformance.Tests.ConformanceFixture.RunAsync"/>, before the scenario body
+    /// <c>Conformance.Tests.ConformanceFixture.RunAsync</c>, before the scenario body
     /// runs) rather than making the switches individually <see cref="IDisposable"/>: both switches
     /// are consumed automatically by ordinary connection traffic in the overwhelming majority of
     /// scenarios that use them, so a disposable wrapper would mostly just be extra ceremony around
@@ -443,7 +443,7 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
 
     /// <summary>
     /// Total connections ever accepted by this server. Callers capture this at the start of a
-    /// scenario and pass it back as <paramref name="since"/> to <see cref="AssertNoHandlerFaults"/>
+    /// scenario and pass it back as <c>since</c> to <see cref="AssertNoHandlerFaults"/>
     /// so a fault recorded on a connection an *earlier* scenario accepted (including one still
     /// asynchronously tearing down when that earlier scenario's own checks ran) is never
     /// attributed to this one (PR #22 review item N3).
@@ -463,7 +463,7 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
     /// fresh server per test). A scripted rule (or a built-in dispatch case) throwing used to be
     /// silently lost — nothing surfaced it to the test that scripted it, so a scenario would just
     /// look like "no response ever arrived" and fail (or worse, hang) with no hint at the real
-    /// cause. Tests call this once at the end of a scenario (via <see cref="ConformanceFixture.RunAsync"/>,
+    /// cause. Tests call this once at the end of a scenario (via <c>ConformanceFixture.RunAsync</c>,
     /// only after that scenario's own connections have actually finished closing — see
     /// <see cref="WaitForNoOpenConnectionsAsync"/>) so a throwing rule's exception is surfaced
     /// directly instead (PR #22 review item N3). Draining (not just reading) means a fault from
@@ -678,15 +678,15 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
             }
         }
 
-        /// <summary>Snapshots and awaits every outstanding (already fault-observed-and-wrapped, so
-        /// never throwing) handler task. Called both after the receive loop exits normally and
-        /// again, unconditionally, from the <c>finally</c> below -- the receive loop can also exit
-        /// by *throwing* (e.g. <paramref name="ct"/> itself firing on a harder abort), which skips
-        /// straight past the first call, so without the second, <see cref="ConnectionRegistry.NotifyClosed"/>
-        /// could fire while a handler (notably <c>RespondAsync</c>'s paced delta loop) is still
-        /// running -- reintroducing exactly the "connection looks closed but its fault hasn't been
-        /// recorded/excluded yet" race this whole mechanism exists to close (PR #22 review item
-        /// N3). Idempotent: a second await of already-completed tasks resolves immediately.</summary>
+        // <summary>Snapshots and awaits every outstanding (already fault-observed-and-wrapped, so
+        // never throwing) handler task. Called both after the receive loop exits normally and
+        // again, unconditionally, from the <c>finally</c> below -- the receive loop can also exit
+        // by *throwing* (e.g. <paramref name="ct"/> itself firing on a harder abort), which skips
+        // straight past the first call, so without the second, <see cref="ConnectionRegistry.NotifyClosed"/>
+        // could fire while a handler (notably <c>RespondAsync</c>'s paced delta loop) is still
+        // running -- reintroducing exactly the "connection looks closed but its fault hasn't been
+        // recorded/excluded yet" race this whole mechanism exists to close (PR #22 review item
+        // N3). Idempotent: a second await of already-completed tasks resolves immediately.</summary>
         async Task AwaitOutstandingHandlersAsync()
         {
             List<Task> toAwait;
@@ -1394,7 +1394,7 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
     /// `session.update`. This was previously stubbed down to two keys, which meant the backend's
     /// `session.created` scrub path (`RTMiddleTier._scrub_session_for_client`, called from
     /// `_process_message_to_client`'s `case "session.created"`) was never exercised by anything
-    /// with real secrets to strip — see <see cref="ScrubHardeningTests"/>.
+    /// with real secrets to strip — see <c>ScrubHardeningTests</c>.
     ///
     /// Shape sourced from the OpenAI Realtime API reference's `RealtimeSessionCreateRequest`
     /// (fields: type, audio, instructions, max_output_tokens, model, output_modalities,

@@ -7,8 +7,8 @@ using Xunit;
 namespace Conformance.Tests;
 
 /// <summary>
-/// Issue #170 round 2 (Rick's PR #175 review, item R1): <see
-/// cref="PersonaSessionUpdateInstructionsConformanceTests"/> already proves the bound persona's
+/// Issue #170 round 2 (Rick's PR #175 review, item R1):
+/// <c>PersonaSessionUpdateInstructionsConformanceTests</c> already proves the bound persona's
 /// own instructions survive the ORDINARY client session.update rebuild, but it never exercises
 /// the REJECTED-update fallback path (<c>_recover_rejected_session_update</c> / C#'s
 /// <c>RealtimeProcessor.HandleErrorAsync</c> --&gt; <c>RealtimeSessionBuilder.BuildFallbackSessionUpdate</c>).
@@ -26,8 +26,8 @@ namespace Conformance.Tests;
 /// <see cref="FakeRealtimeUpstreamServer.RejectNextSessionUpdates"/> for exactly the bootstrap
 /// session.update, connect with `?persona=&lt;id&gt;`, and assert the FALLBACK session.update's
 /// `instructions` contains THAT pack's own identity text and none of the others' -- reusing the
-/// very same per-persona `instructionsSubstring` data <see
-/// cref="PersonaSessionUpdateInstructionsConformanceTests"/>'s <c>PersonaSessionUpdateExpectations</c>
+/// very same per-persona `instructionsSubstring` data
+/// <c>PersonaSessionUpdateInstructionsConformanceTests</c>'s <c>PersonaSessionUpdateExpectations</c>
 /// already reads from each pack's own smoke.json, so this file carries no persona-specific
 /// literal of its own either.
 ///
@@ -38,7 +38,7 @@ namespace Conformance.Tests;
 /// default's own (x-boot, x-recover on Python; cs-boot-tools, cs-fallback-tools on C#) survived
 /// every suite. Both frames now also get <see
 /// cref="PersonaSessionUpdateToolsExpectations.AssertSearchToolDescriptionIsBoundTo"/> -- the
-/// SAME shared helper <see cref="PersonaSessionUpdateToolsScenario"/> in
+/// SAME shared helper <c>PersonaSessionUpdateToolsScenario</c> in
 /// PersonaSessionUpdateToolsConformanceTests.cs uses for the ordinary client-update path, so this
 /// file still carries no persona-specific literal of its own for the tools half either.
 /// </summary>

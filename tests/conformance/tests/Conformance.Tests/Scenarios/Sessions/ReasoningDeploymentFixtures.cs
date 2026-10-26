@@ -9,7 +9,7 @@ namespace Conformance.Tests;
 /// config.yaml default) — see app/backend/rtmt.py's <c>deployment_supports_reasoning</c> and
 /// app/backend/tests/test_session_bootstrap.py's ReasoningAndTranscriptionConfigTests for the
 /// behaviour being ported. AZURE_OPENAI_REALTIME_DEPLOYMENT is read once at Python module-import
-/// time, so — exactly like <see cref="BackendProfileFixtures"/>'s ShortTimers/FixedClock — each
+/// time, so — exactly like <c>BackendProfileFixtures</c>'s ShortTimers/FixedClock — each
 /// distinct deployment name needs its own dedicated xUnit collection/backend process.
 ///
 /// <see cref="BackendContract.DefaultDeployment"/> ("gpt-realtime-2.1-conformance") is already a

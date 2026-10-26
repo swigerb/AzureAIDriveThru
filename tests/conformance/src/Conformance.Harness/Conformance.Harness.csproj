@@ -3,7 +3,6 @@
   <PropertyGroup>
     <RootNamespace>Conformance.Harness</RootNamespace>
     <IsPackable>false</IsPackable>
-    <GenerateDocumentationFile>false</GenerateDocumentationFile>
   </PropertyGroup>
 
   <ItemGroup>

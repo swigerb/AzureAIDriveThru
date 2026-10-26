@@ -256,7 +256,7 @@ public sealed class VoicePickerTests(VoicePickerConformanceFixture fixture)
     /// docstring), so the bootstrap always uses the config default before the resume is even
     /// known; only a follow-up session.update (sent once the resumed session_id is confirmed)
     /// can carry the restored voice -- mirrors the rehydration item's own "brief the new upstream
-    /// after bootstrap" pattern (see <see cref="ResumeRehydrationClientVisibilityTests"/>).
+    /// after bootstrap" pattern (see <see cref="Conformance.Tests.Scenarios.Security.ResumeRehydrationClientVisibilityTests"/>).
     /// </summary>
     [Fact]
     [Trait("Dotnet", "ready")]

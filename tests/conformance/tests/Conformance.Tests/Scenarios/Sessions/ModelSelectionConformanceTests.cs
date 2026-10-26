@@ -14,7 +14,7 @@ namespace Conformance.Tests;
 /// (Models/ModelDispatch.cs), so <see cref="ModelSelectionRejectionConformanceTests"/>'s four
 /// pre-upgrade 404 rows (below) and one HTTP-only positive row in
 /// <see cref="ModelSelectionConformanceTests"/> were tagged first. Issue #13 lands the real
-/// <see cref="RealtimeProcessor"/> relay (session.created/forward audio,
+/// <c>RealtimeProcessor</c> relay (session.created/forward audio,
 /// rtmt.py's `ConnectionForwarder`), so three more rows below -- explicit `?model=` reaching its
 /// own mapped deployment, the omitted-model session-metadata echo, and reasoning-sent-only-for-a-
 /// catalog-reasoning-model -- are now tagged too. The two resume-direction rows stay UNTAGGED:
@@ -39,7 +39,7 @@ public static class ModelSelectionConformanceTestHelpers
     /// <summary>
     /// Rick's PR 166 round-1 review, required item 5: the same pre-upgrade-rejection technique as
     /// <see cref="AssertRealtimeConnectIs404Async"/>, generalised to an arbitrary expected status
-    /// -- used by the menu-mode 400 rows (<see cref="MenuModeRejectionConformanceTests"/>) so a
+    /// -- used by the menu-mode 400 rows (<see cref="Conformance.Tests.Scenarios.Ordering.MenuModeRejectionConformanceTests"/>) so a
     /// single shared helper proves BOTH "no WebSocket ever opened" and "the exact status code"
     /// for every pre-upgrade `/realtime` rejection, 404 or 400 alike.
     /// </summary>
