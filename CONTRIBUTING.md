@@ -5,7 +5,7 @@ Thank you for helping improve Microsoft Foundry AI Drive Thru. These steps keep 
 ## Getting started
 
 1. Fork the repository and clone your fork (`git clone https://github.com/swigerb/AzureAIDriveThru.git`).
-2. Install the prerequisites listed in the README: Azure Developer CLI, Azure CLI, Docker, Node.js 24 LTS (24.15+), Python 3.15 (3.12-3.14 also supported), and Git. Install the .NET 11 RC2 SDK pinned in `global.json` only if you run the C# backend or conformance suites.
+2. Install the prerequisites listed in the README: Azure Developer CLI, Azure CLI, Docker, Node.js 24 LTS (24.15+), Python 3.15 (3.12-3.14 also supported), and Git. Install the .NET 11 RC3 SDK pinned in `global.json` only if you run the C# backend or conformance suites.
 3. For local Python work, run `pwsh ./scripts/load_python_env.ps1` to create/update the repository virtual environment and install backend dependencies. It configures PyYAML's pure-Python build so Python 3.15 does not require a C/C++ compiler.
 4. Copy the backend and frontend `.env-sample` files to `.env` only when you are not using `scripts/write_env.ps1` or `scripts/write_env.sh` to populate values from azd.
 5. Run `pwsh ./scripts/start.ps1` on Windows, or `./scripts/start.sh` on macOS or Linux, to launch the full stack locally before making UI or API changes.
@@ -60,7 +60,7 @@ consistency, not a vulnerability scan.
 | Frontend | From `app/frontend`: `npm ci`, `npm outdated`, `npm outdated --all`, `npm audit`, then tests and build. `npm update` refreshes parent-compatible transitives; commit both manifests and lockfile. |
 | Python runtime and tools | From the root `.venv`: `python -m pip list --outdated`, `python -m pip check`; runtime pins are in `app/backend/requirements.txt`, test pins in `requirements-dev.txt`, and independent JWT validation in `tests/conformance/requirements-harness.txt`. Check preview availability separately with `python -m pip index versions azure-ai-inference --pre`. Python has no committed transitive lockfile. |
 | NuGet | For each of `app/backend-dotnet/Backend.slnx`, `tests/conformance/Conformance.slnx`, and `tools/dotnet/Tooling.slnx`: `dotnet restore <solution> --locked-mode`, `dotnet package list --project <solution> --outdated --include-transitive`, and `dotnet package list --project <solution> --vulnerable --include-transitive`. Version changes require `dotnet restore <solution> --force-evaluate` and committing every affected lockfile. |
-| Runtime images | Compare `global.json`, both `app/Dockerfile*` files, `.devcontainer/devcontainer.json`, and CI runtime selections with official release metadata and image tags. .NET 11 RC2 and the Python 3.13 devcontainer are deliberate exceptions, not stable/latest-runtime claims. |
+| Runtime images | Compare `global.json`, both `app/Dockerfile*` files, `.devcontainer/devcontainer.json`, and CI runtime selections with official release metadata and image tags. .NET 11 RC3 and the Python 3.13 devcontainer are deliberate exceptions, not stable/latest-runtime claims. |
 | CI automation | Compare every SHA-pinned Action with its latest stable release and verify the tag resolves to that SHA. `.github/dependabot.yml` covers frontend npm, both Python requirement directories (including development tools), all three NuGet roots, Docker, devcontainers, and Actions, targeting `dev`. `scripts/package-lock.json` contains no dependencies; `.squad/templates/package.json` only selects CommonJS. |
 
 An empty advisory report means no vulnerabilities were reported by that source at audit time,

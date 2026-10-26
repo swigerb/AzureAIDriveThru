@@ -845,7 +845,21 @@ still 404s the same way an uncatalogued one does, at `/realtime`'s pre-upgrade m
 ## Build/test conventions
 
 - `app/backend-dotnet/Directory.Build.props`: `net11.0`, nullable reference types enabled,
-  warnings-as-errors, code analyzers enabled, `RestorePackagesWithLockFile=true`.
+  warnings-as-errors, code analyzers enabled, `RestorePackagesWithLockFile=true`. The
+  Security, Reliability, Performance, and Usage analyzer categories run in `All` mode
+  (`AnalysisMode<Category>`), `EnforceCodeStyleInBuild` makes IDE style rules fail the build,
+  and `GenerateDocumentationFile` validates XML doc `cref`/`param` references. CS1591 (missing
+  XML comment) is suppressed. `tests/conformance` and `tools/dotnet` use the same settings.
+- `.editorconfig` (identical copies in `app/backend-dotnet`, `tests/conformance`, and
+  `tools/dotnet`): the official [.NET coding conventions](https://learn.microsoft.com/dotnet/csharp/fundamentals/coding-style/coding-conventions).
+  Use `var` only when the type is apparent from the right-hand side, and explicit types
+  otherwise. Use file-scoped namespaces, braces on every block, and collection expressions.
+  Name private and internal static fields `s_camelCase`, instance fields `_camelCase`, and
+  constants (fields and locals) PascalCase. Rule-level overrides live in the CA section with
+  a rationale comment. CA2007 (`ConfigureAwait`) is off because ASP.NET Core and the xUnit v3
+  runner have no synchronization context. Test files relax CA2000, CA1812, CA1848, CA1861, and
+  CA5394, which matter only for production code. Keep the three copies identical when you edit one.
+- Run `dotnet format <solution>` before committing; the build enforces the same style rules.
 - `app/backend-dotnet/Directory.Packages.props`: Central Package Management -- all package
   versions are pinned here; individual `.csproj` files reference packages without a `Version`
   attribute. All packages resolve through the configured Microsoft NuGet proxy feed only.

@@ -24,7 +24,7 @@
     <PackageVersion Include="System.IdentityModel.Tokens.Jwt" Version="8.23.0" />
     <!-- Issue #143 (ADR-002): the harness unit test proving FakeEntraIssuer's discovery/JWKS/
          minted tokens validate with stock JwtBearer (not Microsoft.Identity.Web, per ADR-002's
-         parity contract). Exact prerelease version matching the pinned net11.0 RC2 SDK,
+         parity contract). Exact prerelease version matching the pinned net11.0 RC3 SDK,
          found with a prerelease-inclusive `dotnet package search` against the azure-default
          feed (no other net11.0-targeted version exists there). -->
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="11.0.0-rc.3.26522.148" />
