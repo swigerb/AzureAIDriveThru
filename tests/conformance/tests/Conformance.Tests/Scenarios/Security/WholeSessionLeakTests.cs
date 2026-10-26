@@ -390,7 +390,8 @@ public sealed class WholeSessionLeakTests(ResumeMarginConformanceFixture fixture
     /// exists to catch, not something to explain away.</summary>
     private static readonly HashSet<string> s_toolsWithLegitimateBrowserEcho =
     [
-with(StringComparer.Ordinal),         "update_order", "get_order", "reset_order",
+        with(StringComparer.Ordinal),
+        "update_order", "get_order", "reset_order",
     ];
 
     /// <summary>Frame-aware companion to <see cref="IsLegitimateBrowserFrameType"/>: an
