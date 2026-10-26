@@ -268,7 +268,7 @@ public sealed class SearchIndexOrchestratorTests
             searchClient, new FixtureEmbeddingClient(), "https://fake.openai.azure.com", "fake-deployment", TextWriter.Null,
             delay: (_, _) => Task.CompletedTask);
 
-        Exception ex = await Assert.ThrowsAsync<Exception>(() => orchestrator.IngestAsync(plan, CancellationToken.None));
+        DocumentCountMismatchException ex = await Assert.ThrowsAsync<DocumentCountMismatchException>(() => orchestrator.IngestAsync(plan, CancellationToken.None));
         Assert.Contains("holds 0 document(s)", ex.Message);
         Assert.Contains("the plan has 5", ex.Message);
     }

@@ -115,7 +115,8 @@ public sealed class SearchIndexOrchestrator
     /// <see cref="PersonaTargeting"/>'s remarks), a final count mismatch here mirrors Python's own
     /// <c>raise RuntimeError(...)</c> (an unhandled exception, not a <c>SystemExit</c> -- the one
     /// failure path in the whole script that is NOT a plain <c>SystemExit</c>/configuration error)
-    /// with a plain <see cref="Exception"/>, so <see cref="CliRunner"/>'s catch block (scoped to
+    /// with a <see cref="DocumentCountMismatchException"/> (deliberately NOT derived from
+    /// <see cref="InvalidOperationException"/>), so <see cref="CliRunner"/>'s catch block (scoped to
     /// <see cref="InvalidOperationException"/> only) does not swallow it the same clean way --
     /// matching Python's own distinct "ingest completed, but acceptance failed" failure mode.
     /// </summary>
@@ -135,7 +136,7 @@ public sealed class SearchIndexOrchestrator
                 await _delay(s_verifyDelay, cancellationToken).ConfigureAwait(false);
             }
         }
-        throw new Exception(
+        throw new DocumentCountMismatchException(
             $"Index '{plan.IndexName}' holds {actual} document(s) after ingest; the plan has {plan.DocumentCount}.");
     }
 }

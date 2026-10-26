@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -43,6 +44,10 @@ public static class MenuSizeUpdater
 
     /// <summary>Output order for an item's size variants, matching Python's SIZE_ORDER.</summary>
     public static readonly IReadOnlyList<string> SizeOrder = ["mini", "small", "medium", "large", "rt 44"];
+
+    // Python's open(..., "w", encoding="utf-8"): UTF-8 with no BOM, raising on unencodable input
+    // (a lone surrogate) rather than silently substituting U+FFFD.
+    private static readonly UTF8Encoding s_utf8NoBom = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
     /// <summary>
     /// Loads a persona's menuItems.json-name -&gt; production-search-term map from
@@ -178,6 +183,10 @@ public static class MenuSizeUpdater
     public static Dictionary<string, ProductEntry> FindSizesForProduct(IReadOnlyList<ProductEntry> products, string searchTerm)
     {
         var sizes = new Dictionary<string, ProductEntry>();
+        // Deliberately lower-case-then-ordinal-Contains rather than StringComparison.OrdinalIgnoreCase:
+        // Python's `x in y.lower()` folds to LOWER case, while OrdinalIgnoreCase folds to UPPER case,
+        // and the two disagree on characters such as U+212A KELVIN SIGN and U+017F LATIN SMALL LETTER
+        // LONG S. ToLowerInvariant matches str.lower() for both.
         string searchLower = searchTerm.ToLowerInvariant();
 
         foreach (ProductEntry product in products)
@@ -188,7 +197,8 @@ public static class MenuSizeUpdater
             {
                 continue;
             }
-            if (!name.ToLowerInvariant().Contains(searchLower))
+            string nameLower = name.ToLowerInvariant();
+            if (!nameLower.Contains(searchLower))
             {
                 continue;
             }
@@ -202,23 +212,20 @@ public static class MenuSizeUpdater
             // Avoid picking up unrelated products (e.g. "Cherry Limeade Slush" when searching
             // "Cherry Limeade"). Matches the twin's special-cased exclusions exactly, including
             // that the Ocean Water check tests the FULL display name, not the prefix-stripped base.
-            if (searchTerm == "Cherry Limeade" && baseName.ToLowerInvariant().Contains("slush"))
+            if (searchTerm == "Cherry Limeade")
             {
-                continue;
+                string baseLower = baseName.ToLowerInvariant();
+                if (baseLower.Contains("slush") || baseLower.Contains("diet"))
+                {
+                    continue;
+                }
             }
-            if (searchTerm == "Cherry Limeade" && baseName.ToLowerInvariant().Contains("diet"))
-            {
-                continue;
-            }
-            if (searchTerm == "Ocean Water" && name.ToLowerInvariant().Contains("diet"))
+            if (searchTerm == "Ocean Water" && nameLower.Contains("diet"))
             {
                 continue;
             }
 
-            if (!sizes.ContainsKey(sizeKey))
-            {
-                sizes[sizeKey] = product;
-            }
+            sizes.TryAdd(sizeKey, product);
         }
         return sizes;
     }
@@ -361,7 +368,7 @@ public static class MenuSizeUpdater
             NewLine = Environment.NewLine,
             Encoder = PythonJsonEncoder.Instance,
         };
-        File.WriteAllText(menuFilePath, menuNode.ToJsonString(writeOptions) + Environment.NewLine);
+        File.WriteAllText(menuFilePath, menuNode.ToJsonString(writeOptions) + Environment.NewLine, s_utf8NoBom);
 
         log.Add(string.Empty);
         log.Add($"Updated {updatedCount} items in menuItems.json");
@@ -380,7 +387,7 @@ public static class MenuSizeUpdater
     /// a decimal point, or no original text available -- falls back to <see cref="PythonFloatRepr(decimal)"/>.
     /// </summary>
     internal static string FormatPriceLikePython(decimal price, string? priceText) =>
-        priceText is not null && priceText.IndexOfAny(['.', 'e', 'E']) < 0
+        priceText is not null && priceText.AsSpan().IndexOfAny('.', 'e', 'E') < 0
             ? priceText
             : PythonFloatRepr(price);
 
@@ -400,7 +407,7 @@ public static class MenuSizeUpdater
     internal static string PythonFloatRepr(double value)
     {
         string text = value.ToString(CultureInfo.InvariantCulture);
-        return text.IndexOfAny(['.', 'e', 'E']) < 0 ? text + ".0" : text;
+        return text.AsSpan().IndexOfAny('.', 'e', 'E') < 0 ? text + ".0" : text;
     }
 
     /// <summary>
@@ -438,7 +445,7 @@ public static class MenuSizeUpdater
 
     /// <summary>
     /// If <paramref name="child"/> is a float-literal number token, builds its normalized
-    /// replacement and hands it to <paramref name="assign"/> (a freshly-<see cref="JsonNode.Parse"/>d
+    /// replacement and hands it to <paramref name="assign"/> (a freshly-<see cref="JsonNode.Parse(string, JsonNodeOptions?, JsonDocumentOptions)"/>d
     /// node has no parent yet, so it is always safe to assign into its new slot). Otherwise,
     /// recurses into containers in place and never calls <paramref name="assign"/> at all --
     /// re-assigning a JsonObject/JsonArray property to the SAME child reference it already holds
@@ -451,7 +458,7 @@ public static class MenuSizeUpdater
             element.ValueKind == JsonValueKind.Number)
         {
             string raw = element.GetRawText();
-            if (raw.IndexOfAny(['.', 'e', 'E']) >= 0)
+            if (raw.AsSpan().IndexOfAny('.', 'e', 'E') >= 0)
             {
                 assign(JsonNode.Parse(PythonFloatRepr(double.Parse(raw, CultureInfo.InvariantCulture))));
             }

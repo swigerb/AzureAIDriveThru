@@ -26,7 +26,7 @@ public sealed record UiItem(string Name, string Category);
 /// byte-for-byte output depends on (see each method's remarks) -- proven against the real Python
 /// twin by ExtractProductionItems.Tests/PythonParityTests.cs.
 /// </summary>
-public static class ProductionItemsExtractor
+public static partial class ProductionItemsExtractor
 {
     private static readonly (string Prefix, string Label)[] s_sizePrefixes =
     [
@@ -38,7 +38,8 @@ public static class ProductionItemsExtractor
         ("Rt. 44", "RT 44"),
     ];
 
-    private static readonly Regex s_nonAlphanumericSpace = new("[^a-z0-9 ]", RegexOptions.Compiled);
+    [GeneratedRegex("[^a-z0-9 ]")]
+    private static partial Regex NonAlphanumericSpaceRegex { get; }
 
     /// <summary>
     /// Port of <c>extract_production_items()</c>: walks the production POS export's category tree
@@ -205,7 +206,7 @@ public static class ProductionItemsExtractor
     public static string Normalize(string name)
     {
         string lowered = name.ToLowerInvariant().Replace("\u00ae", "").Replace("\u2122", "");
-        string scrubbed = s_nonAlphanumericSpace.Replace(lowered, " ");
+        string scrubbed = NonAlphanumericSpaceRegex.Replace(lowered, " ");
         string[] tokens = scrubbed.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         return string.Join(" ", tokens);
     }
@@ -216,7 +217,7 @@ public static class ProductionItemsExtractor
     /// output, exactly as Python's <c>print()</c> calls would emit them (embedded <c>\n</c>s in an
     /// f-string split across multiple display lines, same as a literal multi-line print) -- the
     /// caller is expected to write each line with its own line terminator (<c>TextWriter.WriteLine</c>),
-    /// matching how <see cref="UpdateMenuSizes.CliRunner"/>'s <c>UpdateResult.Log</c> is consumed.
+    /// matching how the UpdateMenuSizes tool's <c>CliRunner</c> consumes its <c>UpdateResult.Log</c>.
     /// </summary>
     public static IReadOnlyList<string> BuildReport(
         IReadOnlyList<ProductionItem> production, IReadOnlyList<UiItem> uiItems)

@@ -47,14 +47,21 @@ internal sealed class OpenAiRetryHandler : DelegatingHandler
         {
             HttpResponseMessage? response = null;
             Exception? transportException = null;
+            // Each attempt owns its clone (HttpClient never disposes a request it didn't create);
+            // the response's content is independent of it, so it is safe to dispose once sent.
+            HttpRequestMessage? attemptRequest = null;
             try
             {
-                response = await base.SendAsync(await CloneAsync(request).ConfigureAwait(false), cancellationToken)
-                    .ConfigureAwait(false);
+                attemptRequest = await CloneAsync(request).ConfigureAwait(false);
+                response = await base.SendAsync(attemptRequest, cancellationToken).ConfigureAwait(false);
             }
             catch (HttpRequestException ex)
             {
                 transportException = ex;
+            }
+            finally
+            {
+                attemptRequest?.Dispose();
             }
 
             bool isLastAttempt = attempt >= MaxRetries;

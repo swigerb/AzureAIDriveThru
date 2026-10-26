@@ -1,3 +1,5 @@
+using SearchIndexRequestBuilder;
+
 namespace SearchIndexIngestor;
 
 /// <summary>
@@ -32,6 +34,10 @@ internal static class PersonaCatalogEnvResolver
     /// Python's explicit <c>personas_dir</c> constructor argument bypasses its own
     /// <c>PERSONAS_DIR</c> environment-variable fallback entirely (<c>persona_loader.py</c> lines
     /// 555-565).</param>
+    /// <param name="getEnvironmentVariable">Reads a process environment variable (normally
+    /// <see cref="Environment.GetEnvironmentVariable(string)"/>; injectable for tests).</param>
+    /// <param name="azdEnvValues">The azd default-environment values (see
+    /// <see cref="AzdEnvLoader"/>), which beat the process environment.</param>
     /// <returns>The value to pass as <see cref="EnabledPersonaDiscovery.DiscoverAll"/>'s own
     /// <c>personasDirOverride</c> parameter, or <c>null</c> to fall back to its
     /// <c>&lt;repoRoot&gt;/personas</c> default -- mirroring

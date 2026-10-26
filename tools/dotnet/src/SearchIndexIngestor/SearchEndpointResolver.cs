@@ -1,3 +1,5 @@
+using SearchIndexRequestBuilder;
+
 namespace SearchIndexIngestor;
 
 /// <summary>

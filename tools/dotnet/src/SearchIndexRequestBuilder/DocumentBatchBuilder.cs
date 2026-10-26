@@ -15,7 +15,7 @@ internal static class DocumentBatchBuilder
     private const int BatchSize = 100;
 
     /// <summary>Builds every batch body for <paramref name="documents"/>, each already carrying its
-    /// "embedding" field (attach via <see cref="FixtureEmbedding"/> first, mirroring how the real
+    /// "embedding" field (attach via the test project's <c>FixtureEmbedding</c> first, mirroring how the real
     /// <c>ingest_plan</c> only attaches embeddings after <c>generate_embeddings</c> returns, before
     /// calling <c>upload_documents</c>).</summary>
     public static List<JsonObject> BuildBatches(IReadOnlyList<JsonObject> documents)

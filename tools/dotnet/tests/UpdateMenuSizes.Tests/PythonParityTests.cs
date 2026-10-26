@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -32,7 +33,7 @@ namespace UpdateMenuSizes.Tests;
 /// convention (see e.g. app/backend-dotnet/tests/Backend.Tests/TestSupport/PersonaPackFixture.cs,
 /// tests/conformance/tests/Conformance.Tests/MenuIndexResolveIndexPathsTests.cs).
 /// </summary>
-public sealed class PythonParityTests : IDisposable
+public sealed partial class PythonParityTests : IDisposable
 {
     private readonly string _tempRoot =
         Path.Combine(Path.GetTempPath(), "squanchy-update-menu-sizes-parity-" + Guid.NewGuid().ToString("n"));
@@ -273,10 +274,13 @@ public sealed class PythonParityTests : IDisposable
 
     private static int ParseUpdatedCount(string stdout)
     {
-        Match match = Regex.Match(stdout, @"Updated (\d+) items in menuItems\.json");
+        Match match = UpdatedCountRegex.Match(stdout);
         Assert.True(match.Success, $"Could not find an 'Updated N items...' line in:\n{stdout}");
-        return int.Parse(match.Groups[1].Value);
+        return int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
     }
+
+    [GeneratedRegex(@"Updated (\d+) items in menuItems\.json")]
+    private static partial Regex UpdatedCountRegex { get; }
 
     /// <summary>
     /// Resolves a working Python interpreter via <see cref="FindWorkingPythonInterpreterAsync"/>,
