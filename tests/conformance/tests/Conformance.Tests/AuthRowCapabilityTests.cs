@@ -81,11 +81,11 @@ public sealed class AuthRowCapabilityTests
         // Environment.GetEnvironmentVariable plumbing here): whatever CONFORMANCE_BACKEND/
         // CONFORMANCE_BACKEND_URL happen to be set to in this process, the result must always
         // agree with the pure ResolveBackendName/Enforces combination above.
-        var expectedSkip = !AuthRowCapability.Enforces(AuthRowCapability.ResolveBackendName(
+        bool expectedSkip = !AuthRowCapability.Enforces(AuthRowCapability.ResolveBackendName(
             Environment.GetEnvironmentVariable("CONFORMANCE_BACKEND_URL"),
             Environment.GetEnvironmentVariable("CONFORMANCE_BACKEND")));
 
-        var actual = AuthRowCapability.ShouldSkipCurrentBackend();
+        string? actual = AuthRowCapability.ShouldSkipCurrentBackend();
 
         Assert.Equal(expectedSkip, actual is not null);
         if (actual is not null)

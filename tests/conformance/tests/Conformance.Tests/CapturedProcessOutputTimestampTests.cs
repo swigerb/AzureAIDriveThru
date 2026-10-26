@@ -45,11 +45,11 @@ public sealed class CapturedProcessOutputTimestampTests
     public void Dump_falls_back_to_a_recent_timestamp_when_the_line_has_no_embedded_one()
     {
         var output = new CapturedProcessOutput();
-        var before = DateTimeOffset.UtcNow.TimeOfDay;
+        TimeSpan before = DateTimeOffset.UtcNow.TimeOfDay;
 
         output.Append("ERR", "INFO:sonic-drive-in:server started");
 
-        var dumped = output.Dump();
+        string dumped = output.Dump();
         Assert.StartsWith("[", dumped);
         Assert.EndsWith(" ERR] INFO:sonic-drive-in:server started", dumped);
 
@@ -57,9 +57,9 @@ public sealed class CapturedProcessOutputTimestampTests
         // read-time, not derived from (absent) backend content. Compared as a time-of-day
         // TimeSpan (rather than reconstructing a full date) to avoid any UTC-midnight-rollover
         // edge case making this flaky.
-        var bracket = dumped[1..dumped.IndexOf(' ')];
+        string bracket = dumped[1..dumped.IndexOf(' ')];
         var bracketTimeOfDay = TimeSpan.ParseExact(bracket, @"hh\:mm\:ss\.fff", null);
-        var delta = (bracketTimeOfDay - before).Duration();
+        TimeSpan delta = (bracketTimeOfDay - before).Duration();
         Assert.True(
             delta < TimeSpan.FromSeconds(5) || delta > TimeSpan.FromHours(23),
             $"expected the dumped bracket ({bracket}) to be within a few seconds of now ({before}), " +
@@ -130,10 +130,10 @@ public sealed class CapturedProcessOutputTimestampTests
         // Not a match: missing the trailing "Z " (just "Z" with no space) -- must be stored and
         // scanned completely unchanged, proving the regex anchors on the real shape rather than
         // loosely matching any leading digits.
-        const string line = "2026-07-04T15:30:00.000001Z-ERROR:sonic-drive-in:boom";
-        output.Append("ERR", line);
+        const string Line = "2026-07-04T15:30:00.000001Z-ERROR:sonic-drive-in:boom";
+        output.Append("ERR", Line);
 
-        Assert.Contains(line, output.Dump());
+        Assert.Contains(Line, output.Dump());
         // "ERROR:" is not at content[0] here (it's preceded by the un-stripped stamp), so this
         // must NOT be recognised as an error header.
         Assert.Equal(0, output.CountUnhandledErrors());
@@ -146,11 +146,11 @@ public sealed class CapturedProcessOutputTimestampTests
         // last observed output, not when the backend logged it -- so _lastAppendUtc (exposed via
         // the internal LastAppendUtc seam) must never be derived from the embedded timestamp.
         var output = new CapturedProcessOutput();
-        var before = DateTimeOffset.UtcNow;
+        DateTimeOffset before = DateTimeOffset.UtcNow;
 
         output.Append("ERR", "2000-01-01T00:00:00.000000Z INFO:sonic-drive-in:ancient embedded stamp");
 
-        var after = DateTimeOffset.UtcNow;
+        DateTimeOffset after = DateTimeOffset.UtcNow;
         Assert.InRange(output.LastAppendUtc, before, after);
     }
 
@@ -161,7 +161,7 @@ public sealed class CapturedProcessOutputTimestampTests
         // _ConformanceTimestampFormatter produces, through the real Attach/BeginErrorReadLine
         // wiring (not a hand-built Append call), proving the regex/strip logic holds for
         // genuinely captured output too.
-        const string script =
+        const string Script =
             "import sys\n" +
             "print('2026-07-04T15:30:00.000001Z ERROR:sonic-drive-in:boom', file=sys.stderr)\n" +
             "print('2026-07-04T15:30:00.000002Z Traceback (most recent call last):', file=sys.stderr)\n" +
@@ -169,8 +169,8 @@ public sealed class CapturedProcessOutputTimestampTests
             "print(\"KeyError: 'output'\", file=sys.stderr)\n" +
             "print('2026-07-04T15:30:00.000003Z INFO:sonic-drive-in:a plain diagnostic line', file=sys.stderr)\n";
 
-        var repoRoot = RepoPaths.FindRepoRoot();
-        var pythonExe = RepoPaths.PythonExecutable(repoRoot);
+        string repoRoot = RepoPaths.FindRepoRoot();
+        string pythonExe = RepoPaths.PythonExecutable(repoRoot);
         var startInfo = new ProcessStartInfo(pythonExe)
         {
             RedirectStandardOutput = true,
@@ -179,7 +179,7 @@ public sealed class CapturedProcessOutputTimestampTests
             CreateNoWindow = true,
         };
         startInfo.ArgumentList.Add("-c");
-        startInfo.ArgumentList.Add(script);
+        startInfo.ArgumentList.Add(Script);
 
         using var process = new Process { StartInfo = startInfo };
         var output = new CapturedProcessOutput();

@@ -1,6 +1,4 @@
-using System.Linq;
 using System.Text.Json;
-using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 
@@ -75,22 +73,23 @@ internal static class PersonaExtrasRules
     /// (Title Case) <c>category</c> field.</summary>
     public static Rules Read(string personasDir, string personaId)
     {
-        var personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
-        using var stream = File.OpenRead(personaJsonPath);
+        string personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
+        using FileStream stream = File.OpenRead(personaJsonPath);
         using var document = JsonDocument.Parse(stream);
-        var extras = document.RootElement.GetProperty("extras");
+        JsonElement extras = document.RootElement.GetProperty("extras");
 
         return new Rules(
             ReadCategorySet(extras, "allowedBaseCategories"),
             ReadCategorySet(extras, "blockedBaseCategories"));
     }
 
-    private static IReadOnlySet<string> ReadCategorySet(JsonElement extras, string propertyName) =>
-        extras.GetProperty(propertyName)
+    private static HashSet<string> ReadCategorySet(JsonElement extras, string propertyName) =>
+    [
+        .. extras.GetProperty(propertyName)
             .EnumerateArray()
             .Select(e => (e.GetString() ?? "").Trim().ToLowerInvariant())
-            .Where(s => s.Length > 0)
-            .ToHashSet();
+            .Where(s => s.Length > 0),
+    ];
 }
 
 /// <summary>
@@ -109,23 +108,22 @@ internal static class PersonaExtrasMenuData
 
     private static List<RawItem> ReadAllItems(string personasDir, string personaId)
     {
-        var menuItemsJsonPath = Path.Combine(personasDir, personaId, "menu", "menuItems.json");
-        using var stream = File.OpenRead(menuItemsJsonPath);
+        string menuItemsJsonPath = Path.Combine(personasDir, personaId, "menu", "menuItems.json");
+        using FileStream stream = File.OpenRead(menuItemsJsonPath);
         using var document = JsonDocument.Parse(stream);
 
         var results = new List<RawItem>();
-        foreach (var category in document.RootElement.GetProperty("menuItems").EnumerateArray())
+        foreach (JsonElement category in document.RootElement.GetProperty("menuItems").EnumerateArray())
         {
-            var categoryName = (category.GetProperty("category").GetString() ?? "").Trim().ToLowerInvariant();
-            foreach (var item in category.GetProperty("items").EnumerateArray())
+            string categoryName = (category.GetProperty("category").GetString() ?? "").Trim().ToLowerInvariant();
+            foreach (JsonElement item in category.GetProperty("items").EnumerateArray())
             {
-                var name = item.GetProperty("name").GetString()!;
-                var isExtra = item.TryGetProperty("isExtra", out var isExtraElement) &&
+                string name = item.GetProperty("name").GetString()!;
+                bool isExtra = item.TryGetProperty("isExtra", out JsonElement isExtraElement) &&
                     isExtraElement.ValueKind == JsonValueKind.True;
-                var sizes = item.GetProperty("sizes")
+                (string, decimal)[] sizes = [.. item.GetProperty("sizes")
                     .EnumerateArray()
-                    .Select(s => (s.GetProperty("size").GetString()!, s.GetProperty("price").GetDecimal()))
-                    .ToArray();
+                    .Select(s => (s.GetProperty("size").GetString()!, s.GetProperty("price").GetDecimal()))];
                 results.Add(new RawItem(categoryName, name, isExtra, sizes));
             }
         }
@@ -158,14 +156,14 @@ internal static class PersonaExtrasMenuData
             return null;
         }
 
-        var (size, price) = item.Sizes[0];
+        (string? size, decimal price) = item.Sizes[0];
         return new MenuItemRef(item.Name, size, price, item.Category);
     }
 }
 
 /// <summary>
-/// One backend PER discovered pack, same shape as <see cref="MealNumberFixture"/> -- extras have
-/// no time dependency, so (unlike <see cref="RealPackHappyHourFixture"/>) no <c>FixedClock</c>
+/// One backend PER discovered pack, same shape as <c>MealNumberFixture</c> -- extras have
+/// no time dependency, so (unlike <c>RealPackHappyHourFixture</c>) no <c>FixedClock</c>
 /// pinning is needed. <c>PersonasDir</c> is deliberately left null (the base class's default, real
 /// <c>personas/</c> root) since every row here is a REAL pack, never a fixture pack.
 /// </summary>
@@ -183,9 +181,9 @@ public sealed class RealPackExtrasConformanceTests
     /// Theory.</summary>
     public static TheoryData<string> DiscoveredPersonaIdsWithExtras()
     {
-        var personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
+        string personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
         var data = new TheoryData<string>();
-        foreach (var id in ConformancePersonas.DiscoverFromDisk())
+        foreach (string id in ConformancePersonas.DiscoverFromDisk())
         {
             if (PersonaExtrasMenuData.HasAnyExtraItem(personasDir, id))
             {
@@ -201,24 +199,24 @@ public sealed class RealPackExtrasConformanceTests
     [MemberData(nameof(DiscoveredPersonaIdsWithExtras))]
     public async Task Discovered_pack_with_extras_honors_its_own_extras_gate(string personaId)
     {
-        var ct = TestContext.Current.CancellationToken;
-        var personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
-        var rules = PersonaExtrasRules.Read(personasDir, personaId);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
+        PersonaExtrasRules.Rules rules = PersonaExtrasRules.Read(personasDir, personaId);
 
-        var extraItem = PersonaExtrasMenuData.FindExtraItem(personasDir, personaId);
+        PersonaExtrasMenuData.MenuItemRef? extraItem = PersonaExtrasMenuData.FindExtraItem(personasDir, personaId);
         Assert.True(extraItem is not null,
             $"persona '{personaId}' was discovered to have at least one isExtra menu item, but " +
             "PersonaExtrasMenuData.FindExtraItem found none on a second read -- investigate a " +
             "data inconsistency between HasAnyExtraItem and FindExtraItem.");
 
-        var allowedBase = PersonaExtrasMenuData.FindBaseItemInCategories(personasDir, personaId, rules.AllowedBaseCategories);
+        PersonaExtrasMenuData.MenuItemRef? allowedBase = PersonaExtrasMenuData.FindBaseItemInCategories(personasDir, personaId, rules.AllowedBaseCategories);
         Assert.True(allowedBase is not null,
             $"persona '{personaId}' has isExtra item(s) but its own persona.json " +
             $"extras.allowedBaseCategories ({string.Join(", ", rules.AllowedBaseCategories)}) " +
             "matches no real item's own category in this pack's own menu/menuItems.json -- add a " +
             "real item in one of those categories, or fix the category name/casing.");
 
-        var blockedBase = PersonaExtrasMenuData.FindBaseItemInCategories(personasDir, personaId, rules.BlockedBaseCategories);
+        PersonaExtrasMenuData.MenuItemRef? blockedBase = PersonaExtrasMenuData.FindBaseItemInCategories(personasDir, personaId, rules.BlockedBaseCategories);
         Assert.True(blockedBase is not null,
             $"persona '{personaId}' has isExtra item(s) but its own persona.json " +
             $"extras.blockedBaseCategories ({string.Join(", ", rules.BlockedBaseCategories)}) " +
@@ -228,9 +226,9 @@ public sealed class RealPackExtrasConformanceTests
         await using var fixture = new ExtrasFixture(personaId);
         await fixture.InitializeAsync();
 
-        await fixture.RunAsync(() => RunAcceptedAsync(fixture, personaId, allowedBase!, extraItem!, ct));
-        await fixture.RunAsync(() => RunBlockedCategoryAsync(fixture, personaId, blockedBase!, extraItem!, ct));
-        await fixture.RunAsync(() => RunNoBaseItemAsync(fixture, personaId, extraItem!, ct));
+        await fixture.RunAsync(() => RunAcceptedAsync(fixture, personaId, allowedBase, extraItem, ct));
+        await fixture.RunAsync(() => RunBlockedCategoryAsync(fixture, personaId, blockedBase, extraItem, ct));
+        await fixture.RunAsync(() => RunNoBaseItemAsync(fixture, personaId, extraItem, ct));
     }
 
     /// <summary>A real base item from one of this pack's own <c>allowedBaseCategories</c>,
@@ -240,15 +238,15 @@ public sealed class RealPackExtrasConformanceTests
         ConformanceFixture fixture, string personaId, PersonaExtrasMenuData.MenuItemRef baseItem,
         PersonaExtrasMenuData.MenuItemRef extraItem, CancellationToken ct)
     {
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, persona: personaId);
-        await using var _ = browser;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, persona: personaId);
+        await using RealtimeBrowserClient _ = browser;
 
-        var baseAdded = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult baseAdded = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", baseItem.Name, baseItem.Size, 1, baseItem.Price)],
             roundTripIndex, ct, "call_extras_accepted_base");
 
-        var extraAdded = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult extraAdded = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
             JsonSerializer.Serialize(new
             {
@@ -263,9 +261,9 @@ public sealed class RealPackExtrasConformanceTests
         Assert.True(extraAdded.ToolResultJson is not null,
             $"persona '{personaId}': adding '{extraItem.Name}' after a real base item from an " +
             "allowed category must reach the browser as a normal order-summary tool result.");
-        Assert.Contains(extraItem.Name, extraAdded.ToolResultJson!);
+        Assert.Contains(extraItem.Name, extraAdded.ToolResultJson);
 
-        var getOrder = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult getOrder = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "get_order", "{}", "call_extras_accepted_get_order", extraAdded.RoundTripIndex, ct);
         Assert.Contains(extraItem.Name, getOrder.ToolResultJson ?? "");
     }
@@ -278,15 +276,15 @@ public sealed class RealPackExtrasConformanceTests
         ConformanceFixture fixture, string personaId, PersonaExtrasMenuData.MenuItemRef baseItem,
         PersonaExtrasMenuData.MenuItemRef extraItem, CancellationToken ct)
     {
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, persona: personaId);
-        await using var _ = browser;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, persona: personaId);
+        await using RealtimeBrowserClient _ = browser;
 
-        var baseAdded = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult baseAdded = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", baseItem.Name, baseItem.Size, 1, baseItem.Price)],
             roundTripIndex, ct, "call_extras_blocked_base");
 
-        var extraRejected = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult extraRejected = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
             JsonSerializer.Serialize(new
             {
@@ -301,7 +299,7 @@ public sealed class RealPackExtrasConformanceTests
         OrderScenarioHelpers.AssertRejectionShape(
             extraRejected.FunctionCallOutputText, "extras_blocked_category", expectedItemName: extraItem.Name);
 
-        var getOrder = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult getOrder = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "get_order", "{}", "call_extras_blocked_get_order", extraRejected.RoundTripIndex, ct);
         Assert.DoesNotContain(extraItem.Name, getOrder.ToolResultJson ?? "");
     }
@@ -311,10 +309,10 @@ public sealed class RealPackExtrasConformanceTests
     private static async Task RunNoBaseItemAsync(
         ConformanceFixture fixture, string personaId, PersonaExtrasMenuData.MenuItemRef extraItem, CancellationToken ct)
     {
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, persona: personaId);
-        await using var _ = browser;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, persona: personaId);
+        await using RealtimeBrowserClient _ = browser;
 
-        var extraRejected = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult extraRejected = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
             JsonSerializer.Serialize(new
             {

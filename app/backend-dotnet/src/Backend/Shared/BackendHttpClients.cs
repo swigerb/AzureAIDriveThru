@@ -1,5 +1,3 @@
-using Microsoft.Extensions.DependencyInjection;
-
 namespace Backend.Shared;
 
 /// <summary>
@@ -16,16 +14,16 @@ internal static class BackendHttpClients
     public static void AddBackendHttpClients(
         this IServiceCollection services, TimeSpan pooledConnectionLifetime, params ReadOnlySpan<string> clientNames)
     {
-        foreach (var clientName in clientNames)
+        foreach (string clientName in clientNames)
         {
+            // AddHttpClient's default handler pipeline inserts LoggingHttpMessageHandler/
+            // LoggingScopeHttpMessageHandler, which log every request at Information (and the
+            // full exception on failure) under "System.Net.Http.HttpClient.{name}.*". The
+            // plain `new HttpClient()` instances these replaced never logged anything, so
+            // RemoveAllLoggers() is required here to keep log output unchanged.
             services.AddHttpClient(clientName)
                 .ConfigurePrimaryHttpMessageHandler(
                     () => new SocketsHttpHandler { PooledConnectionLifetime = pooledConnectionLifetime })
-                // AddHttpClient's default handler pipeline inserts LoggingHttpMessageHandler/
-                // LoggingScopeHttpMessageHandler, which log every request at Information (and the
-                // full exception on failure) under "System.Net.Http.HttpClient.{name}.*". The
-                // plain `new HttpClient()` instances these replaced never logged anything, so
-                // RemoveAllLoggers() is required here to keep log output unchanged.
                 .RemoveAllLoggers();
         }
     }

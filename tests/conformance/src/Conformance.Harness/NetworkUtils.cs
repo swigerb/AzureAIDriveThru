@@ -14,7 +14,7 @@ public static class NetworkUtils
     {
         using var listener = new TcpListener(System.Net.IPAddress.Loopback, 0);
         listener.Start();
-        var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        int port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
         listener.Stop();
         return port;
     }

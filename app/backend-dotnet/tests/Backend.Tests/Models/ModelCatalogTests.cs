@@ -20,19 +20,19 @@ public sealed class ModelCatalogTests
 
         var catalog = ModelCatalog.FromConfig(config);
 
-        Assert.Equal(
-            new[] { "gpt-5-mini", "gpt-realtime-2.1", "gpt-realtime-2.1-mini", "phi-4" },
+        Assert.Equal<string>(
+            ["gpt-5-mini", "gpt-realtime-2.1", "gpt-realtime-2.1-mini", "phi-4"],
             catalog.Ids);
 
-        var realtime = catalog.Get("gpt-realtime-2.1");
+        ModelEntry realtime = catalog.Get("gpt-realtime-2.1");
         Assert.Equal("realtime", realtime.Pipeline);
         Assert.Equal("GPT Realtime 2.1", realtime.Label);
         Assert.True(realtime.Reasoning);
 
-        var realtimeMini = catalog.Get("gpt-realtime-2.1-mini");
+        ModelEntry realtimeMini = catalog.Get("gpt-realtime-2.1-mini");
         Assert.True(realtimeMini.Reasoning);
 
-        var cascade = catalog.Get("gpt-5-mini");
+        ModelEntry cascade = catalog.Get("gpt-5-mini");
         Assert.Equal("cascade", cascade.Pipeline);
         Assert.True(cascade.ToolCalling);
     }
@@ -52,7 +52,7 @@ public sealed class ModelCatalogTests
     {
         var catalog = ModelCatalog.FromConfig(AppConfig.Load());
 
-        var exc = Assert.Throws<KeyNotFoundException>(() => catalog.Get("does-not-exist"));
+        KeyNotFoundException exc = Assert.Throws<KeyNotFoundException>(() => catalog.Get("does-not-exist"));
         Assert.Contains("does-not-exist", exc.Message);
         Assert.Contains("gpt-realtime-2.1", exc.Message);
     }
@@ -60,7 +60,7 @@ public sealed class ModelCatalogTests
     [Fact]
     public void AbsentModelsSection_IsAnEmptyCatalog_NotAnError()
     {
-        var path = WriteTempConfig("""
+        string path = WriteTempConfig("""
             model: {}
             business_rules: {}
             cache: {}
@@ -77,7 +77,7 @@ public sealed class ModelCatalogTests
     [Fact]
     public void ModelsCatalog_IsAListOfMappings_NotADictionary()
     {
-        var path = WriteTempConfig("""
+        string path = WriteTempConfig("""
             model: {}
             business_rules: {}
             cache: {}
@@ -88,14 +88,14 @@ public sealed class ModelCatalogTests
                 gpt-4o-realtime: {}
             """);
 
-        var exc = Assert.Throws<ModelValidationException>(() => ModelCatalog.FromConfig(AppConfig.Load(path)));
+        ModelValidationException exc = Assert.Throws<ModelValidationException>(() => ModelCatalog.FromConfig(AppConfig.Load(path)));
         Assert.Contains("must be a list", exc.Message);
     }
 
     [Fact]
     public void CatalogEntry_MissingRequiredField_Throws()
     {
-        var path = WriteTempConfig("""
+        string path = WriteTempConfig("""
             model: {}
             business_rules: {}
             cache: {}
@@ -106,14 +106,14 @@ public sealed class ModelCatalogTests
                 - { id: gpt-4o-realtime, pipeline: realtime }
             """);
 
-        var exc = Assert.Throws<ModelValidationException>(() => ModelCatalog.FromConfig(AppConfig.Load(path)));
+        ModelValidationException exc = Assert.Throws<ModelValidationException>(() => ModelCatalog.FromConfig(AppConfig.Load(path)));
         Assert.Contains("label", exc.Message);
     }
 
     [Fact]
     public void CatalogEntry_UnknownPipeline_Throws()
     {
-        var path = WriteTempConfig("""
+        string path = WriteTempConfig("""
             model: {}
             business_rules: {}
             cache: {}
@@ -124,14 +124,14 @@ public sealed class ModelCatalogTests
                 - { id: some-model, pipeline: quantum, label: "Some Model" }
             """);
 
-        var exc = Assert.Throws<ModelValidationException>(() => ModelCatalog.FromConfig(AppConfig.Load(path)));
+        ModelValidationException exc = Assert.Throws<ModelValidationException>(() => ModelCatalog.FromConfig(AppConfig.Load(path)));
         Assert.Contains("pipeline", exc.Message);
     }
 
     [Fact]
     public void CatalogEntry_DuplicateId_Throws()
     {
-        var path = WriteTempConfig("""
+        string path = WriteTempConfig("""
             model: {}
             business_rules: {}
             cache: {}
@@ -143,7 +143,7 @@ public sealed class ModelCatalogTests
                 - { id: dup, pipeline: realtime, label: "Two" }
             """);
 
-        var exc = Assert.Throws<ModelValidationException>(() => ModelCatalog.FromConfig(AppConfig.Load(path)));
+        ModelValidationException exc = Assert.Throws<ModelValidationException>(() => ModelCatalog.FromConfig(AppConfig.Load(path)));
         Assert.Contains("duplicate", exc.Message);
     }
 
@@ -154,7 +154,7 @@ public sealed class ModelCatalogTests
         // entry, dropped by issue #155 (local mode removal, 2026-09-28); a catalog row that still
         // has it is now an unknown field, the same as any other stray key (mirrors
         // model_catalog.py's test_runtime_field_is_now_rejected_as_unknown).
-        var path = WriteTempConfig("""
+        string path = WriteTempConfig("""
             model: {}
             business_rules: {}
             cache: {}
@@ -165,7 +165,7 @@ public sealed class ModelCatalogTests
                 - { id: some-model, pipeline: cascade, label: "Some Model", runtime: onnx }
             """);
 
-        var exc = Assert.Throws<ModelValidationException>(() => ModelCatalog.FromConfig(AppConfig.Load(path)));
+        ModelValidationException exc = Assert.Throws<ModelValidationException>(() => ModelCatalog.FromConfig(AppConfig.Load(path)));
         Assert.Contains("unknown field", exc.Message);
     }
 
@@ -227,7 +227,7 @@ public sealed class ModelCatalogTests
     [Fact]
     public void ValidatePersonaDefaults_UncataloguedDefault_Throws()
     {
-        var path = WriteTempConfig("""
+        string path = WriteTempConfig("""
             model: {}
             business_rules: {}
             cache: {}
@@ -242,7 +242,7 @@ public sealed class ModelCatalogTests
         using var fixture = new PersonaPackFixture();
         var catalog = PersonaCatalog.Load(personasDir: fixture.PersonasDir);
 
-        var exc = Assert.Throws<ModelValidationException>(() =>
+        ModelValidationException exc = Assert.Throws<ModelValidationException>(() =>
             modelCatalog.ValidatePersonaDefaults(catalog, NullLogger<ModelCatalog>.Instance));
         Assert.Contains("sonic", exc.Message);
         Assert.Contains("realtime", exc.Message);
@@ -250,7 +250,7 @@ public sealed class ModelCatalogTests
 
     private static string WriteTempConfig(string content)
     {
-        var path = Path.Combine(Path.GetTempPath(), "beth-model-catalog-" + Guid.NewGuid().ToString("n") + ".yaml");
+        string path = Path.Combine(Path.GetTempPath(), "beth-model-catalog-" + Guid.NewGuid().ToString("n") + ".yaml");
         File.WriteAllText(path, content);
         return path;
     }

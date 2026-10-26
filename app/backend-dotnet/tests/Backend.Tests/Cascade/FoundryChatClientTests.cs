@@ -90,24 +90,24 @@ public sealed class FoundryChatClientTests
     [Fact]
     public async Task CompleteAsync_PostsToChatCompletionsWithBearerAuthAndReturnsFirstChoiceMessage()
     {
-        var handler = new QueuedFoundryHttpHandler().Enqueue(HttpStatusCode.OK, """
+        QueuedFoundryHttpHandler handler = new QueuedFoundryHttpHandler().Enqueue(HttpStatusCode.OK, """
             {"choices":[{"message":{"role":"assistant","content":"Hi there!"}}]}
             """);
-        var client = NewClient(handler, token: "my-token");
+        FoundryChatClient client = NewClient(handler, token: "my-token");
 
-        var message = await client.CompleteAsync(
+        JsonObject message = await client.CompleteAsync(
             [CascadeChatMessage.System("be nice"), CascadeChatMessage.User("hello")],
-            deployment: "gpt-5-mini", toolDefinitions: null, CancellationToken.None);
+            deployment: "gpt-5-mini", toolDefinitions: null, TestContext.Current.CancellationToken);
 
         Assert.Equal("assistant", message["role"]!.GetValue<string>());
         Assert.Equal("Hi there!", message["content"]!.GetValue<string>());
 
-        var request = Assert.Single(handler.Requests);
+        HttpRequestMessage request = Assert.Single(handler.Requests);
         Assert.Equal($"{Endpoint}/chat/completions?api-version=2024-05-01-preview", request.RequestUri!.ToString());
         Assert.Equal("Bearer", request.Headers.Authorization!.Scheme);
         Assert.Equal("my-token", request.Headers.Authorization!.Parameter);
 
-        var body = JsonNode.Parse(handler.RequestBodies.Single())!.AsObject();
+        JsonObject body = JsonNode.Parse(handler.RequestBodies.Single())!.AsObject();
         Assert.Equal("gpt-5-mini", body["model"]!.GetValue<string>());
         Assert.Equal(2, body["messages"]!.AsArray().Count);
         Assert.False(body.ContainsKey("tools"), "tools must be omitted entirely when no tool definitions are given.");
@@ -116,20 +116,20 @@ public sealed class FoundryChatClientTests
     [Fact]
     public async Task CompleteAsync_IncludesToolsOnlyWhenNonEmpty()
     {
-        var handler = new QueuedFoundryHttpHandler().Enqueue(HttpStatusCode.OK, """
+        QueuedFoundryHttpHandler handler = new QueuedFoundryHttpHandler().Enqueue(HttpStatusCode.OK, """
             {"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"search","arguments":"{}"}}]}}]}
             """);
-        var client = NewClient(handler);
-        var toolDefs = CascadeToolDefinitions.FromToolSchemas([
+        FoundryChatClient client = NewClient(handler);
+        IReadOnlyList<JsonObject> toolDefs = CascadeToolDefinitions.FromToolSchemas([
             new JsonObject { ["name"] = "search", ["description"] = "search the menu", ["parameters"] = new JsonObject { ["type"] = "object" } },
         ]);
 
-        var message = await client.CompleteAsync([CascadeChatMessage.User("do a search")], "gpt-5-mini", toolDefs, CancellationToken.None);
+        JsonObject message = await client.CompleteAsync([CascadeChatMessage.User("do a search")], "gpt-5-mini", toolDefs, TestContext.Current.CancellationToken);
 
         Assert.Null(message["content"]);
         Assert.Equal("call_1", message["tool_calls"]![0]!["id"]!.GetValue<string>());
-        var body = JsonNode.Parse(handler.RequestBodies.Single())!.AsObject();
-        var tools = body["tools"]!.AsArray();
+        JsonObject body = JsonNode.Parse(handler.RequestBodies.Single())!.AsObject();
+        JsonArray tools = body["tools"]!.AsArray();
         Assert.Single(tools);
         Assert.Equal("function", tools[0]!["type"]!.GetValue<string>());
         Assert.Equal("search", tools[0]!["function"]!["name"]!.GetValue<string>());
@@ -138,12 +138,12 @@ public sealed class FoundryChatClientTests
     [Fact]
     public async Task CompleteAsync_NonSuccessStatus_ThrowsFoundryHttpExceptionWithStatusAndBody()
     {
-        var handler = new QueuedFoundryHttpHandler().Enqueue(
+        QueuedFoundryHttpHandler handler = new QueuedFoundryHttpHandler().Enqueue(
             HttpStatusCode.TooManyRequests, """{"error":{"message":"Please try again in 2s"}}""");
-        var client = NewClient(handler);
+        FoundryChatClient client = NewClient(handler);
 
-        var exc = await Assert.ThrowsAsync<FoundryHttpException>(() =>
-            client.CompleteAsync([CascadeChatMessage.User("hi")], "gpt-5-mini", null, CancellationToken.None));
+        FoundryHttpException exc = await Assert.ThrowsAsync<FoundryHttpException>(() =>
+            client.CompleteAsync([CascadeChatMessage.User("hi")], "gpt-5-mini", null, TestContext.Current.CancellationToken));
 
         Assert.Equal(429, exc.StatusCode);
         Assert.Contains("try again in 2s", exc.Message);
@@ -152,14 +152,14 @@ public sealed class FoundryChatClientTests
     [Fact]
     public async Task CompleteAsync_BogusCharset429StillThrowsFoundryHttpException()
     {
-        var handler = new QueuedFoundryHttpHandler().EnqueueRaw(
+        QueuedFoundryHttpHandler handler = new QueuedFoundryHttpHandler().EnqueueRaw(
             HttpStatusCode.TooManyRequests,
             Encoding.UTF8.GetBytes("""{"error":{"message":"Please try again in 2s"}}"""),
             "application/json; charset=bogus-charset");
-        var client = NewClient(handler);
+        FoundryChatClient client = NewClient(handler);
 
-        var exc = await Assert.ThrowsAsync<FoundryHttpException>(() =>
-            client.CompleteAsync([CascadeChatMessage.User("hi")], "gpt-5-mini", null, CancellationToken.None));
+        FoundryHttpException exc = await Assert.ThrowsAsync<FoundryHttpException>(() =>
+            client.CompleteAsync([CascadeChatMessage.User("hi")], "gpt-5-mini", null, TestContext.Current.CancellationToken));
 
         Assert.Equal(429, exc.StatusCode);
         Assert.Equal("HTTP 429", exc.Message);
@@ -168,12 +168,12 @@ public sealed class FoundryChatClientTests
     [Fact]
     public async Task CompleteAsync_PrefersRetryAfterHeaderOverFreeTextHint()
     {
-        var handler = new QueuedFoundryHttpHandler().Enqueue(
+        QueuedFoundryHttpHandler handler = new QueuedFoundryHttpHandler().Enqueue(
             HttpStatusCode.TooManyRequests, """{"error":{"message":"try again in 2s"}}""", retryAfterHeader: "5");
-        var client = NewClient(handler);
+        FoundryChatClient client = NewClient(handler);
 
-        var exc = await Assert.ThrowsAsync<FoundryHttpException>(() =>
-            client.CompleteAsync([CascadeChatMessage.User("hi")], "gpt-5-mini", null, CancellationToken.None));
+        FoundryHttpException exc = await Assert.ThrowsAsync<FoundryHttpException>(() =>
+            client.CompleteAsync([CascadeChatMessage.User("hi")], "gpt-5-mini", null, TestContext.Current.CancellationToken));
 
         Assert.Equal(5.0, exc.RetryAfterSeconds);
     }
@@ -183,11 +183,11 @@ public sealed class FoundryChatClientTests
     [InlineData("")]
     public async Task CompleteAsync_NoRetryAfterHeaderAndNoHint_LeavesRetryAfterSecondsNull(string? body)
     {
-        var handler = new QueuedFoundryHttpHandler().Enqueue(HttpStatusCode.TooManyRequests, body ?? "");
-        var client = NewClient(handler);
+        QueuedFoundryHttpHandler handler = new QueuedFoundryHttpHandler().Enqueue(HttpStatusCode.TooManyRequests, body ?? "");
+        FoundryChatClient client = NewClient(handler);
 
-        var exc = await Assert.ThrowsAsync<FoundryHttpException>(() =>
-            client.CompleteAsync([CascadeChatMessage.User("hi")], "gpt-5-mini", null, CancellationToken.None));
+        FoundryHttpException exc = await Assert.ThrowsAsync<FoundryHttpException>(() =>
+            client.CompleteAsync([CascadeChatMessage.User("hi")], "gpt-5-mini", null, TestContext.Current.CancellationToken));
 
         Assert.Null(exc.RetryAfterSeconds);
     }
@@ -200,11 +200,11 @@ public sealed class FoundryChatClientTests
 
         Assert.Equal("user", CascadeChatMessage.User("hi")["role"]!.GetValue<string>());
 
-        var assistantNull = CascadeChatMessage.Assistant(null);
+        JsonObject assistantNull = CascadeChatMessage.Assistant(null);
         Assert.Equal("assistant", assistantNull["role"]!.GetValue<string>());
         Assert.Null(assistantNull["content"]);
 
-        var tool = CascadeChatMessage.Tool("42 items", "call_abc");
+        JsonObject tool = CascadeChatMessage.Tool("42 items", "call_abc");
         Assert.Equal("tool", tool["role"]!.GetValue<string>());
         Assert.Equal("42 items", tool["content"]!.GetValue<string>());
         Assert.Equal("call_abc", tool["tool_call_id"]!.GetValue<string>());
@@ -224,11 +224,11 @@ public sealed class FoundryChatClientTests
             },
         };
 
-        var definitions = CascadeToolDefinitions.FromToolSchemas(schemas);
+        IReadOnlyList<JsonObject> definitions = CascadeToolDefinitions.FromToolSchemas(schemas);
 
-        var def = Assert.Single(definitions);
+        JsonObject def = Assert.Single(definitions);
         Assert.Equal("function", def["type"]!.GetValue<string>());
-        var function = def["function"]!.AsObject();
+        JsonObject function = def["function"]!.AsObject();
         Assert.Equal("search", function["name"]!.GetValue<string>());
         Assert.Equal("search the menu", function["description"]!.GetValue<string>());
         Assert.Equal("object", function["parameters"]!["type"]!.GetValue<string>());
@@ -239,9 +239,9 @@ public sealed class FoundryChatClientTests
     {
         var schemas = new List<JsonObject> { new() { ["name"] = "get_order" } };
 
-        var def = Assert.Single(CascadeToolDefinitions.FromToolSchemas(schemas));
+        JsonObject def = Assert.Single(CascadeToolDefinitions.FromToolSchemas(schemas));
 
-        var function = def["function"]!.AsObject();
+        JsonObject function = def["function"]!.AsObject();
         Assert.Equal("", function["description"]!.GetValue<string>());
         Assert.NotNull(function["parameters"]);
         Assert.Empty(function["parameters"]!.AsObject());

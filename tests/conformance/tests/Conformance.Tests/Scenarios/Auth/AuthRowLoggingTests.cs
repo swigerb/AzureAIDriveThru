@@ -30,37 +30,38 @@ public sealed class AuthRowLoggingTests(ConformanceFixture fixture)
     [Fact]
     public Task Row_14_minted_tokens_never_appear_in_captured_stdout_or_stderr() => fixture.RunAuthRowAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var backend = fixture.Backend!;
-        var issuer = fixture.EntraIssuer!;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        IBackendUnderTest backend = fixture.Backend!;
+        FakeEntraIssuer issuer = fixture.EntraIssuer!;
 
         // Taken before any of this row's own activity, so the positive control and the leak
         // checks below only ever see output this row itself produced -- not an earlier row's
         // (or an earlier test collection run's) identically-shaped /realtime line.
-        var watermark = backend.DiagnosticsWatermark;
+        int watermark = backend.DiagnosticsWatermark;
 
-        var accessToken = issuer.Mint();
-        var sessionToken = await RealtimeBrowserClient.FetchSessionTokenAsync(backend.BaseUri, accessToken, ct)
+        string accessToken = issuer.Mint();
+        string? sessionToken = await RealtimeBrowserClient.FetchSessionTokenAsync(backend.BaseUri, accessToken, ct)
             .ConfigureAwait(false);
 
-        using var http = ConformanceHttpClient.Create();
+        using HttpClient http = ConformanceHttpClient.Create();
         http.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
-        using (await http.GetAsync(new Uri(backend.BaseUri, "/api/personas"), ct).ConfigureAwait(false)) { }
+        using (await http.GetAsync(new Uri(backend.BaseUri, "/api/personas"), ct).ConfigureAwait(false))
+        { }
 
         // Row 9's shape (a query-string ?access_token= on a REST path) with a genuinely rejected
         // token -- Rick's review item 4: "leaks on rejected requests count too." A query-string
         // token is far more likely to end up verbatim in an access-log request line than a
         // header-only one, so this deliberately-bad token needs its own leak check below just as
         // much as the two genuinely-valid tokens above.
-        var rejectedToken = issuer.Mint(new FakeEntraTokenOverrides { Kid = "unknown-kid-row-14-probe" });
-        using var rejectedHttp = ConformanceHttpClient.Create();
+        string rejectedToken = issuer.Mint(new FakeEntraTokenOverrides { Kid = "unknown-kid-row-14-probe" });
+        using HttpClient rejectedHttp = ConformanceHttpClient.Create();
         using (await rejectedHttp.GetAsync(
             new Uri(backend.BaseUri, $"/api/personas?access_token={Uri.EscapeDataString(rejectedToken!)}"), ct)
             .ConfigureAwait(false))
         { }
 
-        await using (var browser = await RealtimeBrowserClient.ConnectAsync(
+        await using (RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(
             backend.BaseUri, attachAccessToken: true, accessToken: accessToken,
             attachSessionToken: true, sessionToken: sessionToken, cancellationToken: ct).ConfigureAwait(false))
         {
@@ -73,16 +74,16 @@ public sealed class AuthRowLoggingTests(ConformanceFixture fixture)
         // actually landed in the capture before those checks run at all -- without this, a row
         // that reads too early passes not because nothing leaked, but because the evidence simply
         // wasn't there yet to catch it.
-        var accessLineLogged = await backend.WaitForDiagnosticsAsync(
-            d => d.Contains("/realtime", StringComparison.Ordinal), TimeSpan.FromSeconds(10), ct, sinceWatermark: watermark)
+        bool accessLineLogged = await backend.WaitForDiagnosticsAsync(
+            d => d.Contains("/realtime", StringComparison.Ordinal), TimeSpan.FromSeconds(10), sinceWatermark: watermark, cancellationToken: ct)
             .ConfigureAwait(false);
         Assert.True(accessLineLogged,
             $"Row 14: expected the backend's captured stdout/stderr to eventually contain a \"/realtime\" " +
             $"access line -- without it, the leak checks below would pass vacuously, not because " +
             $"nothing leaked.\n\n--- backend stdout/stderr ---\n{backend.DumpDiagnostics()}");
 
-        var dump = backend.DumpDiagnostics();
-        foreach (var token in new[] { accessToken, sessionToken!, rejectedToken! })
+        string dump = backend.DumpDiagnostics();
+        foreach (string? token in new[] { accessToken, sessionToken!, rejectedToken! })
         {
             Assert.DoesNotContain(token, dump, StringComparison.Ordinal);
             Assert.DoesNotContain(Uri.EscapeDataString(token), dump, StringComparison.Ordinal);
@@ -95,7 +96,7 @@ public sealed class AuthRowLoggingTests(ConformanceFixture fixture)
             // ever mints), so it is what an incomplete raw-or-escaped-only check like the one
             // above would miss if a log line embedded the token some other way (e.g. re-encoded,
             // wrapped, or truncated with the signature intact).
-            var signatureSegment = token.Split('.')[^1];
+            string signatureSegment = token.Split('.')[^1];
             Assert.DoesNotContain(signatureSegment, dump, StringComparison.Ordinal);
         }
     });

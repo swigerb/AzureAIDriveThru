@@ -38,7 +38,7 @@ internal sealed class SessionActor : IAsyncDisposable
 
     private async Task RunLoopAsync()
     {
-        await foreach (var sessionEvent in _mailbox.Reader.ReadAllAsync().ConfigureAwait(false))
+        await foreach (SessionEvent? sessionEvent in _mailbox.Reader.ReadAllAsync().ConfigureAwait(false))
         {
             if (_processor is not null)
             {

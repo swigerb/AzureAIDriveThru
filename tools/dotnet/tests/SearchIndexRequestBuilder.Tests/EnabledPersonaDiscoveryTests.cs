@@ -23,7 +23,7 @@ public sealed class EnabledPersonaDiscoveryTests : IDisposable
 
     private void CreatePersona(string personaId, string indexName)
     {
-        var personaDir = Path.Combine(_repoRoot, "personas", personaId);
+        string personaDir = Path.Combine(_repoRoot, "personas", personaId);
         Directory.CreateDirectory(Path.Combine(personaDir, "menu"));
         File.WriteAllText(
             Path.Combine(personaDir, "persona.json"),
@@ -34,7 +34,7 @@ public sealed class EnabledPersonaDiscoveryTests : IDisposable
     [Fact]
     public void DiscoverAll_Throws_WhenNoPersonasDirectoryExists()
     {
-        var ex = Assert.Throws<InvalidOperationException>(() => EnabledPersonaDiscovery.DiscoverAll(_repoRoot));
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => EnabledPersonaDiscovery.DiscoverAll(_repoRoot));
         Assert.Contains("No 'personas' directory found", ex.Message);
     }
 
@@ -42,7 +42,7 @@ public sealed class EnabledPersonaDiscoveryTests : IDisposable
     public void DiscoverAll_Throws_WhenPersonasDirectoryIsEmpty()
     {
         Directory.CreateDirectory(Path.Combine(_repoRoot, "personas"));
-        var ex = Assert.Throws<InvalidOperationException>(() => EnabledPersonaDiscovery.DiscoverAll(_repoRoot));
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => EnabledPersonaDiscovery.DiscoverAll(_repoRoot));
         Assert.Contains("No personas enabled", ex.Message);
     }
 
@@ -50,9 +50,9 @@ public sealed class EnabledPersonaDiscoveryTests : IDisposable
     public void DiscoverAll_FindsExactlyOnePersona_WhenOnlyOneExists()
     {
         CreatePersona("alpha", "alpha-menu-items");
-        var result = EnabledPersonaDiscovery.DiscoverAll(_repoRoot);
+        IReadOnlyList<EnabledPersonaDiscovery.DiscoveredPersona> result = EnabledPersonaDiscovery.DiscoverAll(_repoRoot);
 
-        var persona = Assert.Single(result);
+        EnabledPersonaDiscovery.DiscoveredPersona persona = Assert.Single(result);
         Assert.Equal("alpha", persona.PersonaId);
         Assert.Equal("alpha-menu-items", persona.IndexName);
         Assert.Equal(Path.Combine(_repoRoot, "personas", "alpha", "menu", "menuItems.json"), persona.MenuPath);
@@ -65,7 +65,7 @@ public sealed class EnabledPersonaDiscoveryTests : IDisposable
         CreatePersona("alpha", "alpha-menu-items");
         CreatePersona("mike", "mike-menu-items");
 
-        var result = EnabledPersonaDiscovery.DiscoverAll(_repoRoot);
+        IReadOnlyList<EnabledPersonaDiscovery.DiscoveredPersona> result = EnabledPersonaDiscovery.DiscoverAll(_repoRoot);
 
         Assert.Equal(["alpha", "mike", "zulu"], result.Select(p => p.PersonaId));
     }
@@ -76,7 +76,7 @@ public sealed class EnabledPersonaDiscoveryTests : IDisposable
         CreatePersona("alpha", "alpha-menu-items");
         Directory.CreateDirectory(Path.Combine(_repoRoot, "personas", "not-a-persona"));
 
-        var result = EnabledPersonaDiscovery.DiscoverAll(_repoRoot);
+        IReadOnlyList<EnabledPersonaDiscovery.DiscoveredPersona> result = EnabledPersonaDiscovery.DiscoverAll(_repoRoot);
 
         Assert.Equal(["alpha"], result.Select(p => p.PersonaId));
     }
@@ -84,11 +84,11 @@ public sealed class EnabledPersonaDiscoveryTests : IDisposable
     [Fact]
     public void DiscoverAll_Throws_WhenAPersonaManifestHasNoIndexName()
     {
-        var personaDir = Path.Combine(_repoRoot, "personas", "broken");
+        string personaDir = Path.Combine(_repoRoot, "personas", "broken");
         Directory.CreateDirectory(Path.Combine(personaDir, "menu"));
         File.WriteAllText(Path.Combine(personaDir, "persona.json"), "{}");
 
-        var ex = Assert.Throws<InvalidOperationException>(() => EnabledPersonaDiscovery.DiscoverAll(_repoRoot));
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => EnabledPersonaDiscovery.DiscoverAll(_repoRoot));
         Assert.Contains("search.indexName", ex.Message);
     }
 
@@ -101,7 +101,7 @@ public sealed class EnabledPersonaDiscoveryTests : IDisposable
         // "explicit argument wins outright" precedence.
         CreatePersona("repo-root-persona", "repo-root-menu-items");
 
-        var overrideDir = Path.Combine(Path.GetTempPath(), $"squanchy-personas-dir-override-{Guid.NewGuid():n}");
+        string overrideDir = Path.Combine(Path.GetTempPath(), $"squanchy-personas-dir-override-{Guid.NewGuid():n}");
         try
         {
             Directory.CreateDirectory(Path.Combine(overrideDir, "fixture-persona", "menu"));
@@ -112,9 +112,9 @@ public sealed class EnabledPersonaDiscoveryTests : IDisposable
                 Path.Combine(overrideDir, "fixture-persona", "menu", "menuItems.json"),
                 """{"menuItems": []}""");
 
-            var result = EnabledPersonaDiscovery.DiscoverAll(_repoRoot, overrideDir);
+            IReadOnlyList<EnabledPersonaDiscovery.DiscoveredPersona> result = EnabledPersonaDiscovery.DiscoverAll(_repoRoot, overrideDir);
 
-            var persona = Assert.Single(result);
+            EnabledPersonaDiscovery.DiscoveredPersona persona = Assert.Single(result);
             Assert.Equal("fixture-persona", persona.PersonaId);
             Assert.Equal("fixture-menu-items", persona.IndexName);
         }
@@ -142,9 +142,9 @@ public sealed class EnabledPersonaDiscoveryTests : IDisposable
         CreatePersona("bravo", "bravo-menu-items");
         CreatePersona("mike", "mike-menu-items");
 
-        var result = EnabledPersonaDiscovery.DiscoverAll(_repoRoot, enabledIdsOverride: ["mike"]);
+        IReadOnlyList<EnabledPersonaDiscovery.DiscoveredPersona> result = EnabledPersonaDiscovery.DiscoverAll(_repoRoot, enabledIdsOverride: ["mike"]);
 
-        var persona = Assert.Single(result);
+        EnabledPersonaDiscovery.DiscoveredPersona persona = Assert.Single(result);
         Assert.Equal("mike", persona.PersonaId);
     }
 
@@ -158,7 +158,7 @@ public sealed class EnabledPersonaDiscoveryTests : IDisposable
         CreatePersona("bravo", "bravo-menu-items");
         CreatePersona("mike", "mike-menu-items");
 
-        var result = EnabledPersonaDiscovery.DiscoverAll(_repoRoot, enabledIdsOverride: ["mike", "alpha"]);
+        IReadOnlyList<EnabledPersonaDiscovery.DiscoveredPersona> result = EnabledPersonaDiscovery.DiscoverAll(_repoRoot, enabledIdsOverride: ["mike", "alpha"]);
 
         Assert.Equal(["alpha", "mike"], result.Select(p => p.PersonaId));
     }
@@ -168,7 +168,7 @@ public sealed class EnabledPersonaDiscoveryTests : IDisposable
     {
         CreatePersona("alpha", "alpha-menu-items");
 
-        var ex = Assert.Throws<InvalidOperationException>(
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(
             () => EnabledPersonaDiscovery.DiscoverAll(_repoRoot, enabledIdsOverride: ["alpha", "nonexistent"]));
 
         Assert.Contains("'nonexistent'", ex.Message);
@@ -181,7 +181,7 @@ public sealed class EnabledPersonaDiscoveryTests : IDisposable
         CreatePersona("alpha", "alpha-menu-items");
         CreatePersona("bravo", "bravo-menu-items");
 
-        var result = EnabledPersonaDiscovery.DiscoverAll(_repoRoot, enabledIdsOverride: ["alpha", "alpha", "bravo"]);
+        IReadOnlyList<EnabledPersonaDiscovery.DiscoveredPersona> result = EnabledPersonaDiscovery.DiscoverAll(_repoRoot, enabledIdsOverride: ["alpha", "alpha", "bravo"]);
 
         Assert.Equal(["alpha", "bravo"], result.Select(p => p.PersonaId));
     }

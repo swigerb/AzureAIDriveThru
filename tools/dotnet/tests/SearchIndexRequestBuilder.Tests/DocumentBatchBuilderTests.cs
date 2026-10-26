@@ -24,10 +24,10 @@ public sealed class DocumentBatchBuilderTests
     [Fact]
     public void BuildBatches_TagsEveryDocument_WithMergeOrUploadAction()
     {
-        var batches = DocumentBatchBuilder.BuildBatches([MakeDocument(1)]);
-        var batch = Assert.Single(batches);
-        var value = batch["value"]!.AsArray();
-        var document = Assert.Single(value)!.AsObject();
+        List<JsonObject> batches = DocumentBatchBuilder.BuildBatches([MakeDocument(1)]);
+        JsonObject batch = Assert.Single(batches);
+        JsonArray value = batch["value"]!.AsArray();
+        JsonObject document = Assert.Single(value)!.AsObject();
 
         Assert.Equal("mergeOrUpload", document["@search.action"]!.GetValue<string>());
         Assert.Equal("doc-1", document["id"]!.GetValue<string>());
@@ -37,9 +37,9 @@ public sealed class DocumentBatchBuilderTests
     public void BuildBatches_PreservesDocumentOrder_WithinABatch()
     {
         var documents = Enumerable.Range(0, 5).Select(MakeDocument).ToList();
-        var batches = DocumentBatchBuilder.BuildBatches(documents);
-        var batch = Assert.Single(batches);
-        var ids = batch["value"]!.AsArray().Select(d => d!["id"]!.GetValue<string>());
+        List<JsonObject> batches = DocumentBatchBuilder.BuildBatches(documents);
+        JsonObject batch = Assert.Single(batches);
+        IEnumerable<string> ids = batch["value"]!.AsArray().Select(d => d!["id"]!.GetValue<string>());
 
         Assert.Equal(["doc-0", "doc-1", "doc-2", "doc-3", "doc-4"], ids);
     }
@@ -53,7 +53,7 @@ public sealed class DocumentBatchBuilderTests
     public void BuildBatches_SplitsExactlyAtTheHundredDocumentBoundary(int documentCount, int[] expectedBatchSizes)
     {
         var documents = Enumerable.Range(0, documentCount).Select(MakeDocument).ToList();
-        var batches = DocumentBatchBuilder.BuildBatches(documents);
+        List<JsonObject> batches = DocumentBatchBuilder.BuildBatches(documents);
 
         Assert.Equal(expectedBatchSizes, batches.Select(b => b["value"]!.AsArray().Count));
     }
@@ -61,14 +61,14 @@ public sealed class DocumentBatchBuilderTests
     [Fact]
     public void BuildBatches_ReturnsEmptyList_ForNoDocuments()
     {
-        var batches = DocumentBatchBuilder.BuildBatches([]);
+        List<JsonObject> batches = DocumentBatchBuilder.BuildBatches([]);
         Assert.Empty(batches);
     }
 
     [Fact]
     public void BuildBatches_DoesNotMutateTheInputDocuments()
     {
-        var original = MakeDocument(1);
+        JsonObject original = MakeDocument(1);
         DocumentBatchBuilder.BuildBatches([original]);
 
         Assert.False(original.ContainsKey("@search.action"));

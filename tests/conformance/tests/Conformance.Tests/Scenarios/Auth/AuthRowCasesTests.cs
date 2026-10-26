@@ -1,5 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
-using System.Linq;
+using System.Text.Json;
 using Conformance.Fakes;
 using Xunit;
 
@@ -28,9 +28,9 @@ public sealed class AuthRowCasesTests : IAsyncLifetime
     [Fact]
     public void Every_case_mints_without_throwing()
     {
-        foreach (var row in AuthRowTokenCase.All)
+        foreach (AuthRowTokenCase row in AuthRowTokenCase.All)
         {
-            var exception = Record.Exception(() => row.MintToken(_issuer));
+            Exception? exception = Record.Exception(() => row.MintToken(_issuer));
             Assert.True(exception is null, $"{row}: MintToken threw {exception}.");
         }
     }
@@ -40,17 +40,17 @@ public sealed class AuthRowCasesTests : IAsyncLifetime
     /// <see cref="JwtSecurityTokenHandler"/>'s own claim aggregation would otherwise collapse a
     /// single same-Type claim to (exactly what Rick's own probe found: <c>"roles":"DriveThru.User"</c>).
     /// Inspects the raw decoded payload JSON directly, the same way that probe did, rather than
-    /// relying on <see cref="Claim"/>'s own array bookkeeping. A mutation that drops the
+    /// relying on <see cref="System.Security.Claims.Claim"/>'s own array bookkeeping. A mutation that drops the
     /// post-construction <c>token.Payload["roles"] = roles.ToArray()</c> fix would fail this test:
     /// the decoded <c>roles</c> value would be a JSON string, not a JSON array.</summary>
     [Fact]
     public void Default_mint_roles_claim_is_a_json_array_of_length_one()
     {
-        var token = _issuer.Mint();
-        var jwt = new JwtSecurityTokenHandler().ReadJwtToken(token);
+        string token = _issuer.Mint();
+        JwtSecurityToken jwt = new JwtSecurityTokenHandler().ReadJwtToken(token);
         var payload = System.Text.Json.JsonDocument.Parse(jwt.Payload.SerializeToJson());
 
-        var roles = payload.RootElement.GetProperty("roles");
+        JsonElement roles = payload.RootElement.GetProperty("roles");
         Assert.Equal(System.Text.Json.JsonValueKind.Array, roles.ValueKind);
         Assert.Equal(1, roles.GetArrayLength());
         Assert.Equal(FakeEntraIssuer.DefaultRole, roles[0].GetString());
@@ -66,11 +66,11 @@ public sealed class AuthRowCasesTests : IAsyncLifetime
     [InlineData("7 (HS256, published kid)")]
     public void Published_kid_row_7_variant_carries_the_published_kid_header(string rowName)
     {
-        var row = AuthRowTokenCase.All.Single(r => r.Row == rowName);
-        var token = row.MintToken(_issuer);
+        AuthRowTokenCase row = AuthRowTokenCase.All.Single(r => r.Row == rowName);
+        string? token = row.MintToken(_issuer);
         Assert.NotNull(token);
 
-        var jwt = new JwtSecurityTokenHandler().ReadJwtToken(token!);
+        JwtSecurityToken jwt = new JwtSecurityTokenHandler().ReadJwtToken(token);
         Assert.Equal(FakeEntraIssuer.PublishedKid, jwt.Header.Kid);
     }
 }

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net.WebSockets;
 using System.Text.Json.Nodes;
 using Backend.Models;
@@ -5,7 +6,6 @@ using Backend.Personas;
 using Backend.Realtime;
 using Backend.Shared;
 using Backend.Tools;
-using Microsoft.Extensions.Logging;
 
 namespace Backend.Sessions;
 
@@ -77,8 +77,8 @@ internal sealed class ResumeCoordinator(
     // the timeout fallback above for the full rtmt.py parity reasoning.
     public async Task HandleResumeFirstFrameAsync(JsonObject message)
     {
-        var presentedId = RealtimeProcessor.GetString(message, "resume_id");
-        var outcome = sessionManager!.TryResume(
+        string? presentedId = RealtimeProcessor.GetString(message, "resume_id");
+        ResumeOutcome outcome = sessionManager!.TryResume(
             browserSocket, presentedId, persona.Id, resolvedModel.Id, menuMode, sessionId, linkedCts,
             attachedSupersededFlag: state.Superseded);
         if (!outcome.Accepted)
@@ -142,7 +142,7 @@ internal sealed class ResumeCoordinator(
             // CancellationToken, and mutates OrderState, which isn't thread-safe -- a promptly
             // cancelled StaleCts alone was never enough to stop an already-started dispatch.
             Task.Run(
-                () => FramePump.CloseSupersededStaleConnectionAsync(staleWs, outcome.StaleCts, FramePump.SupersededCloseTimeout, logger!),
+                () => FramePump.CloseSupersededStaleConnectionAsync(staleWs, outcome.StaleCts, FramePump.s_supersededCloseTimeout, logger!),
                 CancellationToken.None).FireAndForget(logger, nameof(FramePump.CloseSupersededStaleConnectionAsync));
         }
     }
@@ -150,6 +150,8 @@ internal sealed class ResumeCoordinator(
     // Issue #15: reads an IOrderTicketSource best-effort, matching HandleToolCallDoneAsync's
     // own post-exception refresh pattern -- a session with no readable order state yet (or an
     // executor that throws on read) just gets "{}" instead of losing the whole announcement.
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Best-effort order read through IOrderTicketSource, whose implementations can fail in any way; the failure is logged and an empty summary is used.")]
     private string SafeOrderSummaryJson(IOrderTicketSource source)
     {
         try
@@ -186,11 +188,11 @@ internal sealed class ResumeCoordinator(
         {
             if (resumed)
             {
-                var outcome = state.ResumeAnnounce!;
-                var orderSummaryJson = outcome.ToolExecutor is IOrderTicketSource ticketSource
+                ResumeOutcome outcome = state.ResumeAnnounce!;
+                string orderSummaryJson = outcome.ToolExecutor is IOrderTicketSource ticketSource
                     ? SafeOrderSummaryJson(ticketSource)
                     : "{}";
-                var resumedFrame = ResumeEnvelope.BuildSessionResumedFrame(
+                JsonObject resumedFrame = ResumeEnvelope.BuildSessionResumedFrame(
                     state.Identifiers, orderSummaryJson, outcome.ResumeId);
                 // Parity with rtmt.py's handle_resume (sets `announced = True` right before sending
                 // extension.session_resumed): a successfully resumed connection holds a baton (its
@@ -215,12 +217,12 @@ internal sealed class ResumeCoordinator(
                                 ["type"] = "input_text",
                                 ["text"] = SessionManager.BuildRehydrationText(
                                     orderSummaryJson,
-                                    outcome.RecentTurns ?? Array.Empty<(string Role, string Text)>(),
+                                    outcome.RecentTurns ?? [],
                                     persona.RoleName),
                             }),
                         },
                     };
-                    var rehydrationItemJson = rehydrationItem.ToJsonString();
+                    string rehydrationItemJson = rehydrationItem.ToJsonString();
                     await FramePump.SendTextAsync(upstream, rehydrationItemJson, ct).ConfigureAwait(false);
                     // Issue #13 tail: track the rehydration item in the context window, mirroring
                     // rtmt.py's ctx_monitor.add_content(rehydration) right after it's sent.
@@ -230,7 +232,7 @@ internal sealed class ResumeCoordinator(
                     // response.create can fire -- the bootstrap session.update already went out with
                     // whatever voice the fresh persona binding resolved to, so this corrects it in
                     // place (VoicePickerTests' resume-restore-precedes-response.create requirement).
-                    var voiceUpdate = state.Guard.Track(buildVoiceUpdateFrame(state.Voice).ToJsonString());
+                    string voiceUpdate = state.Guard.Track(buildVoiceUpdateFrame(state.Voice).ToJsonString());
                     await FramePump.SendTextAsync(upstream, voiceUpdate, ct).ConfigureAwait(false);
                 }
             }
@@ -258,8 +260,8 @@ internal sealed class ResumeCoordinator(
     // session.
     private async Task SendFreshSessionMetadataAsync()
     {
-        var resumeId = sessionManager!.IssueResumeId(state.EffectiveSessionId);
-        var metadataFrame = ResumeEnvelope.BuildSessionMetadataFrame(state.Identifiers, resumeId);
+        string? resumeId = sessionManager!.IssueResumeId(state.EffectiveSessionId);
+        JsonObject metadataFrame = ResumeEnvelope.BuildSessionMetadataFrame(state.Identifiers, resumeId);
         state.MetadataAnnounced = true;
         await FramePump.SendTextAsync(browserSocket, metadataFrame.ToJsonString(), ct).ConfigureAwait(false);
     }

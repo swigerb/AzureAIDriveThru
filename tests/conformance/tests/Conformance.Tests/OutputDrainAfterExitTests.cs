@@ -57,10 +57,10 @@ public sealed class OutputDrainAfterExitTests
     [Fact]
     public async Task DrainAndClassifyAsync_message_always_contains_the_final_line_of_a_large_burst_from_a_fast_exiting_process()
     {
-        var repoRoot = RepoPaths.FindRepoRoot();
-        var pythonExe = RepoPaths.PythonExecutable(repoRoot);
+        string repoRoot = RepoPaths.FindRepoRoot();
+        string pythonExe = RepoPaths.PythonExecutable(repoRoot);
 
-        var script =
+        string script =
             $"for i in range({BurstLineCount}):\n" +
             "    print(f'line {i}')\n" +
             $"print('{SentinelLine}')\n";
@@ -79,12 +79,12 @@ public sealed class OutputDrainAfterExitTests
         var output = new CapturedProcessOutput();
         output.Attach(process);
 
-        var startedAt = DateTimeOffset.UtcNow;
+        DateTimeOffset startedAt = DateTimeOffset.UtcNow;
         Assert.True(process.Start(), "Failed to start the Python venv interpreter for this test.");
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
         // Deliberately NO Task.Delay/sleep here -- a tight spin loop observes HasExited flipping
         // to true as early as physically possible on this machine, maximising the chance the
@@ -100,8 +100,8 @@ public sealed class OutputDrainAfterExitTests
         // streams BEFORE reading/classifying the dump. A generous 30s deadline keeps this a no-op
         // bound (the process has already exited; the drain itself is near-instant) rather than
         // something this test could itself race.
-        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(30);
-        var ex = await ExitClassification.DrainAndClassifyAsync(process, output, startedAt, deadline, "Test");
+        DateTimeOffset deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(30);
+        Exception ex = await ExitClassification.DrainAndClassifyAsync(process, output, startedAt, deadline, "Test");
 
         Assert.Contains(SentinelLine, ex.Message);
     }

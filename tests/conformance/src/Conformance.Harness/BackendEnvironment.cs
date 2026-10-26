@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 
 namespace Conformance.Harness;
@@ -51,7 +52,7 @@ public static class BackendEnvironment
             // to match the scenarios this suite drives; only the concrete launcher wiring for a
             // different language would differ, not whether these are needed at all. ──
             ["HOST"] = BackendContract.Host,
-            ["PORT"] = contract.Port.ToString(),
+            ["PORT"] = contract.Port.ToString(CultureInfo.InvariantCulture),
 
             // Key auth (never DefaultAzureCredential/AzureDeveloperCliCredential in CI).
             ["AZURE_OPENAI_EASTUS2_API_KEY"] = BackendContract.OpenAiApiKey,
@@ -101,7 +102,7 @@ public static class BackendEnvironment
             env["PERSONAS_DIR"] = contract.PersonasDir;
         }
 
-        foreach (var (key, value) in options.ExtraEnvironment)
+        foreach ((string? key, string? value) in options.ExtraEnvironment)
         {
             env[key] = value;
         }
@@ -115,7 +116,7 @@ public static class BackendEnvironment
         // hooks.py's own exact-match semantics (only the literal string "1" enables hooks --
         // README.md's "Test hooks" table) so this stays in lockstep with the guard it's working
         // around.
-        if (env.TryGetValue("CONFORMANCE_TEST_HOOKS", out var hooks) && hooks == "1")
+        if (env.TryGetValue("CONFORMANCE_TEST_HOOKS", out string? hooks) && hooks == "1")
         {
             env["RUNNING_IN_PRODUCTION"] = "false";
         }

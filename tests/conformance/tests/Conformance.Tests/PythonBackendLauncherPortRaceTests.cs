@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using Conformance.Harness;
@@ -35,15 +36,15 @@ public sealed class PythonBackendLauncherPortRaceTests
     // these URIs for the launched backend to report healthy. Same pattern as
     // DotnetBackendLauncherPortRaceTests/Scenarios/Auth/AuthModeLaunchTests.cs's own
     // NeverDialedRealtime/NeverDialedSearch.
-    private static readonly Uri NeverDialedRealtime = new("http://127.0.0.1:1/");
-    private static readonly Uri NeverDialedSearch = new("http://127.0.0.1:1/");
+    private static readonly Uri s_neverDialedRealtime = new("http://127.0.0.1:1/");
+    private static readonly Uri s_neverDialedSearch = new("http://127.0.0.1:1/");
 
     // Refs #259: without CONFORMANCE_TEST_HOOKS=1, BackendEnvironment.Build's default
     // RUNNING_IN_PRODUCTION=true makes app.py's startup guard refuse to start with no AUTH_MODE
     // configured (exactly the row AuthModeLaunchTests.Production_and_unconfigured_fails_fast
     // pins) -- same CONFORMANCE_TEST_HOOKS=1 every real BackendProfile (see BackendProfiles
     // .Default) sets, which downgrades RUNNING_IN_PRODUCTION to "false" so the guard doesn't fire.
-    private static readonly PythonBackendOptions Options = new()
+    private static readonly PythonBackendOptions s_options = new()
     {
         ExtraEnvironment = new Dictionary<string, string> { ["CONFORMANCE_TEST_HOOKS"] = "1" },
     };
@@ -58,17 +59,17 @@ public sealed class PythonBackendLauncherPortRaceTests
     [Fact]
     public async Task StartAsync_recovers_when_the_assigned_port_is_already_bound_by_someone_else()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var occupiedPort = NetworkUtils.GetFreeTcpPort();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        int occupiedPort = NetworkUtils.GetFreeTcpPort();
 
         using var occupyingListener = new TcpListener(IPAddress.Loopback, occupiedPort);
         occupyingListener.Start();
         try
         {
-            var contract = BackendContract.ForPort(NeverDialedRealtime, NeverDialedSearch, occupiedPort);
+            var contract = BackendContract.ForPort(s_neverDialedRealtime, s_neverDialedSearch, occupiedPort);
 
-            await using var backend = await PythonBackendLauncher.StartAsync(
-                contract, Options, ct);
+            await using IBackendUnderTest backend = await PythonBackendLauncher.StartAsync(
+                contract, s_options, ct);
 
             // The real backend can never have bound the port this test is still holding open --
             // proves the retry loop actually reassigned a fresh port and relaunched, not merely
@@ -76,7 +77,7 @@ public sealed class PythonBackendLauncherPortRaceTests
             Assert.NotEqual(occupiedPort, backend.BaseUri.Port);
 
             using var http = new HttpClient();
-            using var response = await http.GetAsync(new Uri(backend.BaseUri, "/health"), ct);
+            using HttpResponseMessage response = await http.GetAsync(new Uri(backend.BaseUri, "/health"), ct);
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }
         finally
@@ -103,26 +104,27 @@ public sealed class PythonBackendLauncherPortRaceTests
     [Fact]
     public async Task StartAsync_every_retry_requests_port_0_even_though_the_first_attempt_used_an_explicit_port()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var occupiedPort = NetworkUtils.GetFreeTcpPort();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        int occupiedPort = NetworkUtils.GetFreeTcpPort();
 
         using var occupyingListener = new TcpListener(IPAddress.Loopback, occupiedPort);
         occupyingListener.Start();
 
         var observedPorts = new List<string?>();
+        var observedPortsGate = new Lock();
         PythonBackendLauncher.TestOnlyProcessStartInfoObserver = startInfo =>
         {
-            lock (observedPorts)
+            lock (observedPortsGate)
             {
-                observedPorts.Add(startInfo.Environment.TryGetValue("PORT", out var port) ? port : null);
+                observedPorts.Add(startInfo.Environment.TryGetValue("PORT", out string? port) ? port : null);
             }
         };
         try
         {
-            var contract = BackendContract.ForPort(NeverDialedRealtime, NeverDialedSearch, occupiedPort);
+            var contract = BackendContract.ForPort(s_neverDialedRealtime, s_neverDialedSearch, occupiedPort);
 
-            await using var backend = await PythonBackendLauncher.StartAsync(
-                contract, Options, ct);
+            await using IBackendUnderTest backend = await PythonBackendLauncher.StartAsync(
+                contract, s_options, ct);
 
             Assert.True(
                 observedPorts.Count >= 2,
@@ -130,10 +132,10 @@ public sealed class PythonBackendLauncherPortRaceTests
                 $"{observedPorts.Count} attempt(s): {string.Join(", ", observedPorts)}.");
 
             // First attempt: whatever the caller explicitly requested (the occupied port, here).
-            Assert.Equal(occupiedPort.ToString(), observedPorts[0]);
+            Assert.Equal(occupiedPort.ToString(CultureInfo.InvariantCulture), observedPorts[0]);
 
             // Every retry (everything after the first attempt) must always request port 0.
-            for (var i = 1; i < observedPorts.Count; i++)
+            for (int i = 1; i < observedPorts.Count; i++)
             {
                 Assert.Equal("0", observedPorts[i]);
             }

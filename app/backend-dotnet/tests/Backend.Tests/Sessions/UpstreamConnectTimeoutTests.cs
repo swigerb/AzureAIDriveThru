@@ -70,7 +70,7 @@ public sealed class UpstreamConnectTimeoutTests
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
 
         // Accept the TLS-stalling connection(s) in the background. We never read or write to the
         // accepted socket -- the client's TLS ClientHello is sent into the void, which is exactly
@@ -85,7 +85,7 @@ public sealed class UpstreamConnectTimeoutTests
             {
                 while (!acceptLoopCts.IsCancellationRequested)
                 {
-                    var client = await listener.AcceptTcpClientAsync(acceptLoopCts.Token);
+                    TcpClient client = await listener.AcceptTcpClientAsync(acceptLoopCts.Token);
                     lock (acceptedSockets)
                     {
                         acceptedSockets.Add(client);
@@ -107,8 +107,8 @@ public sealed class UpstreamConnectTimeoutTests
                 wsConnectTimeoutSeconds: 6,
                 wsConnectTimeoutConnectSeconds: 1);
 
-            var processor = CreateProcessor(connectionConfig, port);
-            var socket = new FakeWebSocket(Array.Empty<(byte[], bool, WebSocketMessageType)>());
+            RealtimeProcessor processor = CreateProcessor(connectionConfig, port);
+            var socket = new FakeWebSocket([]);
 
             var stopwatch = Stopwatch.StartNew();
             await processor.RunSessionAsync(
@@ -145,7 +145,7 @@ public sealed class UpstreamConnectTimeoutTests
 
             lock (acceptedSockets)
             {
-                foreach (var client in acceptedSockets)
+                foreach (TcpClient client in acceptedSockets)
                 {
                     client.Dispose();
                 }

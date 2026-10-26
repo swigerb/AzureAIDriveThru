@@ -23,7 +23,7 @@ namespace Conformance.Tests.Scenarios.RateLimit;
 [Collection(RateLimitTimersConformanceCollection.Name)]
 public sealed class GreetingPartialAudioNoDoneAcceptsCooldownGuestAudioTests(RateLimitTimersConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
     private const string GreetingDelta = "cGFydGlhbC1ncmVldGluZy1hdWRpbw==";
     private const string MicAt1_5xCooldown = "bWljLWF0LTEuNXgtY29vbGRvd24=";
     private const string MicAfterFullCooldown = "bWljLWFmdGVyLWZ1bGwtY29vbGRvd24=";
@@ -32,15 +32,15 @@ public sealed class GreetingPartialAudioNoDoneAcceptsCooldownGuestAudioTests(Rat
     [Trait("Dotnet", "ready")]
     public Task Mic_audio_at_1_5x_cooldown_forwards_after_partial_greeting_audio_with_no_audio_done() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        bool noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(s_frameTimeout, ct);
         Assert.True(noneOpen, $"Expected no open upstream connections at test start, but " +
             $"{fixture.Realtime.OpenConnectionCount} are still open — a previous test leaked a connection.");
 
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
         // The greeting streams one real audio delta, then completes ("cancelled", mid-stream)
         // with SuppressAudioDone: true -- audio started but response.output_audio.done never
@@ -56,8 +56,8 @@ public sealed class GreetingPartialAudioNoDoneAcceptsCooldownGuestAudioTests(Rat
 
         // Confirm the delta actually reached the browser (echo.on_audio_delta() ran, setting
         // _greeting_audio_seen) before relying on the doubled cooldown it enables.
-        var deltaForwarded = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "response.audio.delta", FrameTimeout, ct);
+        RecordedFrame? deltaForwarded = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "response.audio.delta", s_frameTimeout, ct);
         Assert.True(deltaForwarded is not null, "Greeting audio delta was never forwarded to the browser.");
 
         // extension.round_trip_token is only emitted from response.done's fully-parsed handling
@@ -65,8 +65,8 @@ public sealed class GreetingPartialAudioNoDoneAcceptsCooldownGuestAudioTests(Rat
         // for the same server message -- seeing it guarantees on_response_done() has already
         // applied the doubled greeting cooldown (cooldown_end = now + 3.0s), even though no
         // audio.done ever arrived for this response.
-        var greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Sequence > deltaForwarded!.Sequence && f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        RecordedFrame? greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > deltaForwarded!.Sequence && f.Type == "extension.round_trip_token", s_frameTimeout, ct);
         Assert.True(greetingRoundTrip is not null, "Greeting round trip never completed.");
 
         // No response.cancel anywhere in this test. Once the partial greeting response is done, the
@@ -74,9 +74,9 @@ public sealed class GreetingPartialAudioNoDoneAcceptsCooldownGuestAudioTests(Rat
         // delayed upstream-buffer clear.
         await Task.Delay(TimeSpan.FromSeconds(2.25), ct);
         await browser.SendInputAudioAppendAsync(MicAt1_5xCooldown, ct);
-        var cooldownGuestAudio = await connection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? cooldownGuestAudio = await connection.ReceivedFrames.WaitForAsync(
             f => f.Type == "input_audio_buffer.append" && f.Json.GetProperty("audio").GetString() == MicAt1_5xCooldown,
-            FrameTimeout, ct);
+            s_frameTimeout, ct);
         Assert.True(cooldownGuestAudio is not null,
             "Expected mic audio during the post-audio cooldown to be forwarded; the cooldown must not " +
             "swallow short guest replies after assistant audio is complete (#187).");
@@ -87,7 +87,7 @@ public sealed class GreetingPartialAudioNoDoneAcceptsCooldownGuestAudioTests(Rat
         // positive "eventually true" assertion always resends and waits again rather than trusting
         // one timed attempt.
         RecordedFrame? forwarded = null;
-        var deadline = DateTime.UtcNow + FrameTimeout;
+        DateTime deadline = DateTime.UtcNow + s_frameTimeout;
         while (forwarded is null && DateTime.UtcNow < deadline)
         {
             await browser.SendInputAudioAppendAsync(MicAfterFullCooldown, ct);

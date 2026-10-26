@@ -10,7 +10,7 @@ internal sealed class RealtimeServerRelay(RealtimeSessionContext context)
 {
     public Task RunAsync() => RelayUpstreamToBrowserAsync();
 
-    JsonObject BuildClientSessionEcho(JsonObject message)
+    private JsonObject BuildClientSessionEcho(JsonObject message)
     {
         var session = message["session"] as JsonObject;
         return new JsonObject
@@ -26,13 +26,13 @@ internal sealed class RealtimeServerRelay(RealtimeSessionContext context)
         };
     }
 
-    async Task<JsonObject?> HandleErrorAsync(JsonObject message)
+    private async Task<JsonObject?> HandleErrorAsync(JsonObject message)
     {
         var err = message["error"] as JsonObject;
-        var rejectedEventId = context.State.Guard.Correlate(message);
+        string? rejectedEventId = context.State.Guard.Correlate(message);
         if (rejectedEventId is not null)
         {
-            var original = context.State.Guard.OriginalOf(rejectedEventId);
+            string? original = context.State.Guard.OriginalOf(rejectedEventId);
             if (original is not null || !context.State.Guard.ClaimFallback(rejectedEventId))
             {
                 context.Logger?.FallbackSessionUpdateAlsoRejected(
@@ -42,8 +42,8 @@ internal sealed class RealtimeServerRelay(RealtimeSessionContext context)
             context.Logger?.SessionUpdateRejected(
                 rejectedEventId, RealtimeProcessor.GetString(err, "code"), RealtimeProcessor.GetString(err, "param"), RealtimeProcessor.GetString(err, "message"), context.SessionId);
 
-            var rejectedPayload = context.State.Guard.PayloadOf(rejectedEventId);
-            var param = RealtimeProcessor.GetString(err, "param") ?? "";
+            JsonObject rejectedPayload = context.State.Guard.PayloadOf(rejectedEventId);
+            string param = RealtimeProcessor.GetString(err, "param") ?? "";
             if ((rejectedPayload.ContainsKey("reasoning") || rejectedPayload.ContainsKey("parallel_tool_calls"))
                 && (param.Length == 0
                     || param.StartsWith("session.reasoning", StringComparison.Ordinal)
@@ -53,11 +53,11 @@ internal sealed class RealtimeServerRelay(RealtimeSessionContext context)
                 context.Logger?.ReasoningOptionsRejected(context.SessionConfig.Deployment ?? "?");
             }
 
-            var fallback = RealtimeSessionBuilder.BuildFallbackSessionUpdate(
+            JsonObject fallback = RealtimeSessionBuilder.BuildFallbackSessionUpdate(
                 context.SessionConfig, context.ToolSchemas, voice: Overridable.Of<string?>(context.State.Voice),
                 systemMessage: Overridable.Of<string?>(context.SystemMessage),
                 reasoningOverride: context.ReasoningOverride);
-            var fallbackPayload = context.State.Guard.Track(fallback.ToJsonString(), fallbackOf: rejectedEventId);
+            string fallbackPayload = context.State.Guard.Track(fallback.ToJsonString(), fallbackOf: rejectedEventId);
             await FramePump.SendTextAsync(context.Upstream, fallbackPayload, context.CancellationToken).ConfigureAwait(false);
             return null;
         }
@@ -129,11 +129,11 @@ internal sealed class RealtimeServerRelay(RealtimeSessionContext context)
             }
         }
 
-        var isToolCallResponse = false;
+        bool isToolCallResponse = false;
         var spokenParts = new List<string>();
         if (message["response"] is JsonObject response && response["output"] is JsonArray output)
         {
-            var outputResult = FilterResponseOutput(response, output);
+            FilteredResponseOutput outputResult = FilterResponseOutput(response, output);
             isToolCallResponse = outputResult.IsToolCallResponse;
             spokenParts = outputResult.SpokenParts;
             if (isToolCallResponse && context.Logger is { } toolCallLogger
@@ -159,15 +159,15 @@ internal sealed class RealtimeServerRelay(RealtimeSessionContext context)
         List<string> ToolNames,
         List<string> SpokenParts);
 
-    private FilteredResponseOutput FilterResponseOutput(JsonObject response, JsonArray output)
+    private static FilteredResponseOutput FilterResponseOutput(JsonObject response, JsonArray output)
     {
-        var isToolCallResponse = false;
+        bool isToolCallResponse = false;
         var toolNames = new List<string>();
         var spokenParts = new List<string>();
         var filtered = new JsonArray();
-        foreach (var node in output)
+        foreach (JsonNode? node in output)
         {
-            var type = node is JsonObject item ? RealtimeProcessor.GetString(item, "type") : null;
+            string? type = node is JsonObject item ? RealtimeProcessor.GetString(item, "type") : null;
             if (type == "function_call" && node is JsonObject fnCall)
             {
                 isToolCallResponse = true;
@@ -191,15 +191,15 @@ internal sealed class RealtimeServerRelay(RealtimeSessionContext context)
         return new FilteredResponseOutput(isToolCallResponse, toolNames, spokenParts);
     }
 
-    private void AddSpokenParts(JsonArray contentParts, List<string> spokenParts)
+    private static void AddSpokenParts(JsonArray contentParts, List<string> spokenParts)
     {
-        foreach (var part in contentParts)
+        foreach (JsonNode? part in contentParts)
         {
             if (part is not JsonObject partObj)
             {
                 continue;
             }
-            var text = (RealtimeProcessor.GetString(partObj, "transcript")
+            string text = (RealtimeProcessor.GetString(partObj, "transcript")
                 ?? RealtimeProcessor.GetString(partObj, "text") ?? "").Trim();
             if (text.Length > 0)
             {
@@ -210,18 +210,18 @@ internal sealed class RealtimeServerRelay(RealtimeSessionContext context)
 
     private void TrackResponseOutput(JsonObject response)
     {
-        var monitor = context.SessionManager?.GetContextMonitor(context.State.EffectiveSessionId);
+        ContextMonitor? monitor = context.SessionManager?.GetContextMonitor(context.State.EffectiveSessionId);
         if (monitor is null || response["output"] is not JsonArray output)
         {
             return;
         }
-        foreach (var item in output)
+        foreach (JsonNode? item in output)
         {
             if (item is not JsonObject itemObject || itemObject["content"] is not JsonArray content)
             {
                 continue;
             }
-            foreach (var part in content)
+            foreach (JsonNode? part in content)
             {
                 if (part is JsonObject partObject)
                 {
@@ -234,7 +234,7 @@ internal sealed class RealtimeServerRelay(RealtimeSessionContext context)
 
     private async Task SendRoundTripTokenAsync()
     {
-        var identifiers = context.State.Identifiers.AdvanceRoundTrip();
+        SessionIdentifiers identifiers = context.State.Identifiers.AdvanceRoundTrip();
         await FramePump.SendTextAsync(
             context.BrowserSocket, identifiers.ToFrame("extension.round_trip_token").ToJsonString(),
             context.CancellationToken).ConfigureAwait(false);
@@ -276,7 +276,7 @@ internal sealed class RealtimeServerRelay(RealtimeSessionContext context)
 
     private async Task<JsonObject> HandleSessionCreatedAsync(JsonObject message)
     {
-        var echo = BuildClientSessionEcho(message);
+        JsonObject echo = BuildClientSessionEcho(message);
         if (!context.State.SessionMetadataSent)
         {
             context.State.SessionMetadataSent = true;
@@ -313,7 +313,7 @@ internal sealed class RealtimeServerRelay(RealtimeSessionContext context)
         {
             return message;
         }
-        var callId = RealtimeProcessor.GetString(item, "call_id");
+        string? callId = RealtimeProcessor.GetString(item, "call_id");
         if (!string.IsNullOrEmpty(callId) && !context.State.ToolsPending.ContainsKey(callId))
         {
             if (context.Logger is { } logger && logger.IsEnabled(LogLevel.Information))
@@ -333,7 +333,7 @@ internal sealed class RealtimeServerRelay(RealtimeSessionContext context)
         }
         if (RealtimeProcessor.GetString(item, "type") == "function_call")
         {
-            var callId = RealtimeProcessor.GetString(item, "call_id") ?? "";
+            string callId = RealtimeProcessor.GetString(item, "call_id") ?? "";
             context.State.ToolsPending[callId] = RealtimeProcessor.GetString(message, "previous_item_id") ?? "";
             return null;
         }
@@ -355,7 +355,7 @@ internal sealed class RealtimeServerRelay(RealtimeSessionContext context)
     {
         while (!context.CancellationToken.IsCancellationRequested)
         {
-            var frame = await ReadUpstreamFrameAsync().ConfigureAwait(false);
+            WebSocketFrame? frame = await ReadUpstreamFrameAsync().ConfigureAwait(false);
             if (frame is null)
             {
                 break;
@@ -404,7 +404,7 @@ internal sealed class RealtimeServerRelay(RealtimeSessionContext context)
         {
             LogResponseLifecycle(message, msgType, "upstream");
             ApplyEventSideEffects(message, msgType);
-            var forward = await GetForwardMessageAsync(message, msgType).ConfigureAwait(false);
+            JsonObject? forward = await GetForwardMessageAsync(message, msgType).ConfigureAwait(false);
             if (forward is not null)
             {
                 await FramePump.SendTextAsync(
@@ -432,18 +432,18 @@ internal sealed class RealtimeServerRelay(RealtimeSessionContext context)
         var contentTypes = new List<string>();
         if (response?["output"] is JsonArray output)
         {
-            foreach (var item in output.OfType<JsonObject>())
+            foreach (JsonObject item in output.OfType<JsonObject>())
             {
-                var outputType = RealtimeProcessor.GetString(item, "type");
+                string? outputType = RealtimeProcessor.GetString(item, "type");
                 if (outputType is not null)
                 {
                     outputTypes.Add(outputType);
                 }
                 if (item["content"] is JsonArray content)
                 {
-                    foreach (var part in content.OfType<JsonObject>())
+                    foreach (JsonObject part in content.OfType<JsonObject>())
                     {
-                        var contentType = RealtimeProcessor.GetString(part, "type");
+                        string? contentType = RealtimeProcessor.GetString(part, "type");
                         if (contentType is not null)
                         {
                             contentTypes.Add(contentType);
@@ -518,7 +518,7 @@ internal sealed class RealtimeServerRelay(RealtimeSessionContext context)
     {
         if (PassthroughEvents.ServerTypes.Contains(msgType))
         {
-            if (PassthroughEvents.GaToLegacy.TryGetValue(msgType, out var legacyType))
+            if (PassthroughEvents.GaToLegacy.TryGetValue(msgType, out string? legacyType))
             {
                 message["type"] = legacyType;
             }

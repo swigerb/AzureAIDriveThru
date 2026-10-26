@@ -14,7 +14,7 @@ internal static class DeltaFixture
 {
     internal static Persona Load(string personaId = "test-delta")
     {
-        var fixturesDir = Path.Combine(RepoRootLocator.Find(), "app", "backend", "tests", "fixtures", "personas");
+        string fixturesDir = Path.Combine(RepoRootLocator.Find(), "app", "backend", "tests", "fixtures", "personas");
         var catalog = PersonaCatalog.Load(personasDir: fixturesDir, personasEnv: personaId, defaultPersonaEnv: personaId);
         return catalog.Get(personaId);
     }

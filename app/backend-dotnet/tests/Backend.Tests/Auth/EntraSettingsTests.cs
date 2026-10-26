@@ -15,7 +15,7 @@ public sealed class EntraSettingsTests
 
     private static Func<string, string?> Env(params (string Key, string? Value)[] vars)
     {
-        var map = vars.ToDictionary(v => v.Key, v => v.Value, StringComparer.Ordinal);
+        Dictionary<string, string?> map = vars.ToDictionary(v => v.Key, v => v.Value, StringComparer.Ordinal);
         return key => map.GetValueOrDefault(key);
     }
 
@@ -70,21 +70,21 @@ public sealed class EntraSettingsTests
         // tenant/client ids after the GUID-shape check so a real token's always-lower-case
         // tid/aud claims keep matching even when an operator pastes an upper-case id into config.
         // Tenant/Client (all digits) would make this a silent no-op, so this uses hex-letter ids.
-        const string upperTenant = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
-        const string mixedClient = "AaBbCcDd-1111-2222-3333-444455556666";
+        const string UpperTenant = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
+        const string MixedClient = "AaBbCcDd-1111-2222-3333-444455556666";
 
         var settings = EntraSettings.Resolve(
-            Env(("AUTH_MODE", "Entra"), ("ENTRA_TENANT_ID", upperTenant), ("ENTRA_CLIENT_ID", mixedClient)),
+            Env(("AUTH_MODE", "Entra"), ("ENTRA_TENANT_ID", UpperTenant), ("ENTRA_CLIENT_ID", MixedClient)),
             isProduction: false);
 
-        Assert.Equal(upperTenant.ToLowerInvariant(), settings.TenantId);
-        Assert.Equal(mixedClient.ToLowerInvariant(), settings.ClientId);
+        Assert.Equal(UpperTenant.ToLowerInvariant(), settings.TenantId);
+        Assert.Equal(MixedClient.ToLowerInvariant(), settings.ClientId);
     }
 
     [Fact]
     public void Resolve_ExplicitEntra_NoIds_Throws()
     {
-        var exc = Assert.Throws<EntraConfigException>(
+        EntraConfigException exc = Assert.Throws<EntraConfigException>(
             () => EntraSettings.Resolve(Env(("AUTH_MODE", "Entra")), isProduction: false));
 
         Assert.Contains("AUTH_MODE=Entra requires", exc.Message, StringComparison.Ordinal);
@@ -93,7 +93,7 @@ public sealed class EntraSettingsTests
     [Fact]
     public void Resolve_ExplicitEntra_PlaceholderTenant_Throws()
     {
-        var exc = Assert.Throws<EntraConfigException>(() => EntraSettings.Resolve(
+        EntraConfigException exc = Assert.Throws<EntraConfigException>(() => EntraSettings.Resolve(
             Env(("AUTH_MODE", "Entra"), ("ENTRA_TENANT_ID", "your-tenant-id"), ("ENTRA_CLIENT_ID", Client)),
             isProduction: false));
 
@@ -103,7 +103,7 @@ public sealed class EntraSettingsTests
     [Fact]
     public void Resolve_ExplicitEntra_MalformedGuid_Throws()
     {
-        var exc = Assert.Throws<EntraConfigException>(() => EntraSettings.Resolve(
+        EntraConfigException exc = Assert.Throws<EntraConfigException>(() => EntraSettings.Resolve(
             Env(("AUTH_MODE", "Entra"), ("ENTRA_TENANT_ID", "not-a-guid"), ("ENTRA_CLIENT_ID", Client)),
             isProduction: false));
 
@@ -113,7 +113,7 @@ public sealed class EntraSettingsTests
     [Fact]
     public void Resolve_ExplicitDevelopment_WithIds_Throws()
     {
-        var exc = Assert.Throws<EntraConfigException>(() => EntraSettings.Resolve(
+        EntraConfigException exc = Assert.Throws<EntraConfigException>(() => EntraSettings.Resolve(
             Env(("AUTH_MODE", "Development"), ("ENTRA_TENANT_ID", Tenant), ("ENTRA_CLIENT_ID", Client)),
             isProduction: false));
 
@@ -123,7 +123,7 @@ public sealed class EntraSettingsTests
     [Fact]
     public void Resolve_ExplicitDevelopment_InProduction_Throws()
     {
-        var exc = Assert.Throws<EntraConfigException>(
+        EntraConfigException exc = Assert.Throws<EntraConfigException>(
             () => EntraSettings.Resolve(Env(("AUTH_MODE", "Development")), isProduction: true));
 
         Assert.Contains("refused in Production", exc.Message, StringComparison.Ordinal);
@@ -132,7 +132,7 @@ public sealed class EntraSettingsTests
     [Fact]
     public void Resolve_UnsetAuthMode_InProduction_NoIds_Throws()
     {
-        var exc = Assert.Throws<EntraConfigException>(
+        EntraConfigException exc = Assert.Throws<EntraConfigException>(
             () => EntraSettings.Resolve(Env(), isProduction: true));
 
         Assert.Contains("refused in Production", exc.Message, StringComparison.Ordinal);
@@ -141,7 +141,7 @@ public sealed class EntraSettingsTests
     [Fact]
     public void Resolve_UnsetAuthMode_InProduction_WithIds_RequiresExplicitAuthMode()
     {
-        var exc = Assert.Throws<EntraConfigException>(() => EntraSettings.Resolve(
+        EntraConfigException exc = Assert.Throws<EntraConfigException>(() => EntraSettings.Resolve(
             Env(("ENTRA_TENANT_ID", Tenant), ("ENTRA_CLIENT_ID", Client)), isProduction: true));
 
         Assert.Contains("AUTH_MODE=Entra to be set explicitly", exc.Message, StringComparison.Ordinal);
@@ -150,7 +150,7 @@ public sealed class EntraSettingsTests
     [Fact]
     public void Resolve_UnsetAuthMode_InvalidIds_Throws()
     {
-        var exc = Assert.Throws<EntraConfigException>(() => EntraSettings.Resolve(
+        EntraConfigException exc = Assert.Throws<EntraConfigException>(() => EntraSettings.Resolve(
             Env(("ENTRA_TENANT_ID", Tenant), ("ENTRA_CLIENT_ID", "bad")), isProduction: false));
 
         Assert.Contains("Entra authentication configuration is invalid", exc.Message, StringComparison.Ordinal);
@@ -159,7 +159,7 @@ public sealed class EntraSettingsTests
     [Fact]
     public void Resolve_UnknownAuthMode_Throws()
     {
-        var exc = Assert.Throws<EntraConfigException>(
+        EntraConfigException exc = Assert.Throws<EntraConfigException>(
             () => EntraSettings.Resolve(Env(("AUTH_MODE", "bogus")), isProduction: false));
 
         Assert.Contains("Unknown AUTH_MODE", exc.Message, StringComparison.Ordinal);
@@ -168,7 +168,7 @@ public sealed class EntraSettingsTests
     [Fact]
     public void Resolve_EntraInProduction_NoAppSessionSecret_Throws()
     {
-        var exc = Assert.Throws<EntraConfigException>(() => EntraSettings.Resolve(
+        EntraConfigException exc = Assert.Throws<EntraConfigException>(() => EntraSettings.Resolve(
             Env(("AUTH_MODE", "Entra"), ("ENTRA_TENANT_ID", Tenant), ("ENTRA_CLIENT_ID", Client)),
             isProduction: true));
 
@@ -240,7 +240,7 @@ public sealed class EntraSettingsTests
     [Fact]
     public void Resolve_RejectsNonLoopbackHttpInstance()
     {
-        var exc = Assert.Throws<EntraConfigException>(
+        EntraConfigException exc = Assert.Throws<EntraConfigException>(
             () => EntraSettings.Resolve(Env(("ENTRA_INSTANCE", "http://evil.example.com/")), isProduction: false));
 
         Assert.Contains("must start with https://", exc.Message, StringComparison.Ordinal);
@@ -274,7 +274,7 @@ public sealed class EntraSettingsTests
     [InlineData("fixme")]
     public void ValidateEntraIds_RejectsPlaceholderTenant(string placeholder)
     {
-        var error = EntraSettings.ValidateEntraIds(placeholder, Client);
+        string? error = EntraSettings.ValidateEntraIds(placeholder, Client);
 
         Assert.NotNull(error);
     }
@@ -282,7 +282,7 @@ public sealed class EntraSettingsTests
     [Fact]
     public void ValidateEntraIds_AcceptsValidIds()
     {
-        var error = EntraSettings.ValidateEntraIds(Tenant, Client);
+        string? error = EntraSettings.ValidateEntraIds(Tenant, Client);
 
         Assert.Null(error);
     }
@@ -290,7 +290,7 @@ public sealed class EntraSettingsTests
     [Fact]
     public void ValidateEntraIds_IsCaseInsensitiveOnGuidFormat()
     {
-        var error = EntraSettings.ValidateEntraIds(Tenant.ToUpperInvariant(), Client.ToUpperInvariant());
+        string? error = EntraSettings.ValidateEntraIds(Tenant.ToUpperInvariant(), Client.ToUpperInvariant());
 
         Assert.Null(error);
     }

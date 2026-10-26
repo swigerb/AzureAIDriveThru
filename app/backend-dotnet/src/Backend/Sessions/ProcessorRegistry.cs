@@ -9,7 +9,7 @@ namespace Backend.Sessions;
 /// </summary>
 internal sealed class ProcessorRegistry
 {
-    private readonly Dictionary<string, IPipelineProcessor> _processors = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, IPipelineProcessor> _processors = [with(StringComparer.Ordinal)];
 
     /// <exception cref="InvalidOperationException">A processor is already registered for this
     /// pipeline -- mirrors model_catalog.py's fail-fast on ambiguous configuration, since two

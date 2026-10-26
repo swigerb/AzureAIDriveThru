@@ -17,9 +17,9 @@ public sealed class GaSessionTranslatorTests
             ["input_audio_noise_reduction"] = new JsonObject { ["type"] = "near_field" },
         };
 
-        var ga = GaSessionTranslator.ToGaSession(session);
+        JsonObject ga = GaSessionTranslator.ToGaSession(session);
 
-        var audioIn = Assert.IsType<JsonObject>(ga["audio"]!["input"]);
+        JsonObject audioIn = Assert.IsType<JsonObject>(ga["audio"]!["input"]);
         Assert.Equal("server_vad", audioIn["turn_detection"]!["type"]!.GetValue<string>());
         Assert.Equal("whisper-1", audioIn["transcription"]!["model"]!.GetValue<string>());
         Assert.Equal("near_field", audioIn["noise_reduction"]!["type"]!.GetValue<string>());
@@ -36,7 +36,7 @@ public sealed class GaSessionTranslatorTests
     {
         var session = new JsonObject { ["input_audio_format"] = legacy, ["output_audio_format"] = legacy };
 
-        var result = GaSessionTranslator.ToGaSession(session);
+        JsonObject result = GaSessionTranslator.ToGaSession(session);
 
         Assert.Equal(ga, result["audio"]!["input"]!["format"]!["type"]!.GetValue<string>());
         Assert.Equal(ga, result["audio"]!["output"]!["format"]!["type"]!.GetValue<string>());
@@ -47,7 +47,7 @@ public sealed class GaSessionTranslatorTests
     {
         var session = new JsonObject { ["input_audio_format"] = "some_future_codec" };
 
-        var result = GaSessionTranslator.ToGaSession(session);
+        JsonObject result = GaSessionTranslator.ToGaSession(session);
 
         // rtmt.py's `_GA_AUDIO_FORMATS.get(value, {"type": "audio/pcm", "rate": 24000})` -- an
         // unrecognised legacy format string falls back to the pcm16 GA shape rather than being
@@ -61,7 +61,7 @@ public sealed class GaSessionTranslatorTests
     {
         var session = new JsonObject { ["voice"] = "marin", ["speed"] = 1.1 };
 
-        var ga = GaSessionTranslator.ToGaSession(session);
+        JsonObject ga = GaSessionTranslator.ToGaSession(session);
 
         Assert.Equal("marin", ga["audio"]!["output"]!["voice"]!.GetValue<string>());
         Assert.Equal(1.1, ga["audio"]!["output"]!["speed"]!.GetValue<double>());
@@ -78,7 +78,7 @@ public sealed class GaSessionTranslatorTests
             ["modalities"] = new JsonArray("text", "audio"),
         };
 
-        var ga = GaSessionTranslator.ToGaSession(session);
+        JsonObject ga = GaSessionTranslator.ToGaSession(session);
 
         Assert.Equal(512, ga["max_output_tokens"]!.GetValue<int>());
         Assert.Equal(2, ga["output_modalities"]!.AsArray().Count);
@@ -89,7 +89,7 @@ public sealed class GaSessionTranslatorTests
     [Fact]
     public void ToGaSession_AlwaysSetsTypeRealtime()
     {
-        var ga = GaSessionTranslator.ToGaSession(new JsonObject { ["type"] = "realtime-legacy" });
+        JsonObject ga = GaSessionTranslator.ToGaSession(new JsonObject { ["type"] = "realtime-legacy" });
 
         Assert.Equal("realtime", ga["type"]!.GetValue<string>());
     }
@@ -99,7 +99,7 @@ public sealed class GaSessionTranslatorTests
     {
         var session = new JsonObject { ["instructions"] = "hi", ["some_unknown_legacy_field"] = "x" };
 
-        var ga = GaSessionTranslator.ToGaSession(session);
+        JsonObject ga = GaSessionTranslator.ToGaSession(session);
 
         Assert.Equal("hi", ga["instructions"]!.GetValue<string>());
         Assert.Null(ga["some_unknown_legacy_field"]);
@@ -108,7 +108,7 @@ public sealed class GaSessionTranslatorTests
     [Fact]
     public void ToGaSession_EmptyAudioObjectIsOmittedEntirely()
     {
-        var ga = GaSessionTranslator.ToGaSession(new JsonObject { ["instructions"] = "hi" });
+        JsonObject ga = GaSessionTranslator.ToGaSession(new JsonObject { ["instructions"] = "hi" });
 
         Assert.Null(ga["audio"]);
     }
@@ -128,7 +128,7 @@ public sealed class GaSessionTranslatorTests
     {
         var ga = new JsonObject { ["audio"] = new JsonObject { ["output"] = new JsonObject { ["voice"] = "marin" } } };
 
-        var stripped = GaSessionTranslator.StripOutputVoice(ga);
+        bool stripped = GaSessionTranslator.StripOutputVoice(ga);
 
         Assert.True(stripped);
         // Voice was the only field, so `output` (and then `audio`) are cleaned up too -- asserted
@@ -166,6 +166,6 @@ public sealed class GaSessionTranslatorTests
     [Fact]
     public void StripOutputVoice_ReturnsFalseWhenNoVoicePresent()
     {
-        Assert.False(GaSessionTranslator.StripOutputVoice(new JsonObject()));
+        Assert.False(GaSessionTranslator.StripOutputVoice([]));
     }
 }

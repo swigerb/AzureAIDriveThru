@@ -26,9 +26,9 @@ public sealed class PortRaceDetectionTests
     [Fact]
     public void ShouldRetry_false_for_an_unrelated_early_crash()
     {
-        const string output = "Traceback (most recent call last):\n  ...\nModuleNotFoundError: No module named 'foo'";
+        const string Output = "Traceback (most recent call last):\n  ...\nModuleNotFoundError: No module named 'foo'";
 
-        Assert.False(PortRaceDetection.ShouldRetry(TimeSpan.FromSeconds(1), output));
+        Assert.False(PortRaceDetection.ShouldRetry(TimeSpan.FromSeconds(1), Output));
     }
 
     [Fact]
@@ -36,9 +36,9 @@ public sealed class PortRaceDetectionTests
     {
         // A real bug that happens to print bind-failure-shaped text long after startup (e.g. a
         // health-check timeout scenario) must not be masked as a "just retry with a new port" race.
-        const string output = "OSError: [Errno 98] error while attempting to bind on address ('127.0.0.1', 51000)";
+        const string Output = "OSError: [Errno 98] error while attempting to bind on address ('127.0.0.1', 51000)";
 
-        Assert.False(PortRaceDetection.ShouldRetry(PortRaceDetection.RaceDetectionWindow + TimeSpan.FromSeconds(1), output));
+        Assert.False(PortRaceDetection.ShouldRetry(PortRaceDetection.RaceDetectionWindow + TimeSpan.FromSeconds(1), Output));
     }
 
     [Theory]

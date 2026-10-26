@@ -14,7 +14,7 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// MONEY CONTRACT (PR #38 review item 1): every money-typed property below is `decimal`, not
 /// `double`. The golden JSON stores each money value as a quoted, exact decimal string (see the
 /// dataset's own top-level `description` for the full contract), and `JsonNumberHandling
-/// .AllowReadingFromString` (set on <see cref="Options"/>) lets System.Text.Json deserialize a
+/// .AllowReadingFromString` (set on <see cref="GoldenOrderPricingData.s_options"/>) lets System.Text.Json deserialize a
 /// quoted JSON string directly into a `decimal` property with no intermediate `double` — the same
 /// guarantee scenario code gets from `JsonElement.GetDecimal()` when parsing the live backend's
 /// wire responses (see OrderScenarioHelpers.cs). Never re-introduce a `double` money property here
@@ -113,7 +113,7 @@ public sealed record GoldenOrderPricingData(
     IReadOnlyList<ComboAbsorptionScenario> ComboAbsorptionScenarios,
     IReadOnlyList<SpokenTotalCase> SpokenTotalCases)
 {
-    private static readonly JsonSerializerOptions Options = new()
+    private static readonly JsonSerializerOptions s_options = new()
     {
         PropertyNameCaseInsensitive = true,
         NumberHandling = JsonNumberHandling.AllowReadingFromString,
@@ -122,9 +122,9 @@ public sealed record GoldenOrderPricingData(
     /// <summary>Loads and deserializes the golden dataset from its fixed repo-relative path.</summary>
     public static GoldenOrderPricingData Load(string repoRoot)
     {
-        var path = RepoPaths.GoldenOrderPricingJsonPath(repoRoot);
-        var json = File.ReadAllText(path);
-        return JsonSerializer.Deserialize<GoldenOrderPricingData>(json, Options)
+        string path = RepoPaths.GoldenOrderPricingJsonPath(repoRoot);
+        string json = File.ReadAllText(path);
+        return JsonSerializer.Deserialize<GoldenOrderPricingData>(json, s_options)
             ?? throw new InvalidDataException($"Golden order pricing dataset at '{path}' deserialized to null.");
     }
 }

@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Backend.Realtime;
 using Backend.Sessions;
 
@@ -17,7 +18,7 @@ public sealed class ResumeEnvelopeTests
         var identifiers = new SessionIdentifiers("test-persona", "gpt-realtime", sessionToken: "tok-1");
         identifiers.AdvanceRoundTrip();
 
-        var frame = ResumeEnvelope.BuildSessionResumedFrame(identifiers, """{"items":[]}""", "resume-42");
+        JsonObject frame = ResumeEnvelope.BuildSessionResumedFrame(identifiers, """{"items":[]}""", "resume-42");
 
         Assert.Equal("extension.session_resumed", frame["type"]!.GetValue<string>());
         Assert.Equal("tok-1", frame["session_token"]!.GetValue<string>());
@@ -32,7 +33,7 @@ public sealed class ResumeEnvelopeTests
     {
         var identifiers = new SessionIdentifiers("test-persona", "gpt-realtime", sessionToken: "tok-2");
 
-        var frame = ResumeEnvelope.BuildSessionResumedFrame(identifiers, "{}", resumeId: null);
+        JsonObject frame = ResumeEnvelope.BuildSessionResumedFrame(identifiers, "{}", resumeId: null);
 
         Assert.True(frame.ContainsKey("resume_id"));
         Assert.Null(frame["resume_id"]);
@@ -44,7 +45,7 @@ public sealed class ResumeEnvelopeTests
     [InlineData(null)]
     public void BuildResumeRejectedFrame_CarriesReasonVerbatim(string? reason)
     {
-        var frame = ResumeEnvelope.BuildResumeRejectedFrame(reason);
+        JsonObject frame = ResumeEnvelope.BuildResumeRejectedFrame(reason);
 
         Assert.Equal("extension.resume_rejected", frame["type"]!.GetValue<string>());
         if (reason is null)
@@ -62,7 +63,7 @@ public sealed class ResumeEnvelopeTests
     {
         var identifiers = new SessionIdentifiers("test-persona", "gpt-realtime", sessionToken: "tok-3");
 
-        var frame = ResumeEnvelope.BuildSessionMetadataFrame(identifiers, "resume-7");
+        JsonObject frame = ResumeEnvelope.BuildSessionMetadataFrame(identifiers, "resume-7");
 
         Assert.Equal("extension.session_metadata", frame["type"]!.GetValue<string>());
         Assert.Equal("tok-3", frame["sessionToken"]!.GetValue<string>());
@@ -74,7 +75,7 @@ public sealed class ResumeEnvelopeTests
     {
         var identifiers = new SessionIdentifiers("test-persona", "gpt-realtime", sessionToken: "tok-4");
 
-        var frame = ResumeEnvelope.BuildSessionMetadataFrame(identifiers, resumeId: null);
+        JsonObject frame = ResumeEnvelope.BuildSessionMetadataFrame(identifiers, resumeId: null);
 
         Assert.False(frame.ContainsKey("resumeId"));
     }

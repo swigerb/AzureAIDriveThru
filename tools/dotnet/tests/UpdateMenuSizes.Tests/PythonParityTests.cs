@@ -1,9 +1,9 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using UpdateMenuSizes;
 
 namespace UpdateMenuSizes.Tests;
 
@@ -33,7 +33,7 @@ namespace UpdateMenuSizes.Tests;
 /// convention (see e.g. app/backend-dotnet/tests/Backend.Tests/TestSupport/PersonaPackFixture.cs,
 /// tests/conformance/tests/Conformance.Tests/MenuIndexResolveIndexPathsTests.cs).
 /// </summary>
-public sealed class PythonParityTests : IDisposable
+public sealed partial class PythonParityTests : IDisposable
 {
     private readonly string _tempRoot =
         Path.Combine(Path.GetTempPath(), "squanchy-update-menu-sizes-parity-" + Guid.NewGuid().ToString("n"));
@@ -49,16 +49,16 @@ public sealed class PythonParityTests : IDisposable
     [Fact]
     public async Task DotnetPort_ProducesByteIdenticalOutput_ToRealPythonScript()
     {
-        var repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
-        var discovery = PersonaMenuLocator.Locate(repoRoot);
-        var realScript = Path.Combine(repoRoot, "scripts", "update_menu_sizes.py");
+        string repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
+        PersonaMenuLocator.Discovery discovery = PersonaMenuLocator.Locate(repoRoot);
+        string realScript = Path.Combine(repoRoot, "scripts", "update_menu_sizes.py");
 
         Assert.True(File.Exists(discovery.ProductionFilePath), $"Fixture not found: {discovery.ProductionFilePath}");
         Assert.True(File.Exists(discovery.MenuFilePath), $"Fixture not found: {discovery.MenuFilePath}");
         Assert.True(File.Exists(discovery.ProductSearchMapFilePath), $"Fixture not found: {discovery.ProductSearchMapFilePath}");
         Assert.True(File.Exists(realScript), $"Python twin not found: {realScript}");
 
-        var interpreter = await RequirePythonInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
+        string? interpreter = await RequirePythonInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
         if (interpreter is null)
         {
             return;
@@ -72,38 +72,38 @@ public sealed class PythonParityTests : IDisposable
         // intentionally uses discovery.PersonaId (today, the one persona pack checked into the
         // repo) rather than a literal, but if that persona pack is ever renamed or a second one is
         // added, the Python run itself would need updating first (out of scope for this C# port).
-        var pythonScriptsDir = Path.Combine(_tempRoot, "python-run", "scripts");
-        var pythonMenuDir = Path.Combine(_tempRoot, "python-run", "personas", discovery.PersonaId, "menu");
+        string pythonScriptsDir = Path.Combine(_tempRoot, "python-run", "scripts");
+        string pythonMenuDir = Path.Combine(_tempRoot, "python-run", "personas", discovery.PersonaId, "menu");
         Directory.CreateDirectory(pythonScriptsDir);
         Directory.CreateDirectory(Path.Combine(pythonMenuDir, "source"));
         File.Copy(realScript, Path.Combine(pythonScriptsDir, "update_menu_sizes.py"));
         File.Copy(discovery.ProductionFilePath, Path.Combine(pythonMenuDir, "source", Path.GetFileName(discovery.ProductionFilePath)));
-        var pythonMenuPath = Path.Combine(pythonMenuDir, "menuItems.json");
+        string pythonMenuPath = Path.Combine(pythonMenuDir, "menuItems.json");
         File.Copy(discovery.MenuFilePath, pythonMenuPath);
 
-        var (exitCode, pythonStdout, stderr) = await RunProcessAsync(
+        (int exitCode, string? pythonStdout, string? stderr) = await RunProcessAsync(
             interpreter, [Path.Combine(pythonScriptsDir, "update_menu_sizes.py")], TestContext.Current.CancellationToken);
         Assert.True(exitCode == 0, $"Python twin exited {exitCode}.\nstdout:\n{pythonStdout}\nstderr:\n{stderr}");
 
         // Same two input fixtures (plus the product search map, needed by the 3-arg UpdateMenu --
         // PR #224 review R1), run through the C# port in-process instead.
-        var dotnetDir = Path.Combine(_tempRoot, "dotnet-run");
+        string dotnetDir = Path.Combine(_tempRoot, "dotnet-run");
         Directory.CreateDirectory(dotnetDir);
-        var dotnetProductionPath = Path.Combine(dotnetDir, Path.GetFileName(discovery.ProductionFilePath));
+        string dotnetProductionPath = Path.Combine(dotnetDir, Path.GetFileName(discovery.ProductionFilePath));
         File.Copy(discovery.ProductionFilePath, dotnetProductionPath);
-        var dotnetMenuPath = Path.Combine(dotnetDir, "menuItems.json");
+        string dotnetMenuPath = Path.Combine(dotnetDir, "menuItems.json");
         File.Copy(discovery.MenuFilePath, dotnetMenuPath);
-        var dotnetProductSearchMapPath = Path.Combine(dotnetDir, "product_search_map.json");
+        string dotnetProductSearchMapPath = Path.Combine(dotnetDir, "product_search_map.json");
         File.Copy(discovery.ProductSearchMapFilePath, dotnetProductSearchMapPath);
 
-        var result = MenuSizeUpdater.UpdateMenu(dotnetProductionPath, dotnetMenuPath, dotnetProductSearchMapPath);
+        MenuSizeUpdater.UpdateResult result = MenuSizeUpdater.UpdateMenu(dotnetProductionPath, dotnetMenuPath, dotnetProductSearchMapPath);
 
         // 1. Byte-identical file output -- not structural equality. Proves PythonJsonEncoder's
         // ensure_ascii=False escaping, the Environment.NewLine-based newline handling (including
         // the final trailing newline), and PythonFloatRepr's trailing-zero-dropping all match the
         // real Python twin against the real fixtures, not just a synthetic unit-test sample.
-        var pythonBytes = File.ReadAllBytes(pythonMenuPath);
-        var dotnetBytes = File.ReadAllBytes(dotnetMenuPath);
+        byte[] pythonBytes = File.ReadAllBytes(pythonMenuPath);
+        byte[] dotnetBytes = File.ReadAllBytes(dotnetMenuPath);
         Assert.True(
             pythonBytes.AsSpan().SequenceEqual(dotnetBytes),
             "The C# port's menuItems.json output is not byte-identical to the Python twin's output " +
@@ -114,15 +114,15 @@ public sealed class PythonParityTests : IDisposable
         // terminates every line including the final one) and compare it to Python's own captured
         // stdout verbatim -- this also exercises the per-item SKIP/UPDATED line text (including the
         // Python-list-repr "['mini', 'small']" sizes format) and the blank-line-then-summary shape.
-        var dotnetStdout = string.Join(Environment.NewLine, result.Log) + Environment.NewLine;
+        string dotnetStdout = string.Join(Environment.NewLine, result.Log) + Environment.NewLine;
         Assert.Equal(pythonStdout, dotnetStdout);
 
         // 3. Updated-item count: parsed from each program's own "Updated N items..." stdout line,
         // not just read off UpdateResult.UpdatedCount directly -- this is what a human (or CI log
         // reader) actually sees, and is a second, independent check on top of the raw byte/line
         // comparisons above.
-        var pythonUpdatedCount = ParseUpdatedCount(pythonStdout);
-        var dotnetUpdatedCount = ParseUpdatedCount(dotnetStdout);
+        int pythonUpdatedCount = ParseUpdatedCount(pythonStdout);
+        int dotnetUpdatedCount = ParseUpdatedCount(dotnetStdout);
         Assert.Equal(pythonUpdatedCount, dotnetUpdatedCount);
         Assert.Equal(pythonUpdatedCount, result.UpdatedCount);
     }
@@ -142,12 +142,12 @@ public sealed class PythonParityTests : IDisposable
     [Fact]
     public async Task DotnetPort_ProducesByteIdenticalOutput_ToRealPythonScript_ForWholeNumberPrice()
     {
-        var repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
-        var discovery = PersonaMenuLocator.Locate(repoRoot);
-        var realScript = Path.Combine(repoRoot, "scripts", "update_menu_sizes.py");
+        string repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
+        PersonaMenuLocator.Discovery discovery = PersonaMenuLocator.Locate(repoRoot);
+        string realScript = Path.Combine(repoRoot, "scripts", "update_menu_sizes.py");
         Assert.True(File.Exists(realScript), $"Python twin not found: {realScript}");
 
-        var interpreter = await RequirePythonInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
+        string? interpreter = await RequirePythonInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
         if (interpreter is null)
         {
             return;
@@ -158,7 +158,7 @@ public sealed class PythonParityTests : IDisposable
         // must be matched by the Python script's own untouched, hardcoded map, not this port's
         // externalized product_search_map.json). The whole-number "price": 2 (no decimal point) is
         // the regression this test exists to catch.
-        const string productionJson = """
+        const string ProductionJson = """
             {
               "menus": {
                 "menu-1": {
@@ -169,7 +169,7 @@ public sealed class PythonParityTests : IDisposable
               }
             }
             """;
-        const string menuJson = """
+        const string MenuJson = """
             {
               "menuItems": [
                 { "name": "Drinks", "items": [
@@ -179,37 +179,37 @@ public sealed class PythonParityTests : IDisposable
             }
             """;
 
-        var pythonScriptsDir = Path.Combine(_tempRoot, "whole-number-python-run", "scripts");
-        var pythonMenuDir = Path.Combine(_tempRoot, "whole-number-python-run", "personas", discovery.PersonaId, "menu");
+        string pythonScriptsDir = Path.Combine(_tempRoot, "whole-number-python-run", "scripts");
+        string pythonMenuDir = Path.Combine(_tempRoot, "whole-number-python-run", "personas", discovery.PersonaId, "menu");
         Directory.CreateDirectory(pythonScriptsDir);
         Directory.CreateDirectory(Path.Combine(pythonMenuDir, "source"));
         File.Copy(realScript, Path.Combine(pythonScriptsDir, "update_menu_sizes.py"));
-        File.WriteAllText(Path.Combine(pythonMenuDir, "source", $"{discovery.PersonaId}-menu-items.json"), productionJson);
-        var pythonMenuPath = Path.Combine(pythonMenuDir, "menuItems.json");
-        File.WriteAllText(pythonMenuPath, menuJson);
+        File.WriteAllText(Path.Combine(pythonMenuDir, "source", $"{discovery.PersonaId}-menu-items.json"), ProductionJson);
+        string pythonMenuPath = Path.Combine(pythonMenuDir, "menuItems.json");
+        File.WriteAllText(pythonMenuPath, MenuJson);
 
-        var (exitCode, pythonStdout, stderr) = await RunProcessAsync(
+        (int exitCode, string? pythonStdout, string? stderr) = await RunProcessAsync(
             interpreter, [Path.Combine(pythonScriptsDir, "update_menu_sizes.py")], TestContext.Current.CancellationToken);
         Assert.True(exitCode == 0, $"Python twin exited {exitCode}.\nstdout:\n{pythonStdout}\nstderr:\n{stderr}");
 
-        var dotnetDir = Path.Combine(_tempRoot, "whole-number-dotnet-run");
+        string dotnetDir = Path.Combine(_tempRoot, "whole-number-dotnet-run");
         Directory.CreateDirectory(dotnetDir);
-        var dotnetProductionPath = Path.Combine(dotnetDir, "production.json");
-        File.WriteAllText(dotnetProductionPath, productionJson);
-        var dotnetMenuPath = Path.Combine(dotnetDir, "menuItems.json");
-        File.WriteAllText(dotnetMenuPath, menuJson);
-        var dotnetProductSearchMapPath = Path.Combine(dotnetDir, "product_search_map.json");
+        string dotnetProductionPath = Path.Combine(dotnetDir, "production.json");
+        File.WriteAllText(dotnetProductionPath, ProductionJson);
+        string dotnetMenuPath = Path.Combine(dotnetDir, "menuItems.json");
+        File.WriteAllText(dotnetMenuPath, MenuJson);
+        string dotnetProductSearchMapPath = Path.Combine(dotnetDir, "product_search_map.json");
         File.WriteAllText(dotnetProductSearchMapPath, """{ "Cherry Limeade": "Cherry Limeade" }""");
 
         MenuSizeUpdater.UpdateMenu(dotnetProductionPath, dotnetMenuPath, dotnetProductSearchMapPath);
 
-        var pythonBytes = File.ReadAllBytes(pythonMenuPath);
-        var dotnetBytes = File.ReadAllBytes(dotnetMenuPath);
+        byte[] pythonBytes = File.ReadAllBytes(pythonMenuPath);
+        byte[] dotnetBytes = File.ReadAllBytes(dotnetMenuPath);
         Assert.True(
             pythonBytes.AsSpan().SequenceEqual(dotnetBytes),
             "The C# port's menuItems.json output is not byte-identical to the Python twin's output " +
             $"for a whole-number production price (python={pythonBytes.Length} bytes, dotnet={dotnetBytes.Length} bytes).");
-        var pythonText = Encoding.UTF8.GetString(pythonBytes);
+        string pythonText = Encoding.UTF8.GetString(pythonBytes);
         Assert.Contains("\"price\": 2", pythonText);
         Assert.DoesNotContain("2.0", pythonText);
     }
@@ -233,14 +233,14 @@ public sealed class PythonParityTests : IDisposable
     [Fact]
     public async Task ProductSearchMapFile_MatchesPythonScriptsHardcodedDict_ExactlyInOrder()
     {
-        var repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
-        var discovery = PersonaMenuLocator.Locate(repoRoot);
-        var realScript = Path.Combine(repoRoot, "scripts", "update_menu_sizes.py");
+        string repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
+        PersonaMenuLocator.Discovery discovery = PersonaMenuLocator.Locate(repoRoot);
+        string realScript = Path.Combine(repoRoot, "scripts", "update_menu_sizes.py");
 
         Assert.True(File.Exists(realScript), $"Python twin not found: {realScript}");
         Assert.True(File.Exists(discovery.ProductSearchMapFilePath), $"Fixture not found: {discovery.ProductSearchMapFilePath}");
 
-        var interpreter = await RequirePythonInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
+        string? interpreter = await RequirePythonInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
         if (interpreter is null)
         {
             return;
@@ -250,12 +250,12 @@ public sealed class PythonParityTests : IDisposable
         // `if __name__ == "__main__": update_menu()` guard never fires -- only the module-level
         // constants (including PRODUCT_SEARCH_MAP) are evaluated, with no file I/O against the
         // real production/menu fixtures.
-        const string inspectProductSearchMap =
+        const string InspectProductSearchMap =
             "import json, runpy, sys\n" +
             "ns = runpy.run_path(sys.argv[1])\n" +
             "print(json.dumps(ns['PRODUCT_SEARCH_MAP']))\n";
-        var (exitCode, pythonStdout, stderr) = await RunProcessAsync(
-            interpreter, ["-c", inspectProductSearchMap, realScript], TestContext.Current.CancellationToken);
+        (int exitCode, string? pythonStdout, string? stderr) = await RunProcessAsync(
+            interpreter, ["-c", InspectProductSearchMap, realScript], TestContext.Current.CancellationToken);
         Assert.True(exitCode == 0, $"Python inspection exited {exitCode}.\nstdout:\n{pythonStdout}\nstderr:\n{stderr}");
 
         using var pythonDoc = JsonDocument.Parse(pythonStdout.Trim());
@@ -274,10 +274,13 @@ public sealed class PythonParityTests : IDisposable
 
     private static int ParseUpdatedCount(string stdout)
     {
-        var match = Regex.Match(stdout, @"Updated (\d+) items in menuItems\.json");
+        Match match = UpdatedCountRegex.Match(stdout);
         Assert.True(match.Success, $"Could not find an 'Updated N items...' line in:\n{stdout}");
-        return int.Parse(match.Groups[1].Value);
+        return int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
     }
+
+    [GeneratedRegex(@"Updated (\d+) items in menuItems\.json")]
+    private static partial Regex UpdatedCountRegex { get; }
 
     /// <summary>
     /// Resolves a working Python interpreter via <see cref="FindWorkingPythonInterpreterAsync"/>,
@@ -287,14 +290,14 @@ public sealed class PythonParityTests : IDisposable
     /// </summary>
     private static async Task<string?> RequirePythonInterpreterAsync(string repoRoot, CancellationToken cancellationToken)
     {
-        var interpreter = await FindWorkingPythonInterpreterAsync(repoRoot, cancellationToken);
+        string? interpreter = await FindWorkingPythonInterpreterAsync(repoRoot, cancellationToken);
         if (interpreter is not null)
         {
             return interpreter;
         }
 
-        var isCi = string.Equals(Environment.GetEnvironmentVariable("GITHUB_ACTIONS"), "true", StringComparison.OrdinalIgnoreCase);
-        var message =
+        bool isCi = string.Equals(Environment.GetEnvironmentVariable("GITHUB_ACTIONS"), "true", StringComparison.OrdinalIgnoreCase);
+        string message =
             "No Python interpreter was found (checked the repo-root .venv, then bare " +
             "\"python3\"/\"python\" on PATH). This test needs only the standard library " +
             "(json, pathlib, runpy), so any Python 3 interpreter works.";
@@ -324,11 +327,11 @@ public sealed class PythonParityTests : IDisposable
             "python",
         ];
 
-        foreach (var candidate in candidates)
+        foreach (string candidate in candidates)
         {
             try
             {
-                var (exitCode, _, _) = await RunProcessAsync(candidate, ["--version"], cancellationToken);
+                (int exitCode, string _, string _) = await RunProcessAsync(candidate, ["--version"], cancellationToken);
                 if (exitCode == 0)
                 {
                     return candidate;
@@ -359,15 +362,15 @@ public sealed class PythonParityTests : IDisposable
             StandardErrorEncoding = Encoding.UTF8,
         };
         startInfo.Environment["PYTHONIOENCODING"] = "utf-8";
-        foreach (var argument in arguments)
+        foreach (string argument in arguments)
         {
             startInfo.ArgumentList.Add(argument);
         }
 
         using var process = new Process { StartInfo = startInfo };
         process.Start();
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        Task<string> stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
         await process.WaitForExitAsync(cancellationToken);
         return (process.ExitCode, await stdoutTask, await stderrTask);
     }

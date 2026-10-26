@@ -5,7 +5,6 @@
     <!-- Library only: hosted programmatically by Conformance.Harness/Conformance.Tests, never launched directly. -->
     <OutputType>Library</OutputType>
     <IsPackable>false</IsPackable>
-    <GenerateDocumentationFile>false</GenerateDocumentationFile>
   </PropertyGroup>
 
   <ItemGroup>

@@ -17,9 +17,9 @@ internal static class RateLimitDetection
         {
             return false;
         }
-        foreach (var field in new[] { "code", "type" })
+        foreach (string? field in new[] { "code", "type" })
         {
-            var value = error[field]?.GetValue<string>();
+            string? value = error[field]?.GetValue<string>();
             if (!string.IsNullOrEmpty(value) && value.Contains("rate_limit", StringComparison.OrdinalIgnoreCase))
             {
                 return true;

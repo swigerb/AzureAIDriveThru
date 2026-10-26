@@ -1,5 +1,3 @@
-using System.IO;
-using System.Linq;
 using Conformance.Harness;
 using Xunit;
 
@@ -33,11 +31,11 @@ public sealed class RealtimeUriLiteralScanTests
     [Fact]
     public void No_scenario_outside_the_helper_RealtimeBrowserClient_or_Scenarios_Auth_builds_a_realtime_uri_by_hand()
     {
-        var repoRoot = RepoPaths.FindRepoRoot();
-        var testsRoot = Path.Combine(repoRoot, "tests", "conformance", "tests", "Conformance.Tests");
+        string repoRoot = RepoPaths.FindRepoRoot();
+        string testsRoot = Path.Combine(repoRoot, "tests", "conformance", "tests", "Conformance.Tests");
         var violations = new List<string>();
 
-        foreach (var file in Directory.EnumerateFiles(testsRoot, "*.cs", SearchOption.AllDirectories))
+        foreach (string file in Directory.EnumerateFiles(testsRoot, "*.cs", SearchOption.AllDirectories))
         {
             if (file.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}") ||
                 file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}"))
@@ -56,7 +54,7 @@ public sealed class RealtimeUriLiteralScanTests
                 continue;
             }
 
-            var relativePath = Path.GetRelativePath(repoRoot, file);
+            string relativePath = Path.GetRelativePath(repoRoot, file);
             violations.AddRange(RealtimeUriLiteralScanner.Scan(relativePath, File.ReadAllLines(file)));
         }
 

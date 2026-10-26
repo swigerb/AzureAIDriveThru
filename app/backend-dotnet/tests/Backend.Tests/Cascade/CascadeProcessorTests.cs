@@ -43,7 +43,7 @@ internal sealed class RoutingFoundryHandler : HttpMessageHandler
         {
             message["tool_calls"] = toolCalls;
         }
-        var body = new JsonObject { ["choices"] = new JsonArray(new JsonObject { ["message"] = message }) }.ToJsonString();
+        string body = new JsonObject { ["choices"] = new JsonArray(new JsonObject { ["message"] = message }) }.ToJsonString();
         _chatResponses.Enqueue(() => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") });
         return this;
     }
@@ -99,7 +99,7 @@ internal sealed class RoutingFoundryHandler : HttpMessageHandler
 
     public RoutingFoundryHandler EnqueueTranscript(string text)
     {
-        var body = new JsonObject { ["text"] = text }.ToJsonString();
+        string body = new JsonObject { ["text"] = text }.ToJsonString();
         _transcribeResponses.Enqueue(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") }));
         return this;
     }
@@ -144,12 +144,15 @@ internal sealed class RoutingFoundryHandler : HttpMessageHandler
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        var path = request.RequestUri!.AbsolutePath;
+        string path = request.RequestUri!.AbsolutePath;
         if (path.EndsWith("/chat/completions", StringComparison.Ordinal))
         {
             ChatRequestBodies.Add(request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken));
             if (BeforeChatCompletion is not null)
+            {
                 await BeforeChatCompletion(cancellationToken);
+            }
+
             return Dequeue(_chatResponses, "chat completion")();
         }
         if (path.EndsWith("/audio/transcriptions", StringComparison.Ordinal))
@@ -182,7 +185,7 @@ internal sealed class RecordingToolExecutor : IToolExecutor
     public RecordingToolExecutor(
         IEnumerable<string> toolNames, Func<string, JsonElement, CancellationToken, Task<ToolResult>>? handler = null)
     {
-        ToolNames = toolNames.Distinct().ToList();
+        ToolNames = [.. toolNames.Distinct()];
         _handler = handler;
     }
 
@@ -232,7 +235,7 @@ internal sealed class RecordingLogger : ILogger<CascadeProcessor>
 /// pre-chunked <c>ReceiveAsync</c> return): <see cref="ReceiveAsync"/> itself slices it into
 /// <see cref="WebSocketFrameReader"/>'s own 8192-byte chunk size across as many calls as needed,
 /// exactly like a real fragmented WebSocket message would arrive -- required here (and NOT by the
-/// realtime fake) because a guest turn's base64 audio payload routinely exceeds 8192 bytes.
+/// realtime fake) because a guest turn's base64 audio payload routinely exceeds 8192 bytes.</summary>
 internal sealed class DelayedFakeWebSocket(
     IEnumerable<(byte[] Data, WebSocketMessageType MessageType)> messages,
     TimeSpan delay) : WebSocket
@@ -294,12 +297,12 @@ internal sealed class DelayedFakeWebSocket(
             _currentOffset = 0;
         }
 
-        var remaining = _currentData.Length - _currentOffset;
-        var toCopy = Math.Min(remaining, buffer.Count);
+        int remaining = _currentData.Length - _currentOffset;
+        int toCopy = Math.Min(remaining, buffer.Count);
         Array.Copy(_currentData, _currentOffset, buffer.Array!, buffer.Offset, toCopy);
         _currentOffset += toCopy;
-        var endOfMessage = _currentOffset >= _currentData.Length;
-        var messageType = _currentType;
+        bool endOfMessage = _currentOffset >= _currentData.Length;
+        WebSocketMessageType messageType = _currentType;
         if (endOfMessage)
         {
             _currentData = null;
@@ -309,7 +312,7 @@ internal sealed class DelayedFakeWebSocket(
 
     public override async Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken)
     {
-        var data = buffer.ToArray();
+        byte[] data = [.. buffer];
         if (BeforeSendText is not null && messageType == WebSocketMessageType.Text)
         {
             await BeforeSendText(Encoding.UTF8.GetString(data), cancellationToken).ConfigureAwait(false);
@@ -331,11 +334,11 @@ internal sealed class DelayedFakeWebSocket(
 public sealed class CascadeProcessorTests
 {
     private const string Endpoint = "https://fake-foundry.example.com";
-    private static readonly TimeSpan ReceiveDelay = TimeSpan.FromMilliseconds(60);
+    private static readonly TimeSpan s_receiveDelay = TimeSpan.FromMilliseconds(60);
 
     private static (Persona Persona, PromptLoader Loader) LoadDeltaFixture()
     {
-        var personasDir = Path.Combine(RepoRootLocator.Find(), "app", "backend", "tests", "fixtures", "personas");
+        string personasDir = Path.Combine(RepoRootLocator.Find(), "app", "backend", "tests", "fixtures", "personas");
         return (DeltaFixture.Load(), new PromptLoader(personasDir, "test-delta"));
     }
 
@@ -370,8 +373,8 @@ public sealed class CascadeProcessorTests
 
     private static byte[] Pcm16(short sampleValue, int count)
     {
-        var bytes = new byte[count * 2];
-        for (var i = 0; i < count; i++)
+        byte[] bytes = new byte[count * 2];
+        for (int i = 0; i < count; i++)
         {
             bytes[i * 2] = (byte)(sampleValue & 0xFF);
             bytes[i * 2 + 1] = (byte)((sampleValue >> 8) & 0xFF);
@@ -399,36 +402,37 @@ public sealed class CascadeProcessorTests
     [Fact]
     public async Task ScopedGreetingRequestNeverPersistsIntentAndRetainsActualAssistantForNextToolRound()
     {
-        var persona = PersonaCatalog.Load().Get("tacobell");
+        Persona persona = PersonaCatalog.Load().Get("tacobell");
         var loader = new PromptLoader(Path.Combine(RepoRootLocator.Find(), "personas"), persona.Id);
-        const string greeting = "Welcome to Taco Bell! Are you checking in with the Taco Bell app today?";
-        var handler = new RoutingFoundryHandler().EnqueueChatMessage("assistant", greeting)
-            .EnqueueChatMessage("assistant", null, new JsonArray(new JsonObject
+        const string Greeting = "Welcome to Taco Bell! Are you checking in with the Taco Bell app today?";
+        RoutingFoundryHandler handler = new RoutingFoundryHandler().EnqueueChatMessage("assistant", Greeting)
+            .EnqueueChatMessage("assistant", null, [new JsonObject
             {
-                ["id"] = "scoped-call", ["type"] = "function",
+                ["id"] = "scoped-call",
+                ["type"] = "function",
                 ["function"] = new JsonObject { ["name"] = "get_order", ["arguments"] = "{}" },
-            }))
+            }])
             .EnqueueChatMessage("assistant", "What can I get started for you?")
             .EnqueueSpeech([1, 2]).EnqueueSpeech([3, 4]);
-        var processor = NewProcessor(handler, new StubToolExecutor(["get_order"]), loader);
+        CascadeProcessor processor = NewProcessor(handler, new StubToolExecutor(["get_order"]), loader);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         var socket = new DelayedFakeWebSocket([], TimeSpan.Zero);
-        var context = processor.CreateSessionContext(socket, persona,
+        CascadeSessionContext context = processor.CreateSessionContext(socket, persona,
             new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", false), "scoped", cts);
         await context.SendGreetingAsync(cts.Token);
-        var request = JsonNode.Parse(handler.ChatRequestBodies[0])!;
+        JsonNode request = JsonNode.Parse(handler.ChatRequestBodies[0])!;
         Assert.Empty(request["tools"]!.AsArray());
         Assert.Equal("none", request["tool_choice"]!.GetValue<string>());
         Assert.All(request["messages"]!.AsArray(), message =>
             Assert.Equal("system", message!["role"]!.GetValue<string>()));
         Assert.Contains("Say exactly:", request["messages"]!.AsArray().Last()!["content"]!.GetValue<string>());
-        Assert.Equal(new[] { "system", "assistant" },
+        Assert.Equal<string>(["system", "assistant"],
             context.State.Messages.Select(message => message["role"]!.GetValue<string>()));
-        Assert.Equal(greeting, context.State.Messages.Last()["content"]!.GetValue<string>());
+        Assert.Equal(Greeting, context.State.Messages.Last()["content"]!.GetValue<string>());
         context.State.Messages.Add(CascadeChatMessage.User("Ready to order."));
         await context.TurnCoordinator.RunTurnAndSpeakAsync(cts.Token);
-        var next = JsonNode.Parse(handler.ChatRequestBodies[1])!["messages"]!.AsArray();
-        Assert.Equal(new[] { "system", "assistant", "user" },
+        JsonArray next = JsonNode.Parse(handler.ChatRequestBodies[1])!["messages"]!.AsArray();
+        Assert.Equal<string>(["system", "assistant", "user"],
             next.Select(message => message!["role"]!.GetValue<string>()));
         Assert.DoesNotContain("Say exactly:", next.ToJsonString());
         Assert.DoesNotContain("Greet exactly:", next.ToJsonString());
@@ -441,7 +445,7 @@ public sealed class CascadeProcessorTests
     [Fact]
     public async Task ScopedGreetingCancelledDuringCompletionNeverPersistsIntentOrFakeAnswer()
     {
-        var persona = PersonaCatalog.Load().Get("tacobell");
+        Persona persona = PersonaCatalog.Load().Get("tacobell");
         var loader = new PromptLoader(Path.Combine(RepoRootLocator.Find(), "personas"), persona.Id);
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var handler = new RoutingFoundryHandler
@@ -452,13 +456,13 @@ public sealed class CascadeProcessorTests
                 await Task.Delay(Timeout.InfiniteTimeSpan, ct);
             },
         };
-        var sessions = NewSessionManager(new FakeTimeProvider());
-        var processor = NewProcessor(handler, new StubToolExecutor(["get_order"]), loader, sessionManager: sessions);
+        SessionManager sessions = NewSessionManager(new FakeTimeProvider());
+        CascadeProcessor processor = NewProcessor(handler, new StubToolExecutor(["get_order"]), loader, sessionManager: sessions);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         var socket = new DelayedFakeWebSocket([], TimeSpan.Zero);
-        var context = processor.CreateSessionContext(socket, persona,
+        CascadeSessionContext context = processor.CreateSessionContext(socket, persona,
             new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", false), "scoped", cts);
-        var greeting = context.SendGreetingAsync(cts.Token);
+        Task greeting = context.SendGreetingAsync(cts.Token);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         cts.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => greeting);
@@ -471,20 +475,21 @@ public sealed class CascadeProcessorTests
     [Fact]
     public async Task ScopedGreetingUnexpectedToolCallFailsWithoutExecutingOrSpeaking()
     {
-        var persona = PersonaCatalog.Load().Get("tacobell");
+        Persona persona = PersonaCatalog.Load().Get("tacobell");
         var loader = new PromptLoader(Path.Combine(RepoRootLocator.Find(), "personas"), persona.Id);
-        var handler = new RoutingFoundryHandler().EnqueueChatMessage("assistant", null,
-            new JsonArray(new JsonObject
+        RoutingFoundryHandler handler = new RoutingFoundryHandler().EnqueueChatMessage("assistant", null,
+            [new JsonObject
             {
-                ["id"] = "unexpected", ["type"] = "function",
+                ["id"] = "unexpected",
+                ["type"] = "function",
                 ["function"] = new JsonObject { ["name"] = "get_order", ["arguments"] = "{}" },
-            }));
+            }]);
         var executor = new RecordingToolExecutor(["get_order"]);
-        var sessions = NewSessionManager(new FakeTimeProvider());
-        var processor = NewProcessor(handler, executor, loader, sessionManager: sessions);
+        SessionManager sessions = NewSessionManager(new FakeTimeProvider());
+        CascadeProcessor processor = NewProcessor(handler, executor, loader, sessionManager: sessions);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         var socket = new DelayedFakeWebSocket([], TimeSpan.Zero);
-        var context = processor.CreateSessionContext(socket, persona,
+        CascadeSessionContext context = processor.CreateSessionContext(socket, persona,
             new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", false), "scoped", cts);
         await context.SendGreetingAsync(cts.Token);
         Assert.Single(context.State.Messages);
@@ -496,10 +501,10 @@ public sealed class CascadeProcessorTests
 
     private static void AssertStartedWithoutFabricatedHistory(SessionManager sessions, WebSocket socket, Persona persona)
     {
-        var resumeId = sessions.IssueResumeId("scoped");
+        string? resumeId = sessions.IssueResumeId("scoped");
         sessions.Detach(socket, "scoped", "greeting interrupted or failed");
         using var resumedSocket = new DelayedFakeWebSocket([], TimeSpan.Zero);
-        var outcome = sessions.TryResume(resumedSocket, resumeId, persona.Id, "gpt-5-mini", null, "provisional");
+        ResumeOutcome outcome = sessions.TryResume(resumedSocket, resumeId, persona.Id, "gpt-5-mini", null, "provisional");
         Assert.True(outcome.Accepted);
         Assert.True(outcome.ConversationStarted);
         Assert.Empty(outcome.RecentTurns!);
@@ -508,8 +513,8 @@ public sealed class CascadeProcessorTests
     [Fact]
     public void PipelineName_IsCascade()
     {
-        var (_, loader) = LoadDeltaFixture();
-        var processor = NewProcessor(new RoutingFoundryHandler(), new StubToolExecutor(["search"]), loader);
+        (Persona _, PromptLoader? loader) = LoadDeltaFixture();
+        CascadeProcessor processor = NewProcessor(new RoutingFoundryHandler(), new StubToolExecutor(["search"]), loader);
 
         Assert.Equal("cascade", processor.PipelineName);
     }
@@ -521,32 +526,40 @@ public sealed class CascadeProcessorTests
     [InlineData("echo", false)]
     public async Task GuestActivity_OnlyDetectedSpeechRefreshesTheExistingIdleBudget(string input, bool refreshes)
     {
-        var (persona, loader) = LoadDeltaFixture();
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
         var time = new FakeTimeProvider();
-        var manager = NewSessionManager(time);
-        var processor = NewProcessor(new RoutingFoundryHandler(), new StubToolExecutor(["search"]), loader,
+        SessionManager manager = NewSessionManager(time);
+        CascadeProcessor processor = NewProcessor(new RoutingFoundryHandler(), new StubToolExecutor(["search"]), loader,
             timeProvider: time, sessionManager: manager);
         var socket = new DelayedFakeWebSocket([], TimeSpan.Zero);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
-        var context = processor.CreateSessionContext(socket, persona,
+        CascadeSessionContext context = processor.CreateSessionContext(socket, persona,
             new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false), "activity-session", cts);
         var otherSocket = new DelayedFakeWebSocket([], TimeSpan.Zero);
         manager.CreateSession("other-session", otherSocket, persona.Id, "gpt-5-mini", null,
             new StubToolExecutor(["search"]), "marin");
         time.Advance(TimeSpan.FromSeconds(290));
         if (input == "echo")
+        {
             context.Detector.StartEchoCooldown(30, context.NowSeconds());
-        var pcm = input switch
+        }
+
+        byte[] pcm = input switch
         {
             "silence" => Pcm16(0, 2400),
-            "unusable" => new byte[] { 1 },
+            "unusable" => [1],
             _ => Pcm16(20000, 2400),
         };
         await new CascadeClientMessageHandler(context).HandleAsync(new JsonObject
         {
-            ["type"] = "input_audio_buffer.append", ["audio"] = Convert.ToBase64String(pcm),
+            ["type"] = "input_audio_buffer.append",
+            ["audio"] = Convert.ToBase64String(pcm),
         });
-        if (context.State.BargeInTail is { } tail) await tail;
+        if (context.State.BargeInTail is { } tail)
+        {
+            await tail;
+        }
+
         Assert.Equal(refreshes, socket.SentMessages.Any(m =>
             ParseSent(m)["type"]?.GetValue<string>() == "input_audio_buffer.speech_started"));
 
@@ -569,16 +582,16 @@ public sealed class CascadeProcessorTests
     [InlineData(" \n", false)]
     public async Task GuestActivity_OnlyCommittedNonemptyTranscriptionRefreshesIdleBudget(string transcript, bool refreshes)
     {
-        var (persona, loader) = LoadDeltaFixture();
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
         var time = new FakeTimeProvider();
-        var manager = NewSessionManager(time);
-        var handler = new RoutingFoundryHandler().EnqueueTranscript(transcript)
+        SessionManager manager = NewSessionManager(time);
+        RoutingFoundryHandler handler = new RoutingFoundryHandler().EnqueueTranscript(transcript)
             .EnqueueChatMessage("assistant", "Anything else?").EnqueueSpeech([1, 2]);
-        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader,
+        CascadeProcessor processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader,
             timeProvider: time, sessionManager: manager);
         var socket = new DelayedFakeWebSocket([], TimeSpan.Zero);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
-        var context = processor.CreateSessionContext(socket, persona,
+        CascadeSessionContext context = processor.CreateSessionContext(socket, persona,
             new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false), "transcript-session", cts);
         time.Advance(TimeSpan.FromSeconds(290));
         await context.ProcessTurnAsync(Pcm16(20000, 2400), cts.Token);
@@ -598,8 +611,8 @@ public sealed class CascadeProcessorTests
     [Fact]
     public void ResolveModel_DelegatesToModelDispatch_RejectingAPersonaWithNoCascadeBlock()
     {
-        var (persona, loader) = LoadDeltaFixture();
-        var processor = NewProcessor(new RoutingFoundryHandler(), new StubToolExecutor(["search"]), loader);
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
+        CascadeProcessor processor = NewProcessor(new RoutingFoundryHandler(), new StubToolExecutor(["search"]), loader);
 
         // test-delta's persona pack has no models.cascade block -- ModelDispatch.ResolveCascadeModel
         // must reject it exactly like it would for a real persona that hasn't opted into cascade,
@@ -610,20 +623,20 @@ public sealed class CascadeProcessorTests
     [Fact]
     public async Task RunSessionAsync_FullHappyPath_GreetingThenGuestTurnWithToolCall()
     {
-        var (persona, loader) = LoadDeltaFixture();
-        var handler = new RoutingFoundryHandler()
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             // 1) the connect-time greeting's own chat-completion turn:
             .EnqueueChatMessage("assistant", "Welcome to Test Delta Meal Co.! What can I get started for you?")
             // 2) the guest turn's first round: a tool call ...
-            .EnqueueChatMessage("assistant", null, toolCalls: new JsonArray
-            {
+            .EnqueueChatMessage("assistant", null, toolCalls:
+            [
                 new JsonObject
                 {
                     ["id"] = "call_1",
                     ["type"] = "function",
                     ["function"] = new JsonObject { ["name"] = "search", ["arguments"] = "{\"query\":\"burger\"}" },
                 },
-            })
+            ])
             // 3) ... then the guest turn's second round, after the tool result is fed back:
             .EnqueueChatMessage("assistant", "We have a great burger today!")
             .EnqueueTranscript("I'd like a burger")
@@ -631,18 +644,18 @@ public sealed class CascadeProcessorTests
             .EnqueueSpeech([5, 4, 3, 2, 1]);
 
         var toolExecutor = new StubToolExecutor(["search"]);
-        var processor = NewProcessor(handler, toolExecutor, loader);
+        CascadeProcessor processor = NewProcessor(handler, toolExecutor, loader);
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
 
-        var loudChunk = Pcm16(20000, count: 10); // RMS 20000 > cutoff (threshold 0.5 * 32767)
-        var silentChunk = Pcm16(0, count: 4800); // config.yaml vad.silence_duration_ms=200 @ 24kHz = 4800 samples
+        byte[] loudChunk = Pcm16(20000, count: 10); // RMS 20000 > cutoff (threshold 0.5 * 32767)
+        byte[] silentChunk = Pcm16(0, count: 4800); // config.yaml vad.silence_duration_ms=200 @ 24kHz = 4800 samples
         var socket = new DelayedFakeWebSocket(
             [
                 (AppendFrame(loudChunk), WebSocketMessageType.Text),
                 (AppendFrame(silentChunk), WebSocketMessageType.Text),
                 ([], WebSocketMessageType.Close),
             ],
-            ReceiveDelay);
+            s_receiveDelay);
 
         await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-abc", TestContext.Current.CancellationToken);
 
@@ -655,16 +668,16 @@ public sealed class CascadeProcessorTests
         Assert.Equal("cascade", frames[0]["pipeline"]!.GetValue<string>());
 
         // The greeting's own turn: response.created -> spoken transcript+audio -> response.done -> round trip.
-        var greetingTranscript = frames.First(f => f["type"]!.GetValue<string>() == "response.audio_transcript.delta");
+        JsonObject greetingTranscript = frames.First(f => f["type"]!.GetValue<string>() == "response.audio_transcript.delta");
         Assert.Equal("Welcome to Test Delta Meal Co.! What can I get started for you?", greetingTranscript["delta"]!.GetValue<string>());
 
         // Guest audio: speech_started, then (after enough trailing silence) a transcription-completed frame.
         Assert.Contains(types, t => t == "input_audio_buffer.speech_started");
-        var transcribed = frames.Single(f => f["type"]!.GetValue<string>() == "conversation.item.input_audio_transcription.completed");
+        JsonObject transcribed = frames.Single(f => f["type"]!.GetValue<string>() == "conversation.item.input_audio_transcription.completed");
         Assert.Equal("I'd like a burger", transcribed["transcript"]!.GetValue<string>());
 
         // Tool dispatch surfaced to the client between the two chat rounds.
-        var toolResponse = frames.Single(f => f["type"]!.GetValue<string>() == "extension.middle_tier_tool_response");
+        JsonObject toolResponse = frames.Single(f => f["type"]!.GetValue<string>() == "extension.middle_tier_tool_response");
         Assert.Equal("search", toolResponse["tool_name"]!.GetValue<string>());
         Assert.Equal("(stub) search acknowledged.", toolResponse["tool_result"]!.GetValue<string>());
 
@@ -687,8 +700,8 @@ public sealed class CascadeProcessorTests
 
         // The guest turn's final chat-completion request must include the tool's own result as a
         // "tool" role message threaded back in, proving the tool loop actually re-queried the model.
-        var finalRequestBody = JsonNode.Parse(handler.ChatRequestBodies[2])!.AsObject();
-        var messages = finalRequestBody["messages"]!.AsArray();
+        JsonObject finalRequestBody = JsonNode.Parse(handler.ChatRequestBodies[2])!.AsObject();
+        JsonArray messages = finalRequestBody["messages"]!.AsArray();
         Assert.Contains(messages, m => m!["role"]!.GetValue<string>() == "tool" && m["tool_call_id"]!.GetValue<string>() == "call_1");
     }
 
@@ -703,40 +716,40 @@ public sealed class CascadeProcessorTests
     [Fact]
     public async Task RunSessionAsync_ToolCallWithEmptyStringArguments_IsTreatedAsAnEmptyJsonObject()
     {
-        var (persona, loader) = LoadDeltaFixture();
-        var handler = new RoutingFoundryHandler()
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             .EnqueueChatMessage("assistant", "Welcome!")
-            .EnqueueChatMessage("assistant", null, toolCalls: new JsonArray
-            {
+            .EnqueueChatMessage("assistant", null, toolCalls:
+            [
                 new JsonObject
                 {
                     ["id"] = "call_1",
                     ["type"] = "function",
                     ["function"] = new JsonObject { ["name"] = "search", ["arguments"] = "" }, // empty STRING, not omitted
                 },
-            })
+            ])
             .EnqueueChatMessage("assistant", "Done.")
             .EnqueueTranscript("hi")
             .EnqueueSpeech([9, 8])
             .EnqueueSpeech([5, 4]);
 
         var toolExecutor = new RecordingToolExecutor(["search"]);
-        var processor = NewProcessor(handler, toolExecutor, loader);
+        CascadeProcessor processor = NewProcessor(handler, toolExecutor, loader);
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
 
-        var loudChunk = Pcm16(20000, count: 10);
-        var silentChunk = Pcm16(0, count: 4800);
+        byte[] loudChunk = Pcm16(20000, count: 10);
+        byte[] silentChunk = Pcm16(0, count: 4800);
         var socket = new DelayedFakeWebSocket(
             [
                 (AppendFrame(loudChunk), WebSocketMessageType.Text),
                 (AppendFrame(silentChunk), WebSocketMessageType.Text),
                 ([], WebSocketMessageType.Close),
             ],
-            ReceiveDelay);
+            s_receiveDelay);
 
         await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-empty-args", TestContext.Current.CancellationToken);
 
-        var toolResponse = socket.SentMessages
+        JsonObject toolResponse = socket.SentMessages
             .Where(m => m.MessageType == WebSocketMessageType.Text)
             .Select(ParseSent)
             .Single(f => f["type"]!.GetValue<string>() == "extension.middle_tier_tool_response");
@@ -772,20 +785,20 @@ public sealed class CascadeProcessorTests
     [Fact]
     public async Task RunSessionAsync_RealBargeInDuringToolCall_PropagatesWithoutBeingLoggedAsAToolFailure()
     {
-        var (persona, loader) = LoadDeltaFixture();
-        var handler = new RoutingFoundryHandler()
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             .EnqueueChatMessage("assistant", "Welcome!")
             .EnqueueSpeech([1, 2]) // the greeting's own TTS -- must succeed before the guest turn even starts.
             .EnqueueTranscript("hi") // the guest turn's STT -- must succeed so the turn reaches the tool call below.
-            .EnqueueChatMessage("assistant", null, toolCalls: new JsonArray
-            {
+            .EnqueueChatMessage("assistant", null, toolCalls:
+            [
                 new JsonObject
                 {
                     ["id"] = "call_1",
                     ["type"] = "function",
                     ["function"] = new JsonObject { ["name"] = "search", ["arguments"] = "{}" },
                 },
-            });
+            ]);
         // No further chat/TTS responses queued -- the tool call blocks on its own turnCt until
         // the real barge-in below cancels it, so the guest turn never reaches a second round.
 
@@ -801,11 +814,11 @@ public sealed class CascadeProcessorTests
                 return default!;
             });
         var logger = new RecordingLogger();
-        var processor = NewProcessor(handler, toolExecutor, loader, logger: logger);
+        CascadeProcessor processor = NewProcessor(handler, toolExecutor, loader, logger: logger);
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
 
-        var loudChunk = Pcm16(20000, count: 10);
-        var silentChunk = Pcm16(0, count: 4800);
+        byte[] loudChunk = Pcm16(20000, count: 10);
+        byte[] silentChunk = Pcm16(0, count: 4800);
         var socket = new DelayedFakeWebSocket(
             [
                 (AppendFrame(loudChunk), WebSocketMessageType.Text), // guest turn 1 starts (greeting already finished)
@@ -813,7 +826,7 @@ public sealed class CascadeProcessorTests
                 (AppendFrame(loudChunk), WebSocketMessageType.Text), // real barge-in: cancels turn 1's turnCt mid-tool-call
                 ([], WebSocketMessageType.Close),
             ],
-            ReceiveDelay);
+            s_receiveDelay);
 
         // The cancellation must propagate out of ExecuteToolCallAsync and be swallowed silently
         // by Spawn's own catch (OperationCanceledException) -- so RunSessionAsync itself must
@@ -847,20 +860,20 @@ public sealed class CascadeProcessorTests
     [InlineData(true)]
     public async Task RunSessionAsync_BargeInDuringToolCall_ThenNextTurnSucceeds_WithNoOrphanedToolCallInHistory(bool diagnose)
     {
-        var (persona, loader) = LoadDeltaFixture();
-        var handler = new RoutingFoundryHandler()
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             .EnqueueChatMessage("assistant", "Welcome!")
             .EnqueueSpeech([1, 2]) // greeting TTS
             .EnqueueTranscript("first query") // turn 1's STT
-            .EnqueueChatMessage("assistant", null, toolCalls: new JsonArray
-            {
+            .EnqueueChatMessage("assistant", null, toolCalls:
+            [
                 new JsonObject
                 {
                     ["id"] = "call_1",
                     ["type"] = "function",
                     ["function"] = new JsonObject { ["name"] = "search", ["arguments"] = "{}" },
                 },
-            }) // turn 1's tool-call round -- blocks on turnCt until the barge-in below cancels it
+            ]) // turn 1's tool-call round -- blocks on turnCt until the barge-in below cancels it
             .EnqueueTranscript("second query") // turn 2's STT
             .EnqueueChatMessage("assistant", "All set for your second query.") // turn 2 resolves with no tool call
             .EnqueueSpeech([3, 4]); // turn 2's TTS
@@ -873,11 +886,11 @@ public sealed class CascadeProcessorTests
                 return default!;
             });
         var logger = new RecordingLogger();
-        var processor = NewProcessor(handler, toolExecutor, loader, logger: logger);
+        CascadeProcessor processor = NewProcessor(handler, toolExecutor, loader, logger: logger);
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
 
-        var loudChunk = Pcm16(20000, count: 10);
-        var silentChunk = Pcm16(0, count: 4800);
+        byte[] loudChunk = Pcm16(20000, count: 10);
+        byte[] silentChunk = Pcm16(0, count: 4800);
         var socket = new DelayedFakeWebSocket(
             [
                 (AppendFrame(loudChunk), WebSocketMessageType.Text), // turn 1 starts
@@ -886,10 +899,10 @@ public sealed class CascadeProcessorTests
                 (AppendFrame(silentChunk), WebSocketMessageType.Text), // turn 2 spawned, runs to completion
                 ([], WebSocketMessageType.Close),
             ],
-            ReceiveDelay);
+            s_receiveDelay);
 
         var diagnosticLogger = new CascadeDiagnosticCaptureTests.RecordingLogger();
-        var diagnostic = diagnose ? new CascadeDiagnosticCapture("sess-orphan-truncation",
+        CascadeDiagnosticCapture? diagnostic = diagnose ? new CascadeDiagnosticCapture("sess-orphan-truncation",
             DateTimeOffset.UtcNow.AddMinutes(10), TimeProvider.System, diagnosticLogger) : null;
         await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-orphan-truncation",
             TestContext.Current.CancellationToken, diagnostic: diagnostic);
@@ -910,8 +923,8 @@ public sealed class CascadeProcessorTests
         // `OperationCanceledException`) leaves turn 1's orphaned `tool_calls` message (with no
         // matching "tool"/call_1 message) sitting in `state.Messages`, so it would still be
         // present here.
-        var lastRequestBody = JsonNode.Parse(handler.ChatRequestBodies[^1])!.AsObject();
-        var lastMessages = lastRequestBody["messages"]!.AsArray();
+        JsonObject lastRequestBody = JsonNode.Parse(handler.ChatRequestBodies[^1])!.AsObject();
+        JsonArray lastMessages = lastRequestBody["messages"]!.AsArray();
         Assert.DoesNotContain(lastMessages, m =>
             m!["tool_calls"] is JsonArray tc && tc.Any(t => t!["id"]!.GetValue<string>() == "call_1"));
         Assert.DoesNotContain(lastMessages, m =>
@@ -930,12 +943,12 @@ public sealed class CascadeProcessorTests
             Assert.Equal(frames.Where(f => (string?)f["type"] == "response.created")
                     .Select(f => (string?)f["response"]?["id"]),
                 created.Select(e => (string?)e["responseId"]));
-            var cancelled = Assert.Single(events, e => (string?)e["stage"] == "cancelled");
+            JsonNode cancelled = Assert.Single(events, e => (string?)e["stage"] == "cancelled");
             Assert.Equal((string?)created[1]["responseId"], (string?)cancelled["responseId"]);
             Assert.True(events.IndexOf(cancelled) < events.IndexOf(created[2]));
-            Assert.Equal(new[] { (string?)created[0]["responseId"], (string?)created[2]["responseId"] },
+            Assert.Equal<string?>([(string?)created[0]["responseId"], (string?)created[2]["responseId"]],
                 events.Where(e => (string?)e["stage"] == "response.done").Select(e => (string?)e["responseId"]));
-            Assert.Equal(new[] { (string?)created[0]["responseId"], (string?)created[2]["responseId"] },
+            Assert.Equal<string?>([(string?)created[0]["responseId"], (string?)created[2]["responseId"]],
                 events.Where(e => (string?)e["stage"] == "tts.started").Select(e => (string?)e["responseId"]));
         }
     }
@@ -948,8 +961,8 @@ public sealed class CascadeProcessorTests
     [Fact]
     public async Task RunSessionAsync_FragmentCancelledMidTranscription_IsPrependedToTheNextTurnsUpload()
     {
-        var (persona, loader) = LoadDeltaFixture();
-        var handler = new RoutingFoundryHandler()
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             .EnqueueChatMessage("assistant", "Welcome!")
             .EnqueueSpeech([1, 2])
             .EnqueueTranscriptUntilCancelled() // "No," -- still transcribing when the guest resumes
@@ -957,12 +970,12 @@ public sealed class CascadeProcessorTests
             .EnqueueChatMessage("assistant", "Your carhop will be right out.")
             .EnqueueSpeech([3, 4]);
         var logger = new RecordingLogger();
-        var processor = NewProcessor(handler, new RecordingToolExecutor([]), loader, logger: logger);
+        CascadeProcessor processor = NewProcessor(handler, new RecordingToolExecutor([]), loader, logger: logger);
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
 
-        var firstFragment = Pcm16(20000, count: 10);
-        var secondFragment = Pcm16(10000, count: 10);
-        var silentChunk = Pcm16(0, count: 4800);
+        byte[] firstFragment = Pcm16(20000, count: 10);
+        byte[] secondFragment = Pcm16(10000, count: 10);
+        byte[] silentChunk = Pcm16(0, count: 4800);
         var socket = new DelayedFakeWebSocket(
             [
                 (AppendFrame(firstFragment), WebSocketMessageType.Text),
@@ -971,19 +984,19 @@ public sealed class CascadeProcessorTests
                 (AppendFrame(silentChunk), WebSocketMessageType.Text), // turn 2 spawned with both fragments
                 ([], WebSocketMessageType.Close),
             ],
-            ReceiveDelay);
+            s_receiveDelay);
 
         await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-split-utterance", TestContext.Current.CancellationToken);
 
         Assert.DoesNotContain(logger.Entries, e => e.Level >= LogLevel.Warning);
         Assert.Equal(2, handler.TranscribeRequestCount);
-        var firstUpload = WavData(handler.TranscribeRequestBodies[0]);
-        var secondUpload = WavData(handler.TranscribeRequestBodies[1]);
+        byte[] firstUpload = WavData(handler.TranscribeRequestBodies[0]);
+        byte[] secondUpload = WavData(handler.TranscribeRequestBodies[1]);
         Assert.Equal(firstUpload, secondUpload[..firstUpload.Length]);
         Assert.True(secondUpload.AsSpan(firstUpload.Length).StartsWith(secondFragment));
 
         var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
-        var transcribed = frames.Single(f => f["type"]!.GetValue<string>() == "conversation.item.input_audio_transcription.completed");
+        JsonObject transcribed = frames.Single(f => f["type"]!.GetValue<string>() == "conversation.item.input_audio_transcription.completed");
         Assert.Equal("No, that'll be it.", transcribed["transcript"]!.GetValue<string>());
     }
 
@@ -995,22 +1008,22 @@ public sealed class CascadeProcessorTests
     [Fact]
     public async Task RunSessionAsync_TranscriptSendStalledAcrossBargeIn_CommitsOnceWithoutReplayingAudio()
     {
-        var (persona, loader) = LoadDeltaFixture();
-        var handler = new RoutingFoundryHandler()
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             .EnqueueChatMessage("assistant", "Welcome!")
             .EnqueueSpeech([1, 2])
             .EnqueueTranscript("A double cheeseburger.")
             .EnqueueTranscript("That's all.")
             .EnqueueChatMessage("assistant", "Your carhop will be right out.")
             .EnqueueSpeech([3, 4]);
-        var processor = NewProcessor(handler, new RecordingToolExecutor([]), loader);
+        CascadeProcessor processor = NewProcessor(handler, new RecordingToolExecutor([]), loader);
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
 
         var sendReached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseSend = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var testCt = TestContext.Current.CancellationToken;
-        var secondFragment = Pcm16(10000, count: 10);
-        var silentChunk = Pcm16(0, count: 4800);
+        CancellationToken testCt = TestContext.Current.CancellationToken;
+        byte[] secondFragment = Pcm16(10000, count: 10);
+        byte[] silentChunk = Pcm16(0, count: 4800);
         var socket = new DelayedFakeWebSocket(
             [
                 (AppendFrame(Pcm16(20000, count: 10)), WebSocketMessageType.Text),
@@ -1019,7 +1032,7 @@ public sealed class CascadeProcessorTests
                 (AppendFrame(silentChunk), WebSocketMessageType.Text), // speech_stopped merges the carry
                 ([], WebSocketMessageType.Close),
             ],
-            ReceiveDelay)
+            s_receiveDelay)
         {
             BeforeSendText = async (payload, ct) =>
             {
@@ -1039,7 +1052,7 @@ public sealed class CascadeProcessorTests
                 else if (index == 4)
                 {
                     releaseSend.TrySetResult();
-                    var deadline = DateTime.UtcNow.AddSeconds(10);
+                    DateTime deadline = DateTime.UtcNow.AddSeconds(10);
                     while (handler.TranscribeRequestCount < 2 && DateTime.UtcNow < deadline)
                     {
                         await Task.Delay(20, testCt).ConfigureAwait(false);
@@ -1052,8 +1065,8 @@ public sealed class CascadeProcessorTests
         await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-commit-race", testCt);
 
         Assert.Equal(2, handler.TranscribeRequestCount);
-        var firstUpload = WavData(handler.TranscribeRequestBodies[0]);
-        var secondUpload = WavData(handler.TranscribeRequestBodies[1]);
+        byte[] firstUpload = WavData(handler.TranscribeRequestBodies[0]);
+        byte[] secondUpload = WavData(handler.TranscribeRequestBodies[1]);
         Assert.True(secondUpload.AsSpan().StartsWith(secondFragment));
         Assert.Equal(firstUpload.Length, secondUpload.Length);
 
@@ -1063,15 +1076,15 @@ public sealed class CascadeProcessorTests
             .Select(f => f["transcript"]!.GetValue<string>())
             .ToList();
         Assert.Equal(["A double cheeseburger.", "That's all."], transcripts);
-        var lastMessages = JsonNode.Parse(handler.ChatRequestBodies[^1])!["messages"]!.AsArray();
+        JsonArray lastMessages = JsonNode.Parse(handler.ChatRequestBodies[^1])!["messages"]!.AsArray();
         Assert.Single(lastMessages, m => m!["role"]!.GetValue<string>() == "user" && m["content"]!.GetValue<string>() == "A double cheeseburger.");
     }
 
     [Fact]
     public async Task RunSessionAsync_CommittedTranscriptAudio_IsNotCarriedIntoTheNextTurn()
     {
-        var (persona, loader) = LoadDeltaFixture();
-        var handler = new RoutingFoundryHandler()
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             .EnqueueChatMessage("assistant", "Welcome!")
             .EnqueueSpeech([1, 2])
             .EnqueueTranscript("A double cheeseburger.")
@@ -1080,11 +1093,11 @@ public sealed class CascadeProcessorTests
             .EnqueueTranscript("No, that'll be it.")
             .EnqueueChatMessage("assistant", "Your carhop will be right out.")
             .EnqueueSpeech([5, 6]);
-        var processor = NewProcessor(handler, new RecordingToolExecutor([]), loader);
+        CascadeProcessor processor = NewProcessor(handler, new RecordingToolExecutor([]), loader);
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
 
-        var secondFragment = Pcm16(10000, count: 10);
-        var silentChunk = Pcm16(0, count: 4800);
+        byte[] secondFragment = Pcm16(10000, count: 10);
+        byte[] silentChunk = Pcm16(0, count: 4800);
         var socket = new DelayedFakeWebSocket(
             [
                 (AppendFrame(Pcm16(20000, count: 10)), WebSocketMessageType.Text),
@@ -1093,7 +1106,7 @@ public sealed class CascadeProcessorTests
                 (AppendFrame(silentChunk), WebSocketMessageType.Text),
                 ([], WebSocketMessageType.Close),
             ],
-            ReceiveDelay);
+            s_receiveDelay);
 
         await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-no-carry", TestContext.Current.CancellationToken);
 
@@ -1104,18 +1117,18 @@ public sealed class CascadeProcessorTests
     [Fact]
     public async Task RunSessionAsync_CarriedAudioOverTheCap_IsTruncatedToTheNewestBytesWithAWarning()
     {
-        var (persona, loader) = LoadDeltaFixture();
-        var handler = new RoutingFoundryHandler()
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             .EnqueueChatMessage("assistant", "Welcome!")
             .EnqueueSpeech([1, 2])
             .EnqueueTranscriptUntilCancelled()
             .EnqueueTranscript("");
         var logger = new RecordingLogger();
-        var processor = NewProcessor(handler, new RecordingToolExecutor([]), loader, logger: logger);
+        CascadeProcessor processor = NewProcessor(handler, new RecordingToolExecutor([]), loader, logger: logger);
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
 
-        var halfCapSamples = CascadeClientMessageHandler.MaxCarriedTurnAudioBytes / 4;
-        var silentChunk = Pcm16(0, count: 4800);
+        int halfCapSamples = CascadeClientMessageHandler.MaxCarriedTurnAudioBytes / 4;
+        byte[] silentChunk = Pcm16(0, count: 4800);
         var socket = new DelayedFakeWebSocket(
             [
                 (AppendFrame(Pcm16(20000, count: halfCapSamples)), WebSocketMessageType.Text),
@@ -1124,7 +1137,7 @@ public sealed class CascadeProcessorTests
                 (AppendFrame(silentChunk), WebSocketMessageType.Text), // carried + new > cap
                 ([], WebSocketMessageType.Close),
             ],
-            ReceiveDelay);
+            s_receiveDelay);
 
         await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-carry-cap", TestContext.Current.CancellationToken);
 
@@ -1136,9 +1149,9 @@ public sealed class CascadeProcessorTests
     [Fact]
     public void CarryForward_CapsCarriedAudioToTheMostRecentBytes()
     {
-        var carried = new byte[CascadeClientMessageHandler.MaxCarriedTurnAudioBytes];
-        var fragment = new byte[] { 7, 8 };
-        var combined = CascadeClientMessageHandler.CarryForward(carried, fragment);
+        byte[] carried = new byte[CascadeClientMessageHandler.MaxCarriedTurnAudioBytes];
+        byte[] fragment = [7, 8];
+        byte[] combined = CascadeClientMessageHandler.CarryForward(carried, fragment);
         Assert.Equal(CascadeClientMessageHandler.MaxCarriedTurnAudioBytes, combined.Length);
         Assert.Equal(fragment, combined[^2..]);
         Assert.Same(fragment, CascadeClientMessageHandler.CarryForward([], fragment));
@@ -1147,10 +1160,10 @@ public sealed class CascadeProcessorTests
     /// <summary>Extracts the PCM payload of the WAV file inside a multipart transcription upload.</summary>
     private static byte[] WavData(byte[] multipartBody)
     {
-        var riff = multipartBody.AsSpan().IndexOf("RIFF"u8);
+        int riff = multipartBody.AsSpan().IndexOf("RIFF"u8);
         Assert.True(riff >= 0, "transcription upload contains no WAV file");
-        var data = multipartBody.AsSpan(riff).IndexOf("data"u8) + riff;
-        var length = BitConverter.ToInt32(multipartBody, data + 4);
+        int data = multipartBody.AsSpan(riff).IndexOf("data"u8) + riff;
+        int length = BitConverter.ToInt32(multipartBody, data + 4);
         return multipartBody.AsSpan(data + 8, length).ToArray();
     }
 
@@ -1167,20 +1180,20 @@ public sealed class CascadeProcessorTests
     [Fact]
     public async Task RunSessionAsync_ToolCallThrowsTimeoutUnrelatedToBargeIn_StillLogsAndSendsResponseDone()
     {
-        var (persona, loader) = LoadDeltaFixture();
-        var handler = new RoutingFoundryHandler()
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             .EnqueueChatMessage("assistant", "Welcome!")
             .EnqueueSpeech([1, 2])
             .EnqueueTranscript("hi")
-            .EnqueueChatMessage("assistant", null, toolCalls: new JsonArray
-            {
+            .EnqueueChatMessage("assistant", null, toolCalls:
+            [
                 new JsonObject
                 {
                     ["id"] = "call_1",
                     ["type"] = "function",
                     ["function"] = new JsonObject { ["name"] = "search", ["arguments"] = "{}" },
                 },
-            })
+            ])
             .EnqueueChatMessage("assistant", "Sorry, something went wrong.") // the final round after the synthetic tool-failure message
             .EnqueueSpeech([9, 9]);
 
@@ -1197,18 +1210,18 @@ public sealed class CascadeProcessorTests
                 throw new TaskCanceledException("simulated HttpClient-internal timeout, unrelated to any barge-in", null, unrelatedCts.Token);
             });
         var logger = new RecordingLogger();
-        var processor = NewProcessor(handler, toolExecutor, loader, logger: logger);
+        CascadeProcessor processor = NewProcessor(handler, toolExecutor, loader, logger: logger);
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
 
-        var loudChunk = Pcm16(20000, count: 10);
-        var silentChunk = Pcm16(0, count: 4800);
+        byte[] loudChunk = Pcm16(20000, count: 10);
+        byte[] silentChunk = Pcm16(0, count: 4800);
         var socket = new DelayedFakeWebSocket(
             [
                 (AppendFrame(loudChunk), WebSocketMessageType.Text),
                 (AppendFrame(silentChunk), WebSocketMessageType.Text),
                 ([], WebSocketMessageType.Close),
             ],
-            ReceiveDelay);
+            s_receiveDelay);
 
         await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-timeout-not-bargein", TestContext.Current.CancellationToken);
 
@@ -1223,7 +1236,7 @@ public sealed class CascadeProcessorTests
         Assert.Equal("Sorry, something went wrong.", frames.Last(f => f["type"]!.GetValue<string>() == "response.audio_transcript.delta")["delta"]!.GetValue<string>());
         // Realtime-shaped completion: the frontend renders the assistant line only from
         // output[].content[].transcript (an id-only frame left cascade turns invisible).
-        var guestDone = frames.Last(f => f["type"]!.GetValue<string>() == "response.done")["response"]!;
+        JsonNode guestDone = frames.Last(f => f["type"]!.GetValue<string>() == "response.done")["response"]!;
         Assert.Equal("completed", guestDone["status"]!.GetValue<string>());
         Assert.Equal("assistant", guestDone["output"]![0]!["role"]!.GetValue<string>());
         Assert.Equal("Sorry, something went wrong.", guestDone["output"]![0]!["content"]![0]!["transcript"]!.GetValue<string>());
@@ -1243,25 +1256,25 @@ public sealed class CascadeProcessorTests
     [Fact]
     public async Task RunSessionAsync_ChatCompletionThrowsTimeoutUnrelatedToBargeIn_LogsInsteadOfVanishingSilently()
     {
-        var (persona, loader) = LoadDeltaFixture();
-        var handler = new RoutingFoundryHandler()
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             .EnqueueChatMessage("assistant", "Welcome!")
             .EnqueueSpeech([1, 2])
             .EnqueueTranscript("hi")
             .EnqueueChatTimeout();
         var logger = new RecordingLogger();
-        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, logger: logger);
+        CascadeProcessor processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, logger: logger);
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
 
-        var loudChunk = Pcm16(20000, count: 10);
-        var silentChunk = Pcm16(0, count: 4800);
+        byte[] loudChunk = Pcm16(20000, count: 10);
+        byte[] silentChunk = Pcm16(0, count: 4800);
         var socket = new DelayedFakeWebSocket(
             [
                 (AppendFrame(loudChunk), WebSocketMessageType.Text),
                 (AppendFrame(silentChunk), WebSocketMessageType.Text),
                 ([], WebSocketMessageType.Close),
             ],
-            ReceiveDelay);
+            s_receiveDelay);
 
         await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-chat-timeout-not-bargein", TestContext.Current.CancellationToken);
 
@@ -1278,7 +1291,7 @@ public sealed class CascadeProcessorTests
         Assert.Equal(2, types.Count(t => t == "response.created")); // greeting + guest turn
         Assert.Equal(2, types.Count(t => t == "response.done")); // greeting + guest turn's failed done
         Assert.Contains(types, t => t == "error");
-        var guestDone = frames.Last(f => f["type"]!.GetValue<string>() == "response.done");
+        JsonObject guestDone = frames.Last(f => f["type"]!.GetValue<string>() == "response.done");
         Assert.Equal("failed", guestDone["response"]!["status"]!.GetValue<string>());
         Assert.Empty(guestDone["response"]!["output"]!.AsArray());
     }
@@ -1288,25 +1301,25 @@ public sealed class CascadeProcessorTests
     [Fact]
     public async Task RunSessionAsync_ChatCompletionServerError_SendsFailedResponseDone()
     {
-        var (persona, loader) = LoadDeltaFixture();
-        var handler = new RoutingFoundryHandler()
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             .EnqueueChatMessage("assistant", "Welcome!")
             .EnqueueSpeech([1, 2])
             .EnqueueTranscript("hi")
             .EnqueueChatServerError();
         var logger = new RecordingLogger();
-        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, logger: logger);
+        CascadeProcessor processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, logger: logger);
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
 
-        var loudChunk = Pcm16(20000, count: 10);
-        var silentChunk = Pcm16(0, count: 4800);
+        byte[] loudChunk = Pcm16(20000, count: 10);
+        byte[] silentChunk = Pcm16(0, count: 4800);
         var socket = new DelayedFakeWebSocket(
             [
                 (AppendFrame(loudChunk), WebSocketMessageType.Text),
                 (AppendFrame(silentChunk), WebSocketMessageType.Text),
                 ([], WebSocketMessageType.Close),
             ],
-            ReceiveDelay);
+            s_receiveDelay);
 
         await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-chat-500", TestContext.Current.CancellationToken);
 
@@ -1314,7 +1327,7 @@ public sealed class CascadeProcessorTests
         var types = frames.Select(f => f["type"]!.GetValue<string>()).ToList();
         Assert.Equal(2, types.Count(t => t == "response.done"));
         Assert.Contains(types, t => t == "error");
-        var guestDone = frames.Last(f => f["type"]!.GetValue<string>() == "response.done");
+        JsonObject guestDone = frames.Last(f => f["type"]!.GetValue<string>() == "response.done");
         Assert.Equal("failed", guestDone["response"]!["status"]!.GetValue<string>());
     }
 
@@ -1323,13 +1336,13 @@ public sealed class CascadeProcessorTests
     [InlineData(" \n\t")]
     public async Task RunSessionAsync_EmptyAnswer_SendsFailedResponseDoneWithoutRetryOrTts(string answer)
     {
-        var (persona, loader) = LoadDeltaFixture();
-        var handler = new RoutingFoundryHandler()
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             .EnqueueChatMessage("assistant", "Welcome!")
             .EnqueueSpeech([1, 2])
             .EnqueueTranscript("add chips and a large drink")
             .EnqueueChatMessage("assistant", answer);
-        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, logger: new RecordingLogger());
+        CascadeProcessor processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, logger: new RecordingLogger());
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
         var socket = new DelayedFakeWebSocket(
             [
@@ -1337,10 +1350,10 @@ public sealed class CascadeProcessorTests
                 (AppendFrame(Pcm16(0, count: 4800)), WebSocketMessageType.Text),
                 ([], WebSocketMessageType.Close),
             ],
-            ReceiveDelay);
+            s_receiveDelay);
         await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-empty-answer", TestContext.Current.CancellationToken);
         var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
-        var done = frames.Last(f => f["type"]!.GetValue<string>() == "response.done")["response"]!;
+        JsonNode done = frames.Last(f => f["type"]!.GetValue<string>() == "response.done")["response"]!;
         Assert.Equal("failed", done["status"]!.GetValue<string>());
         Assert.Empty(done["output"]!.AsArray());
         Assert.Contains(frames, f => (string?)f["type"] == "error");
@@ -1354,13 +1367,13 @@ public sealed class CascadeProcessorTests
     [Fact]
     public async Task RunSessionAsync_ChatContentFilter_SendsIncompleteContentFilterResponseDone()
     {
-        var (persona, loader) = LoadDeltaFixture();
-        var handler = new RoutingFoundryHandler()
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             .EnqueueChatMessage("assistant", "Welcome!")
             .EnqueueSpeech([1, 2])
             .EnqueueTranscript("that'll be it")
             .EnqueueChatContentFilter();
-        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, logger: new RecordingLogger());
+        CascadeProcessor processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, logger: new RecordingLogger());
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
 
         var socket = new DelayedFakeWebSocket(
@@ -1369,14 +1382,14 @@ public sealed class CascadeProcessorTests
                 (AppendFrame(Pcm16(0, count: 4800)), WebSocketMessageType.Text),
                 ([], WebSocketMessageType.Close),
             ],
-            ReceiveDelay);
+            s_receiveDelay);
 
         await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-chat-filter", TestContext.Current.CancellationToken);
 
         var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
         var types = frames.Select(f => f["type"]!.GetValue<string>()).ToList();
         Assert.DoesNotContain("error", types);
-        var guestDone = frames.Last(f => f["type"]!.GetValue<string>() == "response.done")["response"]!;
+        JsonNode guestDone = frames.Last(f => f["type"]!.GetValue<string>() == "response.done")["response"]!;
         Assert.Equal("incomplete", guestDone["status"]!.GetValue<string>());
         Assert.Equal("content_filter", guestDone["status_details"]!["reason"]!.GetValue<string>());
         Assert.Empty(guestDone["output"]!.AsArray());
@@ -1390,26 +1403,26 @@ public sealed class CascadeProcessorTests
     [Fact]
     public async Task RunSessionAsync_TtsServerError_SendsFailedResponseDoneInsteadOfANormalOne()
     {
-        var (persona, loader) = LoadDeltaFixture();
-        var handler = new RoutingFoundryHandler()
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             .EnqueueChatMessage("assistant", "Welcome!")
             .EnqueueSpeech([1, 2])
             .EnqueueTranscript("hi")
             .EnqueueChatMessage("assistant", "Sure, one large fries.")
             .EnqueueSpeakServerError();
         var logger = new RecordingLogger();
-        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, logger: logger);
+        CascadeProcessor processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, logger: logger);
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
 
-        var loudChunk = Pcm16(20000, count: 10);
-        var silentChunk = Pcm16(0, count: 4800);
+        byte[] loudChunk = Pcm16(20000, count: 10);
+        byte[] silentChunk = Pcm16(0, count: 4800);
         var socket = new DelayedFakeWebSocket(
             [
                 (AppendFrame(loudChunk), WebSocketMessageType.Text),
                 (AppendFrame(silentChunk), WebSocketMessageType.Text),
                 ([], WebSocketMessageType.Close),
             ],
-            ReceiveDelay);
+            s_receiveDelay);
 
         await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-tts-500", TestContext.Current.CancellationToken);
 
@@ -1418,15 +1431,15 @@ public sealed class CascadeProcessorTests
         var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
         var types = frames.Select(f => f["type"]!.GetValue<string>()).ToList();
         Assert.Equal(2, types.Count(t => t == "response.done"));
-        var guestDone = frames.Last(f => f["type"]!.GetValue<string>() == "response.done");
+        JsonObject guestDone = frames.Last(f => f["type"]!.GetValue<string>() == "response.done");
         Assert.Equal("failed", guestDone["response"]!["status"]!.GetValue<string>());
     }
 
     [Fact]
     public async Task RunSessionAsync_TranscriptionRateLimitExhausted_EndsTurnCleanlyWithFinalNotice()
     {
-        var (persona, loader) = LoadDeltaFixture();
-        var handler = new RoutingFoundryHandler()
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             .EnqueueChatMessage("assistant", "Welcome!") // greeting's own chat turn still succeeds
             .EnqueueSpeech([1, 2, 3])
             .EnqueueTranscribeRateLimited()
@@ -1434,24 +1447,24 @@ public sealed class CascadeProcessorTests
             .EnqueueTranscribeRateLimited(); // config.yaml's resilience.rate_limit.max_retries default is 2 -> 3 total attempts
 
         var fakeTime = new FakeTimeProvider();
-        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, fakeTime);
+        CascadeProcessor processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, fakeTime);
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
 
-        var loudChunk = Pcm16(20000, count: 10);
-        var silentChunk = Pcm16(0, count: 4800);
+        byte[] loudChunk = Pcm16(20000, count: 10);
+        byte[] silentChunk = Pcm16(0, count: 4800);
         var socket = new DelayedFakeWebSocket(
             [
                 (AppendFrame(loudChunk), WebSocketMessageType.Text),
                 (AppendFrame(silentChunk), WebSocketMessageType.Text),
                 ([], WebSocketMessageType.Close),
             ],
-            ReceiveDelay);
+            s_receiveDelay);
 
         // The retry ladder's Task.Delay calls are driven by fakeTime, but they're on a background
         // Task.Run'd turn, racing the DelayedFakeWebSocket's own real-time receive delays above --
         // advancing fakeTime in a tight background loop keeps nudging any pending delay forward
         // the instant it's registered, without the test itself needing to observe when that happens.
-        var testCt = TestContext.Current.CancellationToken;
+        CancellationToken testCt = TestContext.Current.CancellationToken;
         using var cts = new CancellationTokenSource();
         var advancer = Task.Run(async () =>
         {
@@ -1477,7 +1490,7 @@ public sealed class CascadeProcessorTests
         var types = frames.Select(f => f["type"]!.GetValue<string>()).ToList();
 
         Assert.DoesNotContain("conversation.item.input_audio_transcription.completed", types);
-        var finalNotice = frames.Last(f => f["type"]!.GetValue<string>() == CascadeRateLimit.RateLimitedEvent);
+        JsonObject finalNotice = frames.Last(f => f["type"]!.GetValue<string>() == CascadeRateLimit.RateLimitedEvent);
         Assert.True(finalNotice["final"]!.GetValue<bool>());
         Assert.Equal(3, handler.TranscribeRequestCount); // attempt 0 + 2 retries, then exhausted
     }
@@ -1491,19 +1504,19 @@ public sealed class CascadeProcessorTests
     [Fact]
     public async Task RunSessionAsync_SetVoiceWithAKnownVoice_IsAdoptedForTheNextTurnsTts()
     {
-        var (persona, loader) = LoadDeltaFixture();
-        var handler = new RoutingFoundryHandler()
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             .EnqueueChatMessage("assistant", "Welcome!")
             .EnqueueSpeech([1, 2]) // greeting's own TTS -- happens before extension.set_voice is even processed.
             .EnqueueTranscript("hi")
             .EnqueueChatMessage("assistant", "We have a great burger today!")
             .EnqueueSpeech([3, 4]); // the guest turn's own TTS -- must use the newly adopted voice.
 
-        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader);
+        CascadeProcessor processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader);
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
 
-        var loudChunk = Pcm16(20000, count: 10);
-        var silentChunk = Pcm16(0, count: 4800);
+        byte[] loudChunk = Pcm16(20000, count: 10);
+        byte[] silentChunk = Pcm16(0, count: 4800);
         var socket = new DelayedFakeWebSocket(
             [
                 (SetVoiceFrame("echo"), WebSocketMessageType.Text),
@@ -1511,12 +1524,12 @@ public sealed class CascadeProcessorTests
                 (AppendFrame(silentChunk), WebSocketMessageType.Text),
                 ([], WebSocketMessageType.Close),
             ],
-            ReceiveDelay);
+            s_receiveDelay);
 
         await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-set-voice-ok", TestContext.Current.CancellationToken);
 
         Assert.Equal(2, handler.SpeakRequestBodies.Count);
-        var guestTurnTtsRequest = JsonNode.Parse(handler.SpeakRequestBodies[1])!.AsObject();
+        JsonObject guestTurnTtsRequest = JsonNode.Parse(handler.SpeakRequestBodies[1])!.AsObject();
         Assert.Equal("echo", guestTurnTtsRequest["voice"]!.GetValue<string>());
     }
 
@@ -1529,8 +1542,8 @@ public sealed class CascadeProcessorTests
     [Fact]
     public async Task RunSessionAsync_SetVoiceWithAnUnknownVoice_IsDroppedNotAdopted()
     {
-        var (persona, loader) = LoadDeltaFixture();
-        var handler = new RoutingFoundryHandler()
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             .EnqueueChatMessage("assistant", "Welcome!")
             .EnqueueSpeech([1, 2])
             .EnqueueTranscript("hi")
@@ -1538,11 +1551,11 @@ public sealed class CascadeProcessorTests
             .EnqueueSpeech([3, 4]);
 
         var logger = new RecordingLogger();
-        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, logger: logger);
+        CascadeProcessor processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, logger: logger);
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
 
-        var loudChunk = Pcm16(20000, count: 10);
-        var silentChunk = Pcm16(0, count: 4800);
+        byte[] loudChunk = Pcm16(20000, count: 10);
+        byte[] silentChunk = Pcm16(0, count: 4800);
         var socket = new DelayedFakeWebSocket(
             [
                 (SetVoiceFrame("not-a-real-voice"), WebSocketMessageType.Text),
@@ -1550,15 +1563,15 @@ public sealed class CascadeProcessorTests
                 (AppendFrame(silentChunk), WebSocketMessageType.Text),
                 ([], WebSocketMessageType.Close),
             ],
-            ReceiveDelay);
+            s_receiveDelay);
 
         await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "sess-set-voice-bad", TestContext.Current.CancellationToken);
 
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("Dropped extension.set_voice"));
 
         Assert.Equal(2, handler.SpeakRequestBodies.Count);
-        var greetingTtsRequest = JsonNode.Parse(handler.SpeakRequestBodies[0])!.AsObject();
-        var guestTurnTtsRequest = JsonNode.Parse(handler.SpeakRequestBodies[1])!.AsObject();
+        JsonObject greetingTtsRequest = JsonNode.Parse(handler.SpeakRequestBodies[0])!.AsObject();
+        JsonObject guestTurnTtsRequest = JsonNode.Parse(handler.SpeakRequestBodies[1])!.AsObject();
         // Both turns must still use the persona's own default voice, not the rejected candidate --
         // and, critically, the SAME voice the greeting used (proving state.Voice was never mutated).
         Assert.NotEqual("not-a-real-voice", guestTurnTtsRequest["voice"]!.GetValue<string>());
@@ -1590,7 +1603,7 @@ public sealed class CascadeProcessorTests
         SessionManager sessionManager, string priorSessionId, Persona persona, string modelId,
         bool conversationStarted = true, IToolExecutor? toolExecutor = null)
     {
-        var priorSocket = new DelayedFakeWebSocket([], ReceiveDelay);
+        var priorSocket = new DelayedFakeWebSocket([], s_receiveDelay);
         sessionManager.CreateSession(priorSessionId, priorSocket, persona.Id, modelId, null, toolExecutor ?? new StubToolExecutor(["search"]), "marin");
         if (conversationStarted)
         {
@@ -1598,7 +1611,7 @@ public sealed class CascadeProcessorTests
             sessionManager.RecordTurn(priorSessionId, "guest", "I'd like fries");
             sessionManager.RecordTurn(priorSessionId, "assistant", "Sure thing!");
         }
-        var resumeId = sessionManager.IssueResumeId(priorSessionId)!;
+        string resumeId = sessionManager.IssueResumeId(priorSessionId)!;
         sessionManager.Detach(priorSocket, priorSessionId, "test setup");
         return resumeId;
     }
@@ -1608,19 +1621,22 @@ public sealed class CascadeProcessorTests
     [InlineData(false)]
     public async Task ScopedGreetingResumeStaysSilentUnlessConversationNeverStarted(bool started)
     {
-        var persona = PersonaCatalog.Load().Get("tacobell");
+        Persona persona = PersonaCatalog.Load().Get("tacobell");
         var loader = new PromptLoader(Path.Combine(RepoRootLocator.Find(), "personas"), persona.Id);
         var model = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", false);
         var time = new FakeTimeProvider();
-        var sessions = NewSessionManager(time);
-        var resumeId = SeedDetachedResumableSession(sessions, "prior-scoped", persona, model.Id, started);
+        SessionManager sessions = NewSessionManager(time);
+        string resumeId = SeedDetachedResumableSession(sessions, "prior-scoped", persona, model.Id, started);
         var handler = new RoutingFoundryHandler();
         if (!started)
+        {
             handler.EnqueueChatMessage("assistant", "Welcome to Taco Bell!").EnqueueSpeech([1, 2]);
-        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader,
+        }
+
+        CascadeProcessor processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader,
             timeProvider: time, sessionManager: sessions);
         var socket = new DelayedFakeWebSocket(
-            [(ResumeFrame(resumeId), WebSocketMessageType.Text), ([], WebSocketMessageType.Close)], ReceiveDelay);
+            [(ResumeFrame(resumeId), WebSocketMessageType.Text), ([], WebSocketMessageType.Close)], s_receiveDelay);
         await processor.RunSessionAsync(socket, persona, model, "new-scoped", TestContext.Current.CancellationToken);
         var frames = socket.SentMessages.Select(ParseSent).ToList();
         Assert.Contains(frames, frame => frame["type"]!.GetValue<string>() == "extension.session_resumed");
@@ -1628,7 +1644,7 @@ public sealed class CascadeProcessorTests
         Assert.Equal(started ? 0 : 1, handler.SpeakRequestBodies.Count);
         if (!started)
         {
-            var request = JsonNode.Parse(handler.ChatRequestBodies.Single())!;
+            JsonNode request = JsonNode.Parse(handler.ChatRequestBodies.Single())!;
             Assert.All(request["messages"]!.AsArray(), message =>
                 Assert.Equal("system", message!["role"]!.GetValue<string>()));
             Assert.Equal("none", request["tool_choice"]!.GetValue<string>());
@@ -1638,23 +1654,23 @@ public sealed class CascadeProcessorTests
     [Fact]
     public async Task RunSessionAsync_ResumeAcceptedMidConversation_RehydratesAndSuppressesTheGreeting()
     {
-        var (persona, loader) = LoadDeltaFixture();
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
         var fakeTime = new FakeTimeProvider();
-        var sessionManager = NewSessionManager(fakeTime);
-        var resumeId = SeedDetachedResumableSession(sessionManager, "prior-sess", persona, resolvedModel.Id);
+        SessionManager sessionManager = NewSessionManager(fakeTime);
+        string resumeId = SeedDetachedResumableSession(sessionManager, "prior-sess", persona, resolvedModel.Id);
 
-        var handler = new RoutingFoundryHandler()
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             // No greeting chat-completion is enqueued: a resumed, already-started conversation
             // must never re-greet -- only the guest's own next turn calls the model.
             .EnqueueTranscript("more fries please")
             .EnqueueChatMessage("assistant", "Adding more fries!")
             .EnqueueSpeech([1, 2, 3]);
 
-        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, timeProvider: fakeTime, sessionManager: sessionManager);
+        CascadeProcessor processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, timeProvider: fakeTime, sessionManager: sessionManager);
 
-        var loudChunk = Pcm16(20000, count: 10);
-        var silentChunk = Pcm16(0, count: 4800);
+        byte[] loudChunk = Pcm16(20000, count: 10);
+        byte[] silentChunk = Pcm16(0, count: 4800);
         var socket = new DelayedFakeWebSocket(
             [
                 (ResumeFrame(resumeId), WebSocketMessageType.Text),
@@ -1662,7 +1678,7 @@ public sealed class CascadeProcessorTests
                 (AppendFrame(silentChunk), WebSocketMessageType.Text),
                 ([], WebSocketMessageType.Close),
             ],
-            ReceiveDelay);
+            s_receiveDelay);
 
         await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "new-conn-sess", TestContext.Current.CancellationToken);
 
@@ -1683,8 +1699,8 @@ public sealed class CascadeProcessorTests
 
         // The guest turn's own chat request must carry the rehydration system message with the
         // prior conversation's recorded turns folded in.
-        var requestBody = JsonNode.Parse(handler.ChatRequestBodies[0])!.AsObject();
-        var messages = requestBody["messages"]!.AsArray();
+        JsonObject requestBody = JsonNode.Parse(handler.ChatRequestBodies[0])!.AsObject();
+        JsonArray messages = requestBody["messages"]!.AsArray();
         Assert.Contains(messages, m => m!["role"]!.GetValue<string>() == "system"
             && m["content"]!.GetValue<string>().Contains("I'd like fries")
             && m["content"]!.GetValue<string>().Contains("Sure thing!"));
@@ -1701,26 +1717,26 @@ public sealed class CascadeProcessorTests
     [Fact]
     public async Task RunSessionAsync_ResumeAcceptedBeforeGreeting_StillGreets()
     {
-        var (persona, loader) = LoadDeltaFixture();
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
         var fakeTime = new FakeTimeProvider();
-        var sessionManager = NewSessionManager(fakeTime);
+        SessionManager sessionManager = NewSessionManager(fakeTime);
         // conversationStarted: false -- the prior connection dropped before its own greeting ever
         // went out, so the resumed connection must greet exactly as a fresh session would.
-        var resumeId = SeedDetachedResumableSession(sessionManager, "prior-sess-2", persona, resolvedModel.Id, conversationStarted: false);
+        string resumeId = SeedDetachedResumableSession(sessionManager, "prior-sess-2", persona, resolvedModel.Id, conversationStarted: false);
 
-        var handler = new RoutingFoundryHandler()
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             .EnqueueChatMessage("assistant", "Welcome to Test Delta Meal Co.! What can I get started for you?")
             .EnqueueSpeech([1, 2]);
 
-        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, timeProvider: fakeTime, sessionManager: sessionManager);
+        CascadeProcessor processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, timeProvider: fakeTime, sessionManager: sessionManager);
 
         var socket = new DelayedFakeWebSocket(
             [
                 (ResumeFrame(resumeId), WebSocketMessageType.Text),
                 ([], WebSocketMessageType.Close),
             ],
-            ReceiveDelay);
+            s_receiveDelay);
 
         await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "new-conn-sess-2", TestContext.Current.CancellationToken);
 
@@ -1728,32 +1744,32 @@ public sealed class CascadeProcessorTests
         var types = frames.Select(f => f["type"]!.GetValue<string>()).ToList();
 
         Assert.Equal("extension.session_resumed", types[0]);
-        var greetingTranscript = frames.Single(f => f["type"]!.GetValue<string>() == "response.audio_transcript.delta");
+        JsonObject greetingTranscript = frames.Single(f => f["type"]!.GetValue<string>() == "response.audio_transcript.delta");
         Assert.Equal("Welcome to Test Delta Meal Co.! What can I get started for you?", greetingTranscript["delta"]!.GetValue<string>());
     }
 
     [Fact]
     public async Task RunSessionAsync_ResumeRejectedUnknownId_FallsThroughToAFreshSession()
     {
-        var (persona, loader) = LoadDeltaFixture();
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
         var fakeTime = new FakeTimeProvider();
-        var sessionManager = NewSessionManager(fakeTime);
+        SessionManager sessionManager = NewSessionManager(fakeTime);
 
-        var handler = new RoutingFoundryHandler()
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             .EnqueueChatMessage("assistant", "Welcome to Test Delta Meal Co.! What can I get started for you?")
             .EnqueueSpeech([1, 2]);
 
-        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, timeProvider: fakeTime, sessionManager: sessionManager);
+        CascadeProcessor processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, timeProvider: fakeTime, sessionManager: sessionManager);
 
         // A well-formed (64 hex chars) but never-issued resume id -- TryResume rejects as "unknown".
-        var unknownButWellFormed = new string('a', 64);
+        string unknownButWellFormed = new('a', 64);
         var socket = new DelayedFakeWebSocket(
             [
                 (ResumeFrame(unknownButWellFormed), WebSocketMessageType.Text),
                 ([], WebSocketMessageType.Close),
             ],
-            ReceiveDelay);
+            s_receiveDelay);
 
         await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "fresh-sess", TestContext.Current.CancellationToken);
 
@@ -1769,17 +1785,17 @@ public sealed class CascadeProcessorTests
     [Fact]
     public async Task RunSessionAsync_LateResumeAfterTheFirstFrame_IsRejectedAsNotFirstFrame()
     {
-        var (persona, loader) = LoadDeltaFixture();
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
         var fakeTime = new FakeTimeProvider();
-        var sessionManager = NewSessionManager(fakeTime);
-        var resumeId = SeedDetachedResumableSession(sessionManager, "prior-sess-3", persona, resolvedModel.Id);
+        SessionManager sessionManager = NewSessionManager(fakeTime);
+        string resumeId = SeedDetachedResumableSession(sessionManager, "prior-sess-3", persona, resolvedModel.Id);
 
-        var handler = new RoutingFoundryHandler()
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             .EnqueueChatMessage("assistant", "Welcome to Test Delta Meal Co.! What can I get started for you?")
             .EnqueueSpeech([1, 2]);
 
-        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, timeProvider: fakeTime, sessionManager: sessionManager);
+        CascadeProcessor processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, timeProvider: fakeTime, sessionManager: sessionManager);
 
         var socket = new DelayedFakeWebSocket(
             [
@@ -1787,37 +1803,37 @@ public sealed class CascadeProcessorTests
                 (ResumeFrame(resumeId), WebSocketMessageType.Text), // a SECOND, late resume attempt
                 ([], WebSocketMessageType.Close),
             ],
-            ReceiveDelay);
+            s_receiveDelay);
 
         await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "fresh-sess-2", TestContext.Current.CancellationToken);
 
         var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
-        var rejection = frames.Single(f => f["type"]!.GetValue<string>() == "extension.resume_rejected");
+        JsonObject rejection = frames.Single(f => f["type"]!.GetValue<string>() == "extension.resume_rejected");
         Assert.Equal("not_first_frame", rejection["reason"]!.GetValue<string>());
 
         // The prior session must remain untouched (still resumable) -- the late attempt was fully
         // rejected without disturbing it.
-        var stillResumable = sessionManager.TryResume(
-            new DelayedFakeWebSocket([], ReceiveDelay), resumeId, persona.Id, resolvedModel.Id, null, "another-provisional");
+        ResumeOutcome stillResumable = sessionManager.TryResume(
+            new DelayedFakeWebSocket([], s_receiveDelay), resumeId, persona.Id, resolvedModel.Id, null, "another-provisional");
         Assert.True(stillResumable.Accepted);
     }
 
     [Fact]
     public async Task RunSessionAsync_NudgeFiresAfterSilenceFollowingAResumedRehydration()
     {
-        var (persona, loader) = LoadDeltaFixture();
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
         var fakeTime = new FakeTimeProvider();
-        var sessionManager = NewSessionManager(fakeTime, nudgeAfterSeconds: 5);
-        var resumeId = SeedDetachedResumableSession(sessionManager, "prior-sess-4", persona, resolvedModel.Id);
+        SessionManager sessionManager = NewSessionManager(fakeTime, nudgeAfterSeconds: 5);
+        string resumeId = SeedDetachedResumableSession(sessionManager, "prior-sess-4", persona, resolvedModel.Id);
 
-        var handler = new RoutingFoundryHandler()
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             // No greeting -- rehydrated. The nudge itself is the only turn: it is driven purely by
             // the elapsed-silence timer, never by the guest's own mic audio.
             .EnqueueChatMessage("assistant", "Still there? Would you like anything else?")
             .EnqueueSpeech([1, 2]);
 
-        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, timeProvider: fakeTime, sessionManager: sessionManager);
+        CascadeProcessor processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, timeProvider: fakeTime, sessionManager: sessionManager);
 
         // One silent mic chunk arms the nudge (first-chunk eligibility) without ever triggering a
         // real turn (RMS below the speech-start cutoff). The socket's own receive loop is slowed
@@ -1825,7 +1841,7 @@ public sealed class CascadeProcessorTests
         // leaves before advancing the fake clock) so the nudge's entire turn -- driven purely by
         // the fake clock, never by socket traffic -- has run to completion before the queued close
         // frame is ever read, with no dependency on wall-clock races.
-        var silentChunk = Pcm16(0, count: 10);
+        byte[] silentChunk = Pcm16(0, count: 10);
         var slowDelay = TimeSpan.FromMilliseconds(500);
         var socket = new DelayedFakeWebSocket(
             [
@@ -1835,7 +1851,7 @@ public sealed class CascadeProcessorTests
             ],
             slowDelay);
 
-        var runTask = processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "nudge-sess", TestContext.Current.CancellationToken);
+        Task runTask = processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "nudge-sess", TestContext.Current.CancellationToken);
 
         // Give the resume + mic-append frames time to be read (arming the nudge) -- that is two
         // 500ms receives, ~1000ms -- before the fake clock is advanced past the 5s nudge
@@ -1847,11 +1863,11 @@ public sealed class CascadeProcessorTests
         await runTask;
 
         var frames = socket.SentMessages.Where(m => m.MessageType == WebSocketMessageType.Text).Select(ParseSent).ToList();
-        var transcript = frames.Single(f => f["type"]!.GetValue<string>() == "response.audio_transcript.delta");
+        JsonObject transcript = frames.Single(f => f["type"]!.GetValue<string>() == "response.audio_transcript.delta");
         Assert.Equal("Still there? Would you like anything else?", transcript["delta"]!.GetValue<string>());
 
-        var requestBody = JsonNode.Parse(handler.ChatRequestBodies.Single())!.AsObject();
-        var messages = requestBody["messages"]!.AsArray();
+        JsonObject requestBody = JsonNode.Parse(handler.ChatRequestBodies.Single())!.AsObject();
+        JsonArray messages = requestBody["messages"]!.AsArray();
         Assert.Contains(messages, m => m!["role"]!.GetValue<string>() == "user"
             && m["content"]!.GetValue<string>() == SessionManager.BuildNudgeText("delta-runner"));
     }
@@ -1859,21 +1875,21 @@ public sealed class CascadeProcessorTests
     [Fact]
     public async Task RunSessionAsync_NudgeIsCancelledWhenTheGuestBargesInBeforeItFires()
     {
-        var (persona, loader) = LoadDeltaFixture();
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
         var fakeTime = new FakeTimeProvider();
-        var sessionManager = NewSessionManager(fakeTime, nudgeAfterSeconds: 5);
-        var resumeId = SeedDetachedResumableSession(sessionManager, "prior-sess-5", persona, resolvedModel.Id);
+        SessionManager sessionManager = NewSessionManager(fakeTime, nudgeAfterSeconds: 5);
+        string resumeId = SeedDetachedResumableSession(sessionManager, "prior-sess-5", persona, resolvedModel.Id);
 
-        var handler = new RoutingFoundryHandler()
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             .EnqueueTranscript("actually, add a shake")
             .EnqueueChatMessage("assistant", "One shake, coming up!")
             .EnqueueSpeech([1, 2]);
 
-        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, timeProvider: fakeTime, sessionManager: sessionManager);
+        CascadeProcessor processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, timeProvider: fakeTime, sessionManager: sessionManager);
 
-        var loudChunk = Pcm16(20000, count: 10);
-        var silentChunk = Pcm16(0, count: 4800);
+        byte[] loudChunk = Pcm16(20000, count: 10);
+        byte[] silentChunk = Pcm16(0, count: 4800);
         var socket = new DelayedFakeWebSocket(
             [
                 (ResumeFrame(resumeId), WebSocketMessageType.Text),
@@ -1881,7 +1897,7 @@ public sealed class CascadeProcessorTests
                 (AppendFrame(silentChunk), WebSocketMessageType.Text),
                 ([], WebSocketMessageType.Close),
             ],
-            ReceiveDelay);
+            s_receiveDelay);
 
         await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "nudge-cancel-sess", TestContext.Current.CancellationToken);
 
@@ -1894,7 +1910,7 @@ public sealed class CascadeProcessorTests
         Assert.Single(transcripts); // only the guest's own real turn -- no nudge text was ever spoken
         Assert.Equal("One shake, coming up!", transcripts[0]["delta"]!.GetValue<string>());
         Assert.Single(handler.ChatRequestBodies);
-        var requestBody = JsonNode.Parse(handler.ChatRequestBodies.Single())!.AsObject();
+        JsonObject requestBody = JsonNode.Parse(handler.ChatRequestBodies.Single())!.AsObject();
         Assert.DoesNotContain(
             requestBody["messages"]!.AsArray(),
             m => m!["role"]!.GetValue<string>() == "user" && m["content"]!.GetValue<string>() == SessionManager.BuildNudgeText("delta-runner"));
@@ -1911,18 +1927,18 @@ public sealed class CascadeProcessorTests
     [Fact]
     public async Task RunSessionAsync_ZeroEchoCooldown_DisablesSuppression_SoImmediateGuestAudioIsDetected()
     {
-        var (persona, loader) = LoadDeltaFixture();
-        var handler = new RoutingFoundryHandler()
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             .EnqueueChatMessage("assistant", "Welcome to Test Delta Meal Co.! What can I get started for you?")
             .EnqueueSpeech([1, 2, 3, 4]);
-        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, echoCooldownSeconds: 0);
+        CascadeProcessor processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, echoCooldownSeconds: 0);
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
         var socket = new DelayedFakeWebSocket(
             [
                 (AppendFrame(Pcm16(20000, count: 10)), WebSocketMessageType.Text),
                 ([], WebSocketMessageType.Close),
             ],
-            ReceiveDelay);
+            s_receiveDelay);
 
         await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "echo-zero-sess", TestContext.Current.CancellationToken);
 
@@ -1934,27 +1950,27 @@ public sealed class CascadeProcessorTests
     [Fact]
     public async Task RunSessionAsync_BargeInDuringANudgeMidToolRound_WaitsForTheNudgeBeforeSpeechStartedAndNextTurn()
     {
-        var (persona, loader) = LoadDeltaFixture();
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
         var fakeTime = new FakeTimeProvider();
-        var sessionManager = NewSessionManager(fakeTime, nudgeAfterSeconds: 5);
+        SessionManager sessionManager = NewSessionManager(fakeTime, nudgeAfterSeconds: 5);
 
-        var handler = new RoutingFoundryHandler()
-            .EnqueueChatMessage("assistant", null, toolCalls: new JsonArray
-            {
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", null, toolCalls:
+            [
                 new JsonObject
                 {
                     ["id"] = "nudge_call_1",
                     ["type"] = "function",
                     ["function"] = new JsonObject { ["name"] = "search", ["arguments"] = "{}" },
                 },
-            }) // the nudge's tool round -- blocks until the barge-in cancels it
+            ]) // the nudge's tool round -- blocks until the barge-in cancels it
             .EnqueueTranscript("second query")
             .EnqueueChatMessage("assistant", "All set for your second query.")
             .EnqueueSpeech([3, 4]);
 
         DelayedFakeWebSocket? socket = null;
-        var speechStartedSeenWhenNudgeToolExited = -1;
+        int speechStartedSeenWhenNudgeToolExited = -1;
         var toolExecutor = new RecordingToolExecutor(
             ["search"],
             async (_, _, toolCt) =>
@@ -1975,12 +1991,12 @@ public sealed class CascadeProcessorTests
                 }
                 return default!;
             });
-        var resumeId = SeedDetachedResumableSession(sessionManager, "prior-sess-6", persona, resolvedModel.Id, toolExecutor: toolExecutor);
+        string resumeId = SeedDetachedResumableSession(sessionManager, "prior-sess-6", persona, resolvedModel.Id, toolExecutor: toolExecutor);
         var logger = new RecordingLogger();
-        var processor = NewProcessor(handler, toolExecutor, loader, logger: logger, timeProvider: fakeTime, sessionManager: sessionManager);
+        CascadeProcessor processor = NewProcessor(handler, toolExecutor, loader, logger: logger, timeProvider: fakeTime, sessionManager: sessionManager);
 
-        var loudChunk = Pcm16(20000, count: 10);
-        var silentChunk = Pcm16(0, count: 4800);
+        byte[] loudChunk = Pcm16(20000, count: 10);
+        byte[] silentChunk = Pcm16(0, count: 4800);
         socket = new DelayedFakeWebSocket(
             [
                 (ResumeFrame(resumeId), WebSocketMessageType.Text),
@@ -1991,7 +2007,7 @@ public sealed class CascadeProcessorTests
             ],
             TimeSpan.FromMilliseconds(500));
 
-        var runTask = processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "nudge-bargein-sess", TestContext.Current.CancellationToken);
+        Task runTask = processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "nudge-bargein-sess", TestContext.Current.CancellationToken);
         await Task.Delay(TimeSpan.FromMilliseconds(1100), TestContext.Current.CancellationToken);
         fakeTime.Advance(TimeSpan.FromSeconds(5)); // nudge fires, enters its tool round
         await runTask;
@@ -2003,7 +2019,7 @@ public sealed class CascadeProcessorTests
         Assert.Contains("input_audio_buffer.speech_started", types);
         Assert.DoesNotContain("response.audio.delta", types.Take(types.IndexOf("input_audio_buffer.speech_started")));
 
-        var lastMessages = JsonNode.Parse(handler.ChatRequestBodies[^1])!.AsObject()["messages"]!.AsArray();
+        JsonArray lastMessages = JsonNode.Parse(handler.ChatRequestBodies[^1])!.AsObject()["messages"]!.AsArray();
         Assert.DoesNotContain(lastMessages, m =>
             m!["tool_calls"] is JsonArray tc && tc.Any(t => t!["id"]!.GetValue<string>() == "nudge_call_1"));
         Assert.Contains(lastMessages, m => m!["role"]!.GetValue<string>() == "user" && m["content"]!.GetValue<string>() == "second query");
@@ -2012,28 +2028,28 @@ public sealed class CascadeProcessorTests
     [Fact]
     public async Task RunSessionAsync_SpeakArmsAnEchoCooldownThatSwallowsTheGuestsImmediateEcho()
     {
-        var (persona, loader) = LoadDeltaFixture();
-        var handler = new RoutingFoundryHandler()
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             .EnqueueChatMessage("assistant", "Welcome to Test Delta Meal Co.! What can I get started for you?")
             .EnqueueSpeech([1, 2, 3, 4]); // ~2ms of 16-bit mono PCM @ 24kHz -- a tiny, fast-to-finish clip.
 
         // A real (nonzero) echo cooldown, unlike every pre-#126 test in this file (which defaults
         // to 0 via NewProcessor so they stay unaffected by this feature).
-        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, echoCooldownSeconds: 10);
+        CascadeProcessor processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, echoCooldownSeconds: 10);
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
 
         // Loud audio arriving immediately after the greeting's own (near-instant) TTS -- well
         // inside the 10s cooldown floor -- must be swallowed as echo (no speech_started, no
         // transcription turn), then real silence lets the connection close cleanly.
-        var loudChunk = Pcm16(20000, count: 10);
-        var silentChunk = Pcm16(0, count: 4800);
+        byte[] loudChunk = Pcm16(20000, count: 10);
+        byte[] silentChunk = Pcm16(0, count: 4800);
         var socket = new DelayedFakeWebSocket(
             [
                 (AppendFrame(loudChunk), WebSocketMessageType.Text),
                 (AppendFrame(silentChunk), WebSocketMessageType.Text),
                 ([], WebSocketMessageType.Close),
             ],
-            ReceiveDelay);
+            s_receiveDelay);
 
         await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "echo-sess", TestContext.Current.CancellationToken);
 
@@ -2048,21 +2064,21 @@ public sealed class CascadeProcessorTests
     [Fact]
     public async Task RunSessionAsync_SocketCloseDetachesCascadeSession_AndGraceSweepRemovesItsContextMonitor()
     {
-        var (persona, loader) = LoadDeltaFixture();
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
         var fakeTime = new FakeTimeProvider();
-        var sessionManager = NewSessionManager(fakeTime);
-        var handler = new RoutingFoundryHandler()
+        SessionManager sessionManager = NewSessionManager(fakeTime);
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             .EnqueueChatMessage("assistant", "Welcome to Test Delta Meal Co.! What can I get started for you?")
             .EnqueueSpeech([1, 2]);
-        var processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, timeProvider: fakeTime, sessionManager: sessionManager);
+        CascadeProcessor processor = NewProcessor(handler, new StubToolExecutor(["search"]), loader, timeProvider: fakeTime, sessionManager: sessionManager);
 
         var socket = new DelayedFakeWebSocket(
             [
                 ([], WebSocketMessageType.Close),
                 ([], WebSocketMessageType.Close),
             ],
-            ReceiveDelay);
+            s_receiveDelay);
 
         await processor.RunSessionAsync(socket, persona, resolvedModel, sessionId: "cascade-grace-sess", TestContext.Current.CancellationToken);
 

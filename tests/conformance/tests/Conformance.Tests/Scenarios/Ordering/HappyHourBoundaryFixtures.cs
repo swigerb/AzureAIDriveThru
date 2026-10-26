@@ -1,5 +1,4 @@
 using System.Globalization;
-using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 

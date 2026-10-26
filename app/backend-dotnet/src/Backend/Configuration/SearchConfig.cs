@@ -27,8 +27,8 @@ internal sealed class SearchConfig
 
     public static SearchConfig FromAppConfig(AppConfig config)
     {
-        var search = config.TryGetSection("search");
-        var cache = config.TryGetSection("cache");
+        IDictionary<object, object>? search = config.TryGetSection("search");
+        IDictionary<object, object>? cache = config.TryGetSection("cache");
         return new SearchConfig(
             kNearestNeighbors: GetInt(search, "k_nearest_neighbors", 15),
             topResults: GetInt(search, "top_results", 3),
@@ -38,13 +38,13 @@ internal sealed class SearchConfig
     }
 
     private static int GetInt(IDictionary<object, object>? section, string key, int fallback) =>
-        section is not null && section.TryGetValue(key, out var raw) && int.TryParse(raw?.ToString(), out var value)
+        section is not null && section.TryGetValue(key, out object? raw) && int.TryParse(raw?.ToString(), out int value)
             ? value
             : fallback;
 
     private static double GetDouble(IDictionary<object, object>? section, string key, double fallback) =>
-        section is not null && section.TryGetValue(key, out var raw) &&
-        double.TryParse(raw?.ToString(), System.Globalization.CultureInfo.InvariantCulture, out var value)
+        section is not null && section.TryGetValue(key, out object? raw) &&
+        double.TryParse(raw?.ToString(), System.Globalization.CultureInfo.InvariantCulture, out double value)
             ? value
             : fallback;
 }

@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.Json.Nodes;
 using Backend.Configuration;
 using Backend.Models;
 using Backend.Personas;
@@ -11,9 +12,9 @@ public sealed class PersonaRoutesTests
     [Fact]
     public void Persona_asset_route_maps_mp3_to_audio_mpeg()
     {
-        var field = typeof(PersonaRoutes).GetField("AssetContentTypes", BindingFlags.NonPublic | BindingFlags.Static);
+        FieldInfo? field = typeof(PersonaRoutes).GetField("s_assetContentTypes", BindingFlags.NonPublic | BindingFlags.Static);
         Assert.NotNull(field);
-        var contentTypes = Assert.IsAssignableFrom<IReadOnlyDictionary<string, string>>(field.GetValue(null));
+        IReadOnlyDictionary<string, string> contentTypes = Assert.IsAssignableFrom<IReadOnlyDictionary<string, string>>(field.GetValue(null));
 
         Assert.Equal("audio/mpeg", contentTypes[".mp3"]);
     }
@@ -21,31 +22,31 @@ public sealed class PersonaRoutesTests
     [Fact]
     public void Persona_detail_body_includes_machines_and_happy_hour_in_camel_case()
     {
-        var method = typeof(PersonaRoutes).GetMethod("BuildPersonaDetailBody", BindingFlags.NonPublic | BindingFlags.Static);
+        MethodInfo? method = typeof(PersonaRoutes).GetMethod("BuildPersonaDetailBody", BindingFlags.NonPublic | BindingFlags.Static);
         Assert.NotNull(method);
 
-        var alpha = DeltaFixture.Load("test-alpha");
-        var beta = DeltaFixture.Load("test-beta");
-        var delta = DeltaFixture.Load("test-delta");
+        Persona alpha = DeltaFixture.Load("test-alpha");
+        Persona beta = DeltaFixture.Load("test-beta");
+        Persona delta = DeltaFixture.Load("test-delta");
         var models = ModelCatalog.FromConfig(AppConfig.Load());
 
-        var alphaBody = Assert.IsType<System.Text.Json.Nodes.JsonObject>(method.Invoke(null, new object?[] { alpha, models }));
-        var betaBody = Assert.IsType<System.Text.Json.Nodes.JsonObject>(method.Invoke(null, new object?[] { beta, models }));
-        var deltaBody = Assert.IsType<System.Text.Json.Nodes.JsonObject>(method.Invoke(null, new object?[] { delta, models }));
+        JsonObject alphaBody = Assert.IsType<System.Text.Json.Nodes.JsonObject>(method.Invoke(null, [alpha, models]));
+        JsonObject betaBody = Assert.IsType<System.Text.Json.Nodes.JsonObject>(method.Invoke(null, [beta, models]));
+        JsonObject deltaBody = Assert.IsType<System.Text.Json.Nodes.JsonObject>(method.Invoke(null, [delta, models]));
 
-        var alphaMachines = Assert.IsType<System.Text.Json.Nodes.JsonObject>(alphaBody["machines"]);
-        var alphaSoda = Assert.IsType<System.Text.Json.Nodes.JsonObject>(alphaMachines["soda_machine"]);
+        JsonObject alphaMachines = Assert.IsType<System.Text.Json.Nodes.JsonObject>(alphaBody["machines"]);
+        JsonObject alphaSoda = Assert.IsType<System.Text.Json.Nodes.JsonObject>(alphaMachines["soda_machine"]);
         Assert.Equal("down", alphaSoda["status"]?.GetValue<string>());
         Assert.Equal("Soda machine is down", alphaSoda["label"]?.GetValue<string>());
 
-        var betaMachines = Assert.IsType<System.Text.Json.Nodes.JsonObject>(betaBody["machines"]);
+        JsonObject betaMachines = Assert.IsType<System.Text.Json.Nodes.JsonObject>(betaBody["machines"]);
         Assert.Equal("up", Assert.IsType<System.Text.Json.Nodes.JsonObject>(betaMachines["soda_machine"])["status"]?.GetValue<string>());
 
-        var alphaHappyHour = Assert.IsType<System.Text.Json.Nodes.JsonObject>(alphaBody["happyHour"]);
+        JsonObject alphaHappyHour = Assert.IsType<System.Text.Json.Nodes.JsonObject>(alphaBody["happyHour"]);
         Assert.Equal(14, alphaHappyHour["startHour"]?.GetValue<int>());
         Assert.Equal(16, alphaHappyHour["endHour"]?.GetValue<int>());
 
-        var deltaMachines = Assert.IsType<System.Text.Json.Nodes.JsonObject>(deltaBody["machines"]);
+        JsonObject deltaMachines = Assert.IsType<System.Text.Json.Nodes.JsonObject>(deltaBody["machines"]);
         Assert.Equal("down", Assert.IsType<System.Text.Json.Nodes.JsonObject>(deltaMachines["delta_machine"])["status"]?.GetValue<string>());
         Assert.True(deltaBody.ContainsKey("happyHour"));
         Assert.Null(deltaBody["happyHour"]);

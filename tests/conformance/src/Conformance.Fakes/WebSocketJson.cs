@@ -11,8 +11,8 @@ public static class WebSocketJson
 
     public static async Task SendAsync(WebSocket socket, object payload, CancellationToken cancellationToken = default)
     {
-        var json = payload is JsonElement element ? element.GetRawText() : JsonSerializer.Serialize(payload, payload.GetType());
-        var bytes = Encoding.UTF8.GetBytes(json);
+        string json = payload is JsonElement element ? element.GetRawText() : JsonSerializer.Serialize(payload, payload.GetType());
+        byte[] bytes = Encoding.UTF8.GetBytes(json);
         await socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, cancellationToken).ConfigureAwait(false);
     }
 
@@ -52,7 +52,7 @@ public static class WebSocketJson
         WebSocket socket, CancellationToken cancellationToken = default)
     {
         using var stream = new MemoryStream();
-        var buffer = new byte[ReceiveBufferSize];
+        byte[] buffer = new byte[ReceiveBufferSize];
         while (true)
         {
             WebSocketReceiveResult result;
@@ -89,7 +89,7 @@ public static class WebSocketJson
         }
 
         stream.Position = 0;
-        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
+        using JsonDocument document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
         return WebSocketMessageOrClose.Message(document.RootElement.Clone());
     }
 }
@@ -112,5 +112,5 @@ public readonly record struct WebSocketMessageOrClose
     public static WebSocketMessageOrClose Close(WebSocketCloseStatus? status, string? description) =>
         new() { IsClose = true, CloseStatus = status, CloseStatusDescription = description };
 
-    public static readonly WebSocketMessageOrClose Dropped = new();
+    public static readonly WebSocketMessageOrClose Dropped;
 }

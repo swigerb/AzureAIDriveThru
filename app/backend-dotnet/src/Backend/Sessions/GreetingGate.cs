@@ -3,7 +3,6 @@ using System.Text.Json.Nodes;
 using Backend.Configuration;
 using Backend.Prompts;
 using Backend.Realtime;
-using Microsoft.Extensions.Logging;
 
 namespace Backend.Sessions;
 
@@ -29,12 +28,12 @@ internal sealed class GreetingGate(
     ILogger logger,
     CancellationToken ct)
 {
-    private readonly object _claimLock = new();
+    private readonly Lock _claimLock = new();
 
     private double ParseGreetingTimeoutSeconds()
     {
-        var raw = BackendEnvironment.Get("CONFORMANCE_GREETING_TIMEOUT_SECONDS");
-        return double.TryParse(raw, System.Globalization.CultureInfo.InvariantCulture, out var seconds) && seconds > 0
+        string? raw = BackendEnvironment.Get("CONFORMANCE_GREETING_TIMEOUT_SECONDS");
+        return double.TryParse(raw, System.Globalization.CultureInfo.InvariantCulture, out double seconds) && seconds > 0
             ? seconds
             : greetingTimeoutSeconds;
     }
@@ -72,7 +71,7 @@ internal sealed class GreetingGate(
         {
             return;
         }
-        var timeoutSeconds = ParseGreetingTimeoutSeconds();
+        double timeoutSeconds = ParseGreetingTimeoutSeconds();
         try
         {
             await state.SessionConfigured.Task.WaitAsync(TimeSpan.FromSeconds(timeoutSeconds), timeProvider, ct).ConfigureAwait(false);
@@ -91,7 +90,7 @@ internal sealed class GreetingGate(
         }
         state.Echo.StartGreetingSuppression();
         logger?.SendingGreeting(trigger, sessionId);
-        var greetingFrameJson = BuildGreetingFrame().ToJsonString();
+        string greetingFrameJson = BuildGreetingFrame().ToJsonString();
         await FramePump.SendTextAsync(upstream, """{"type":"input_audio_buffer.clear"}""", ct).ConfigureAwait(false);
         await FramePump.SendTextAsync(upstream, greetingFrameJson, ct).ConfigureAwait(false);
         if (promptLoader?.Greeting["type"] is not "response.create")

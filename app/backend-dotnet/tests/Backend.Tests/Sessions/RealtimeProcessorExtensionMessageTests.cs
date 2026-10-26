@@ -1,3 +1,5 @@
+using System.Net.WebSockets;
+using System.Text.Json;
 using Backend.Configuration;
 using Backend.Models;
 using Backend.Ordering;
@@ -84,8 +86,8 @@ public sealed class RealtimeProcessorExtensionMessageTests
             TimeProvider.System,
             NullLogger<SessionManager>.Instance,
             NullLogger<ContextMonitor>.Instance);
-        var menu = PersonaOrderFactory.GetMenuCatalog(persona);
-        var order = PersonaOrderFactory.CreateOrderState(persona);
+        MenuCatalog menu = PersonaOrderFactory.GetMenuCatalog(persona);
+        OrderState order = PersonaOrderFactory.CreateOrderState(persona);
         var orderTools = new OrderToolExecutor(order, menu, promptLoader: null, maxItemQuantity: 10, maxOrderItems: 25);
         var search = new SearchTool(
             new HttpClient(new NeverInvokedHttpHandler()),
@@ -112,22 +114,22 @@ public sealed class RealtimeProcessorExtensionMessageTests
     [Fact]
     public async Task TryHandleSessionOverrideExtensionMessage_applies_valid_machine_and_happy_hour_updates()
     {
-        const string sessionId = "sess-override-ok";
-        var manager = CreateSessionManager(DeltaFixture.Load("test-alpha"), sessionId);
+        const string SessionId = "sess-override-ok";
+        SessionManager manager = CreateSessionManager(DeltaFixture.Load("test-alpha"), SessionId);
         var logger = new RecordingLogger();
-        var processor = CreateProcessor(manager, logger);
+        RealtimeProcessor processor = CreateProcessor(manager, logger);
 
         Assert.True(await processor.TryHandleSessionOverrideExtensionMessageAsync(
             "extension.set_machine_status",
             new System.Text.Json.Nodes.JsonObject { ["machine"] = "soda_machine", ["status"] = "up" },
-            sessionId, ct: TestContext.Current.CancellationToken));
-        Assert.Equal("up", manager.GetMachineOverrides(sessionId)["soda_machine"]);
+            SessionId, ct: TestContext.Current.CancellationToken));
+        Assert.Equal("up", manager.GetMachineOverrides(SessionId)["soda_machine"]);
 
         Assert.True(await processor.TryHandleSessionOverrideExtensionMessageAsync(
             "extension.set_happy_hour_mode",
             new System.Text.Json.Nodes.JsonObject { ["mode"] = "on" },
-            sessionId, ct: TestContext.Current.CancellationToken));
-        Assert.Equal("on", manager.GetHappyHourMode(sessionId));
+            SessionId, ct: TestContext.Current.CancellationToken));
+        Assert.Equal("on", manager.GetHappyHourMode(SessionId));
 
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Information && e.Message.Contains("extension.set_machine_status", StringComparison.Ordinal));
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Information && e.Message.Contains("extension.set_happy_hour_mode", StringComparison.Ordinal));
@@ -136,30 +138,30 @@ public sealed class RealtimeProcessorExtensionMessageTests
     [Fact]
     public async Task TryHandleSessionOverrideExtensionMessage_drops_invalid_or_unsupported_updates_without_mutation()
     {
-        const string sessionId = "sess-override-bad";
-        var manager = CreateSessionManager(DeltaFixture.Load("test-delta"), sessionId);
+        const string SessionId = "sess-override-bad";
+        SessionManager manager = CreateSessionManager(DeltaFixture.Load("test-delta"), SessionId);
         var logger = new RecordingLogger();
-        var processor = CreateProcessor(manager, logger);
+        RealtimeProcessor processor = CreateProcessor(manager, logger);
 
         Assert.True(await processor.TryHandleSessionOverrideExtensionMessageAsync(
             "extension.set_machine_status",
             new System.Text.Json.Nodes.JsonObject { ["machine"] = "unknown_machine", ["status"] = "up" },
-            sessionId, ct: TestContext.Current.CancellationToken));
+            SessionId, ct: TestContext.Current.CancellationToken));
         Assert.True(await processor.TryHandleSessionOverrideExtensionMessageAsync(
             "extension.set_machine_status",
             new System.Text.Json.Nodes.JsonObject { ["machine"] = "delta_machine", ["status"] = "operational" },
-            sessionId, ct: TestContext.Current.CancellationToken));
+            SessionId, ct: TestContext.Current.CancellationToken));
         Assert.True(await processor.TryHandleSessionOverrideExtensionMessageAsync(
             "extension.set_happy_hour_mode",
             new System.Text.Json.Nodes.JsonObject { ["mode"] = "on" },
-            sessionId, ct: TestContext.Current.CancellationToken));
+            SessionId, ct: TestContext.Current.CancellationToken));
         Assert.True(await processor.TryHandleSessionOverrideExtensionMessageAsync(
             "extension.set_happy_hour_mode",
             new System.Text.Json.Nodes.JsonObject { ["mode"] = "sometimes" },
-            sessionId, ct: TestContext.Current.CancellationToken));
+            SessionId, ct: TestContext.Current.CancellationToken));
 
-        Assert.Empty(manager.GetMachineOverrides(sessionId));
-        Assert.Equal("auto", manager.GetHappyHourMode(sessionId));
+        Assert.Empty(manager.GetMachineOverrides(SessionId));
+        Assert.Equal("auto", manager.GetHappyHourMode(SessionId));
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("extension.set_machine_status", StringComparison.Ordinal));
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("extension.set_happy_hour_mode", StringComparison.Ordinal));
     }
@@ -172,21 +174,21 @@ public sealed class RealtimeProcessorExtensionMessageTests
     [Fact]
     public async Task TryHandleSessionOverrideExtensionMessage_happyHourMode_PushesARefreshedTicketToTheBrowser()
     {
-        const string sessionId = "sess-happy-hour-ticket-push";
-        var manager = CreateSessionManager(DeltaFixture.Load("test-alpha"), sessionId, out var socket);
-        var processor = CreateProcessor(manager);
+        const string SessionId = "sess-happy-hour-ticket-push";
+        SessionManager manager = CreateSessionManager(DeltaFixture.Load("test-alpha"), SessionId, out FakeWebSocket? socket);
+        RealtimeProcessor processor = CreateProcessor(manager);
 
         Assert.True(await processor.TryHandleSessionOverrideExtensionMessageAsync(
             "extension.set_happy_hour_mode",
             new System.Text.Json.Nodes.JsonObject { ["mode"] = "on" },
-            sessionId, socket, TestContext.Current.CancellationToken));
+            SessionId, socket, TestContext.Current.CancellationToken));
 
-        var pushed = Assert.Single(socket.SentMessages);
-        var frame = System.Text.Json.JsonDocument.Parse(System.Text.Encoding.UTF8.GetString(pushed.Data)).RootElement;
+        (byte[] Data, WebSocketMessageType MessageType, bool EndOfMessage) pushed = Assert.Single(socket.SentMessages);
+        var frame = JsonElement.Parse(pushed.Data);
         Assert.Equal("extension.middle_tier_tool_response", frame.GetProperty("type").GetString());
         Assert.Equal("get_order", frame.GetProperty("tool_name").GetString());
         Assert.Equal(System.Text.Json.JsonValueKind.Null, frame.GetProperty("previous_item_id").ValueKind);
-        Assert.Equal(manager.GetOrderSummaryJson(sessionId), frame.GetProperty("tool_result").GetString());
+        Assert.Equal(manager.GetOrderSummaryJson(SessionId), frame.GetProperty("tool_result").GetString());
     }
 
     /// <summary>#309 (R2) negative case: a DROPPED/invalid extension.set_happy_hour_mode must
@@ -195,14 +197,14 @@ public sealed class RealtimeProcessorExtensionMessageTests
     [Fact]
     public async Task TryHandleSessionOverrideExtensionMessage_invalidHappyHourMode_PushesNoTicket()
     {
-        const string sessionId = "sess-happy-hour-ticket-no-push";
-        var manager = CreateSessionManager(DeltaFixture.Load("test-delta"), sessionId, out var socket);
-        var processor = CreateProcessor(manager);
+        const string SessionId = "sess-happy-hour-ticket-no-push";
+        SessionManager manager = CreateSessionManager(DeltaFixture.Load("test-delta"), SessionId, out FakeWebSocket? socket);
+        RealtimeProcessor processor = CreateProcessor(manager);
 
         Assert.True(await processor.TryHandleSessionOverrideExtensionMessageAsync(
             "extension.set_happy_hour_mode",
             new System.Text.Json.Nodes.JsonObject { ["mode"] = "on" }, // test-delta has no happy hour configured
-            sessionId, socket, TestContext.Current.CancellationToken));
+            SessionId, socket, TestContext.Current.CancellationToken));
 
         Assert.Empty(socket.SentMessages);
     }

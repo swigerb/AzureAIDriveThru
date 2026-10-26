@@ -21,8 +21,8 @@ internal static class RepoRootLocator
         var dir = new DirectoryInfo(startDirectory ?? AppContext.BaseDirectory);
         while (dir is not null)
         {
-            var personas = Path.Combine(dir.FullName, "personas");
-            var azureYaml = Path.Combine(dir.FullName, "azure.yaml");
+            string personas = Path.Combine(dir.FullName, "personas");
+            string azureYaml = Path.Combine(dir.FullName, "azure.yaml");
             if (Directory.Exists(personas) && File.Exists(azureYaml))
             {
                 return dir.FullName;

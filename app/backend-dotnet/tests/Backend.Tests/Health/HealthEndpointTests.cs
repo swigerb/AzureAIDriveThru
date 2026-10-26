@@ -18,7 +18,7 @@ public sealed class HealthEndpointTests
         checks.Pass("personas_loaded");
         checks.Pass("prompts_loaded");
 
-        var result = Assert.IsType<JsonHttpResult<Dictionary<string, object?>>>(HealthEndpoint.Handle(checks, catalog: null));
+        JsonHttpResult<Dictionary<string, object?>> result = Assert.IsType<JsonHttpResult<Dictionary<string, object?>>>(HealthEndpoint.Handle(checks, catalog: null));
 
         Assert.Equal(StatusCodes.Status200OK, result.StatusCode);
         Assert.Equal("healthy", result.Value!["status"]);
@@ -31,7 +31,7 @@ public sealed class HealthEndpointTests
         checks.Pass("env_vars");
         // personas_loaded / prompts_loaded left unset.
 
-        var result = Assert.IsType<JsonHttpResult<Dictionary<string, object?>>>(HealthEndpoint.Handle(checks, catalog: null));
+        JsonHttpResult<Dictionary<string, object?>> result = Assert.IsType<JsonHttpResult<Dictionary<string, object?>>>(HealthEndpoint.Handle(checks, catalog: null));
 
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, result.StatusCode);
         Assert.Equal("unhealthy", result.Value!["status"]);
@@ -46,7 +46,7 @@ public sealed class HealthEndpointTests
         checks.Pass("prompts_loaded");
         var catalog = PersonaCatalog.Load();
 
-        var result = Assert.IsType<JsonHttpResult<Dictionary<string, object?>>>(HealthEndpoint.Handle(checks, catalog));
+        JsonHttpResult<Dictionary<string, object?>> result = Assert.IsType<JsonHttpResult<Dictionary<string, object?>>>(HealthEndpoint.Handle(checks, catalog));
 
         Assert.Equal(catalog.Ids, result.Value!["personas"]);
     }
@@ -56,7 +56,7 @@ public sealed class HealthEndpointTests
     {
         var checks = new StartupChecks();
 
-        var result = Assert.IsType<JsonHttpResult<Dictionary<string, object?>>>(HealthEndpoint.Handle(checks, catalog: null));
+        JsonHttpResult<Dictionary<string, object?>> result = Assert.IsType<JsonHttpResult<Dictionary<string, object?>>>(HealthEndpoint.Handle(checks, catalog: null));
 
         Assert.False(result.Value!.ContainsKey("personas"));
     }

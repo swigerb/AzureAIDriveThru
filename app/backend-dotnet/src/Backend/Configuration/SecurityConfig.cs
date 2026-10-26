@@ -35,17 +35,17 @@ internal sealed class SecurityConfig
 
     public static SecurityConfig FromConfig(AppConfig config)
     {
-        var section = config.TryGetSection("security");
+        IDictionary<object, object>? section = config.TryGetSection("security");
         if (section is null)
         {
-            return new SecurityConfig(Array.Empty<string>(), requireSessionToken: false);
+            return new SecurityConfig([], requireSessionToken: false);
         }
 
-        var allowedOrigins = section.TryGetValue("allowed_origins", out var originsRaw) && originsRaw is IEnumerable<object> origins
-            ? origins.Select(o => o?.ToString() ?? string.Empty).ToList()
-            : new List<string>();
+        List<string> allowedOrigins = section.TryGetValue("allowed_origins", out object? originsRaw) && originsRaw is IEnumerable<object> origins
+            ? [.. origins.Select(o => o?.ToString() ?? string.Empty)]
+            : [];
 
-        var requireSessionToken = section.TryGetValue("require_session_token", out var requireRaw) && ParseBool(requireRaw);
+        bool requireSessionToken = section.TryGetValue("require_session_token", out object? requireRaw) && ParseBool(requireRaw);
 
         return new SecurityConfig(allowedOrigins, requireSessionToken);
     }
@@ -53,7 +53,7 @@ internal sealed class SecurityConfig
     private static bool ParseBool(object? value) => value switch
     {
         bool b => b,
-        string s when bool.TryParse(s, out var parsed) => parsed,
+        string s when bool.TryParse(s, out bool parsed) => parsed,
         _ => false,
     };
 }

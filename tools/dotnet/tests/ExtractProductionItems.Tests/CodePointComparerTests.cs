@@ -26,8 +26,8 @@ public sealed class CodePointComparerTests
         // UTF-16 as the surrogate pair U+D83D U+DE00) vs U+FF01 '！' (codepoint 65281, an ordinary
         // BMP character, single UTF-16 code unit). Python compares actual codepoints, so '！'
         // (65281) sorts before '😀' (128512).
-        var emoji = "\U0001F600";
-        var fullwidthExclamation = "\uFF01";
+        string emoji = "\U0001F600";
+        string fullwidthExclamation = "\uFF01";
 
         Assert.True(CodePointComparer.Instance.Compare(fullwidthExclamation, emoji) < 0);
         Assert.True(CodePointComparer.Instance.Compare(emoji, fullwidthExclamation) > 0);

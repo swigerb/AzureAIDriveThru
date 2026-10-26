@@ -1,6 +1,9 @@
+using System.Globalization;
+using System.Text.Json.Nodes;
+using Backend.Ordering;
 using Backend.Personas;
 using Backend.Tests.TestSupport;
-using System.Text.Json.Nodes;
+using Backend.Tools;
 
 namespace Backend.Tests.Personas;
 
@@ -20,24 +23,30 @@ public sealed class PersonaCatalogTests
     public async Task SpeechStyleOptInIsValidatedAndAbsentPreservesDefault(string? style, string expected)
     {
         using var fixture = new PersonaPackFixture();
-        var id = "voice-fixture-" + expected.ToLowerInvariant();
-        var sourceId = PersonaCatalog.Load(personasDir: fixture.PersonasDir).DefaultPersonaId;
+        string id = "voice-fixture-" + expected.ToLowerInvariant();
+        string sourceId = PersonaCatalog.Load(personasDir: fixture.PersonasDir).DefaultPersonaId;
         fixture.DuplicatePersona(sourceId, id);
         fixture.MutatePersonaJson(id, obj =>
         {
             obj.Remove("speechStyle");
-            if (style is not null) obj["speechStyle"] = style;
+            if (style is not null)
+            {
+                obj["speechStyle"] = style;
+            }
         });
-        var persona = PersonaCatalog.Load(personasDir: fixture.PersonasDir).Get(id);
+        Persona persona = PersonaCatalog.Load(personasDir: fixture.PersonasDir).Get(id);
         Assert.Equal(expected, persona.SpeechStyle);
         Assert.Equal(expected, MenuCatalog.FromPersona(persona).SpeechStyle);
-        var order = Backend.Ordering.PersonaOrderFactory.CreateOrderState(persona);
+        OrderState order = Backend.Ordering.PersonaOrderFactory.CreateOrderState(persona);
         var executor = new Backend.Tools.OrderToolExecutor(
             order, Backend.Ordering.PersonaOrderFactory.GetMenuCatalog(persona), null, 10, 25);
-        var result = await executor.ExecuteAsync("update_order",
+        ToolResult result = await executor.ExecuteAsync("update_order",
             System.Text.Json.JsonSerializer.SerializeToElement(new
             {
-                action = "add", item_name = "Tots", size = "Small", quantity = 1,
+                action = "add",
+                item_name = "Tots",
+                size = "Small",
+                quantity = 1,
             }), TestContext.Current.CancellationToken);
         Assert.Equal(executor.CurrentOrderSummaryJson, result.ToClientText());
         if (expected == "naturalDriveThru")
@@ -59,9 +68,9 @@ public sealed class PersonaCatalogTests
     public void InvalidRealPackSpeechStyleRefusesToStart(string json)
     {
         using var fixture = new PersonaPackFixture();
-        var sourceId = PersonaCatalog.Load(personasDir: fixture.PersonasDir).DefaultPersonaId;
+        string sourceId = PersonaCatalog.Load(personasDir: fixture.PersonasDir).DefaultPersonaId;
         fixture.MutatePersonaJson(sourceId, obj => obj["speechStyle"] = JsonNode.Parse(json));
-        var error = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
+        PersonaValidationException error = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
         Assert.Contains("speechStyle", error.Message);
     }
 
@@ -89,9 +98,9 @@ public sealed class PersonaCatalogTests
     [Fact]
     public void MissingPersonasDirectory_Throws()
     {
-        var missingDir = Path.Combine(Path.GetTempPath(), "beth-missing-" + Guid.NewGuid().ToString("n"));
+        string missingDir = Path.Combine(Path.GetTempPath(), "beth-missing-" + Guid.NewGuid().ToString("n"));
 
-        var exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: missingDir));
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: missingDir));
         Assert.Contains(missingDir, exc.Message);
     }
 
@@ -101,7 +110,7 @@ public sealed class PersonaCatalogTests
         using var fixture = new PersonaPackFixture();
         Directory.Delete(Path.Combine(fixture.PersonasDir, "sonic"), recursive: true);
 
-        var exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
         Assert.Contains("No personas enabled", exc.Message);
     }
 
@@ -111,7 +120,7 @@ public sealed class PersonaCatalogTests
         using var fixture = new PersonaPackFixture();
         fixture.DeleteSchemaFile("persona.schema.json");
 
-        var exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
         Assert.Contains("persona.schema.json", exc.Message);
     }
 
@@ -121,7 +130,7 @@ public sealed class PersonaCatalogTests
         using var fixture = new PersonaPackFixture();
         fixture.MutatePersonaJson("sonic", obj => obj.Remove("displayName"));
 
-        var exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
         Assert.Contains("sonic", exc.Message);
         Assert.Contains("displayName", exc.Message);
     }
@@ -132,7 +141,7 @@ public sealed class PersonaCatalogTests
         using var fixture = new PersonaPackFixture();
         fixture.MutatePersonaJson("sonic", obj => obj["locales"]!["supported"] = "not-an-array");
 
-        var exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
         Assert.Contains("sonic", exc.Message);
     }
 
@@ -146,7 +155,7 @@ public sealed class PersonaCatalogTests
             obj["bundles"]!.AsObject().Remove("includedSize");
         });
 
-        var exc = Assert.Throws<PersonaValidationException>(
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(
             () => PersonaCatalog.Load(
                 personasDir: fixture.PersonasDir,
                 personasEnv: "test-alpha",
@@ -174,7 +183,7 @@ public sealed class PersonaCatalogTests
             obj["ui"]!["theme"]!["light"]!["accents"] = accents;
         });
 
-        var exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
         Assert.Contains("sonic", exc.Message);
     }
 
@@ -197,7 +206,7 @@ public sealed class PersonaCatalogTests
             obj["models"]!["local"] = local;
         });
 
-        var exc = Assert.Throws<PersonaValidationException>(
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(
             () => PersonaCatalog.Load(personasDir: fixture.PersonasDir, personasEnv: "test-alpha", defaultPersonaEnv: "test-alpha"));
         Assert.Contains("test-alpha", exc.Message);
         Assert.Contains("local", exc.Message);
@@ -209,7 +218,7 @@ public sealed class PersonaCatalogTests
         using var fixture = new PersonaPackFixture();
         fixture.MutatePersonaJson("sonic", obj => obj["id"] = "not-sonic");
 
-        var exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
         Assert.Contains("not-sonic", exc.Message);
         Assert.Contains("sonic", exc.Message);
     }
@@ -220,7 +229,7 @@ public sealed class PersonaCatalogTests
         using var fixture = new PersonaPackFixture();
         fixture.OverwritePersonaJson("sonic", "{ this is not valid json");
 
-        var exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
         Assert.Contains("Malformed JSON", exc.Message);
     }
 
@@ -230,7 +239,7 @@ public sealed class PersonaCatalogTests
         using var fixture = new PersonaPackFixture();
         fixture.DeleteMenuFile("sonic");
 
-        var exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
         Assert.Contains("menu file not found", exc.Message);
     }
 
@@ -256,16 +265,16 @@ public sealed class PersonaCatalogTests
         string firstItemName = "", collidingName = "";
         fixture.MutateMenuJson("sonic", obj =>
         {
-            var items = obj["menuItems"]![0]!["items"]!.AsArray();
-            var firstItem = items[0]!.AsObject();
+            JsonArray items = obj["menuItems"]![0]!["items"]!.AsArray();
+            JsonObject firstItem = items[0]!.AsObject();
             firstItemName = firstItem["name"]!.GetValue<string>();
-            var colliding = firstItem.DeepClone().AsObject();
+            JsonObject colliding = firstItem.DeepClone().AsObject();
             collidingName = $"{firstItemName} (Party Size)";
             colliding["name"] = collidingName;
             items.Add(colliding);
         });
 
-        var exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
         Assert.Contains("sonic", exc.Message);
         Assert.Contains(firstItemName, exc.Message);
         Assert.Contains(collidingName, exc.Message);
@@ -290,7 +299,7 @@ public sealed class PersonaCatalogTests
             items[1]!.AsObject()["aliases"]!.AsArray().Add("duplicate test alias");
         });
 
-        var exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
         Assert.Contains("sonic", exc.Message);
         Assert.Contains("duplicate test alias", exc.Message);
         Assert.Contains(firstItemName, exc.Message);
@@ -315,7 +324,7 @@ public sealed class PersonaCatalogTests
             items[0]!.AsObject()["aliases"]!.AsArray().Add(targetName);
         });
 
-        var exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
         Assert.Contains("sonic", exc.Message);
         Assert.Contains(firstItemName, exc.Message);
         Assert.Contains(targetName, exc.Message);
@@ -327,7 +336,7 @@ public sealed class PersonaCatalogTests
         using var fixture = new PersonaPackFixture();
         fixture.DeletePromptsDir("sonic");
 
-        var exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(() => PersonaCatalog.Load(personasDir: fixture.PersonasDir));
         Assert.Contains("prompts directory not found", exc.Message);
     }
 
@@ -336,7 +345,7 @@ public sealed class PersonaCatalogTests
     {
         using var fixture = new PersonaPackFixture();
 
-        var exc = Assert.Throws<PersonaValidationException>(
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(
             () => PersonaCatalog.Load(personasDir: fixture.PersonasDir, personasEnv: "dunkin"));
         Assert.Contains("dunkin", exc.Message);
     }
@@ -346,7 +355,7 @@ public sealed class PersonaCatalogTests
     {
         using var fixture = new PersonaPackFixture();
 
-        var exc = Assert.Throws<PersonaValidationException>(
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(
             () => PersonaCatalog.Load(personasDir: fixture.PersonasDir, defaultPersonaEnv: "mcdonalds"));
         Assert.Contains("mcdonalds", exc.Message);
     }
@@ -381,20 +390,20 @@ public sealed class PersonaCatalogTests
         // copies only the sonic pack), this test loads the REAL personas/ directory directly, so
         // once #111 (Dunkin) and #112 (McDonald's) land, C# validates them too instead of the
         // catalog silently never seeing them.
-        var personasDir = Path.Combine(RepoRootLocator.Find(), "personas");
+        string personasDir = Path.Combine(RepoRootLocator.Find(), "personas");
 
         // Independent (catalog-free) ground truth: every immediate subfolder that contains a
         // persona.json, ordinal sorted -- the same disk-discovery convention PersonaCatalog.Load
         // itself documents (mirrors test_persona_loader.py's _discovered_persona_ids).
         var expectedIds = Directory.EnumerateDirectories(personasDir)
-            .Select(d => Path.GetFileName(d)!)
+            .Select(d => Path.GetFileName(d))
             .Where(name => File.Exists(Path.Combine(personasDir, name, "persona.json")))
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToList();
 
         var catalog = PersonaCatalog.Load(personasDir: personasDir);
 
-        Assert.Equal(expectedIds, catalog.Ids.OrderBy(id => id, StringComparer.Ordinal).ToList());
+        Assert.Equal(expectedIds, [.. catalog.Ids.OrderBy(id => id, StringComparer.Ordinal)]);
         Assert.Contains("sonic", catalog.Ids);
         Assert.Equal("sonic", catalog.DefaultPersonaId);
     }
@@ -410,7 +419,7 @@ public sealed class PersonaCatalogTests
     [Fact]
     public void RealPersonasDirectory_LoadsHeroSpotlightToneAndTint()
     {
-        var personasDir = Path.Combine(RepoRootLocator.Find(), "personas");
+        string personasDir = Path.Combine(RepoRootLocator.Find(), "personas");
         var catalog = PersonaCatalog.Load(personasDir: personasDir);
 
         // Exactly one original pack washes its second ("body") spotlight card with a hex tint.
@@ -433,7 +442,7 @@ public sealed class PersonaCatalogTests
     [Fact]
     public void RealPersonasDirectory_LoadsSessionBarChipsVariant()
     {
-        var personasDir = Path.Combine(RepoRootLocator.Find(), "personas");
+        string personasDir = Path.Combine(RepoRootLocator.Find(), "personas");
         var catalog = PersonaCatalog.Load(personasDir: personasDir);
 
         var variants = catalog.Ids.Select(id => catalog.Get(id).Ui.SessionBar?.Variant).ToList();
@@ -448,7 +457,7 @@ public sealed class PersonaCatalogTests
     [Fact]
     public void RealPersonasDirectory_LoadsCategoryIconsAndLogoTile()
     {
-        var personasDir = Path.Combine(RepoRootLocator.Find(), "personas");
+        string personasDir = Path.Combine(RepoRootLocator.Find(), "personas");
         var catalog = PersonaCatalog.Load(personasDir: personasDir);
 
         // Black wordmarks need a white tile even in dark mode.
@@ -467,12 +476,12 @@ public sealed class PersonaCatalogTests
     [Fact]
     public void RealPersonasDirectory_ForwardsTaxRateForEveryPack()
     {
-        var personasDir = Path.Combine(RepoRootLocator.Find(), "personas");
+        string personasDir = Path.Combine(RepoRootLocator.Find(), "personas");
         var catalog = PersonaCatalog.Load(personasDir: personasDir);
 
-        foreach (var id in catalog.Ids)
+        foreach (string id in catalog.Ids)
         {
-            var rate = double.Parse(catalog.Get(id).Pricing.TaxRate);
+            double rate = double.Parse(catalog.Get(id).Pricing.TaxRate, CultureInfo.InvariantCulture);
             Assert.InRange(rate, 0.0, 1.0);
         }
     }
@@ -487,7 +496,7 @@ public sealed class PersonaCatalogTests
         fixture.MutatePersonaJson("test-alpha", obj =>
             obj["ui"]!["hero"]!["spotlight"]![1]!["tone"] = "not-a-real-tone");
 
-        var exc = Assert.Throws<PersonaValidationException>(
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(
             () => PersonaCatalog.Load(personasDir: fixture.PersonasDir, personasEnv: "test-alpha", defaultPersonaEnv: "test-alpha"));
         Assert.Contains("test-alpha", exc.Message);
     }
@@ -499,7 +508,7 @@ public sealed class PersonaCatalogTests
         fixture.MutatePersonaJson("test-alpha", obj =>
             obj["ui"]!["sessionBar"] = new JsonObject { ["variant"] = "not-a-real-variant" });
 
-        var exc = Assert.Throws<PersonaValidationException>(
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(
             () => PersonaCatalog.Load(personasDir: fixture.PersonasDir, personasEnv: "test-alpha", defaultPersonaEnv: "test-alpha"));
         Assert.Contains("test-alpha", exc.Message);
     }
@@ -517,7 +526,7 @@ public sealed class PersonaCatalogTests
         fixture.MutatePersonaJson("test-alpha", obj =>
             obj["ui"]!["textRoles"] = new JsonObject { ["badge"] = "not-a-real-role" });
 
-        var exc = Assert.Throws<PersonaValidationException>(
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(
             () => PersonaCatalog.Load(personasDir: fixture.PersonasDir, personasEnv: "test-alpha", defaultPersonaEnv: "test-alpha"));
         Assert.Contains("test-alpha", exc.Message);
     }
@@ -534,7 +543,7 @@ public sealed class PersonaCatalogTests
         fixture.MutatePersonaJson("test-alpha", obj =>
             obj["ui"]!["hero"]!["spotlight"]![0]!["rows"]![0]!["tone"] = "not-a-real-tone");
 
-        var exc = Assert.Throws<PersonaValidationException>(
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(
             () => PersonaCatalog.Load(personasDir: fixture.PersonasDir, personasEnv: "test-alpha", defaultPersonaEnv: "test-alpha"));
         Assert.Contains("test-alpha", exc.Message);
     }
@@ -551,7 +560,7 @@ public sealed class PersonaCatalogTests
         fixture.MutatePersonaJson("test-alpha", obj =>
             obj["ui"]!["hero"]!["spotlight"]![1]!["accentTone"] = "not-a-real-tone");
 
-        var exc = Assert.Throws<PersonaValidationException>(
+        PersonaValidationException exc = Assert.Throws<PersonaValidationException>(
             () => PersonaCatalog.Load(personasDir: fixture.PersonasDir, personasEnv: "test-alpha", defaultPersonaEnv: "test-alpha"));
         Assert.Contains("test-alpha", exc.Message);
     }

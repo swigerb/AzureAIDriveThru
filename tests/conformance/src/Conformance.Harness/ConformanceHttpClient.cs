@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Http.Headers;
 
 namespace Conformance.Harness;
@@ -15,7 +16,11 @@ namespace Conformance.Harness;
 /// </summary>
 public static class ConformanceHttpClient
 {
-    public static HttpClient Create() => new(new EntraBearerHandler(new HttpClientHandler()));
+    [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope",
+        Justification = "Ownership transfers down the chain: the returned HttpClient disposes its handler " +
+                        "(disposeHandler: true) and DelegatingHandler.Dispose disposes its inner handler, so " +
+                        "the caller's own HttpClient.Dispose releases all three.")]
+    public static HttpClient Create() => new(new EntraBearerHandler(new HttpClientHandler()), disposeHandler: true);
 }
 
 /// <summary>The <see cref="DelegatingHandler"/> behind <see cref="ConformanceHttpClient.Create"/> --
@@ -26,7 +31,7 @@ internal sealed class EntraBearerHandler(HttpMessageHandler inner) : DelegatingH
     {
         if (request.Headers.Authorization is null && request.RequestUri is not null)
         {
-            var token = EntraDefaultCredentials.TryGetAccessToken(request.RequestUri);
+            string? token = EntraDefaultCredentials.TryGetAccessToken(request.RequestUri);
             if (token is not null)
             {
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);

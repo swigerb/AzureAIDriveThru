@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Conformance.Fakes;
 using Conformance.Harness;
 using Conformance.Tests.Scenarios.Ordering;
 using Xunit;
@@ -39,7 +40,7 @@ namespace Conformance.Tests.Scenarios.Cascade;
 [Trait("Dotnet", "ready")]
 public sealed class CascadePersonaParityConformanceTests(CascadeConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = CascadeScenarioHelpers.FrameTimeout;
+    private static readonly TimeSpan s_frameTimeout = CascadeScenarioHelpers.FrameTimeout;
 
     private sealed record SingleSizeItem(string Name, string Size, decimal Price);
 
@@ -59,10 +60,10 @@ public sealed class CascadePersonaParityConformanceTests(CascadeConformanceFixtu
 
     public static TheoryData<string, string, string, string, string, string, string> NonDefaultRealPackOrderCases()
     {
-        var personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
+        string personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
         var data = new TheoryData<string, string, string, string, string, string, string>();
 
-        foreach (var personaId in ConformancePersonas.DiscoverFromDisk())
+        foreach (string personaId in ConformancePersonas.DiscoverFromDisk())
         {
             // The fixture's own default pack is already covered end to end by
             // CascadeConformanceTests -- this Theory's whole point is every OTHER pack, expressed
@@ -72,14 +73,14 @@ public sealed class CascadePersonaParityConformanceTests(CascadeConformanceFixtu
                 continue;
             }
 
-            var item = DiscoverSingleSizeItem(personasDir, personaId);
+            SingleSizeItem? item = DiscoverSingleSizeItem(personasDir, personaId);
             Assert.True(item is not null,
                 $"persona '{personaId}' has no single-size, non-combo-slot menu item in its own " +
                 "menu/menuItems.json for this Theory to exercise.");
 
-            var taxRate = ReadTaxRate(personasDir, personaId);
-            var tax = Math.Round(item!.Price * taxRate, 2, MidpointRounding.AwayFromZero);
-            var finalTotal = Math.Round(item.Price + tax, 2, MidpointRounding.AwayFromZero);
+            decimal taxRate = ReadTaxRate(personasDir, personaId);
+            decimal tax = Math.Round(item.Price * taxRate, 2, MidpointRounding.AwayFromZero);
+            decimal finalTotal = Math.Round(item.Price + tax, 2, MidpointRounding.AwayFromZero);
 
             data.Add(
                 personaId,
@@ -100,13 +101,13 @@ public sealed class CascadePersonaParityConformanceTests(CascadeConformanceFixtu
         string personaId, string itemName, string size, string expectedSubtotal, string expectedTax,
         string expectedFinalTotal, string finalReply) => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        CascadeConnection connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(
             fixture, fixture.Chat, "gpt-5-mini", ct, persona: personaId);
-        await using var browser = connection.Browser;
+        await using RealtimeBrowserClient browser = connection.Browser;
 
-        var metadata = browser.ReceivedFrames.Snapshot().FirstOrDefault(f => f.Type == "extension.session_metadata");
-        Assert.True(metadata is not null, $"Expected extension.session_metadata within {FrameTimeout}.");
+        RecordedFrame? metadata = browser.ReceivedFrames.Snapshot().FirstOrDefault(f => f.Type == "extension.session_metadata");
+        Assert.True(metadata is not null, $"Expected extension.session_metadata within {s_frameTimeout}.");
         Assert.Equal(personaId, metadata!.Json.GetProperty("persona").GetString());
         Assert.Equal("cascade", metadata.Json.GetProperty("pipeline").GetString());
 
@@ -118,14 +119,14 @@ public sealed class CascadePersonaParityConformanceTests(CascadeConformanceFixtu
 
         await CascadeScenarioHelpers.SendGuestTurnAsync(browser, ct);
 
-        var toolResponse = await browser.ReceivedFrames.WaitForAsync(
+        RecordedFrame? toolResponse = await browser.ReceivedFrames.WaitForAsync(
             f => f.Sequence > connection.GreetingWatermark &&
                  f.Type == "extension.middle_tier_tool_response" &&
-                 f.Json.TryGetProperty("tool_name", out var name) && name.GetString() == "update_order",
-            FrameTimeout, ct);
-        Assert.True(toolResponse is not null, $"Expected an extension.middle_tier_tool_response(update_order) within {FrameTimeout}.");
+                 f.Json.TryGetProperty("tool_name", out JsonElement name) && name.GetString() == "update_order",
+            s_frameTimeout, ct);
+        Assert.True(toolResponse is not null, $"Expected an extension.middle_tier_tool_response(update_order) within {s_frameTimeout}.");
 
-        var orderSummaryJson = toolResponse!.Json.GetProperty("tool_result").GetString()!;
+        string orderSummaryJson = toolResponse!.Json.GetProperty("tool_result").GetString()!;
         Assert.Equal(1, OrderScenarioHelpers.GetOrderItemCount(orderSummaryJson));
         Assert.Equal(expectedSubtotal, OrderScenarioHelpers.GetOrderTotalDisplay(orderSummaryJson));
         Assert.Equal(expectedTax, OrderScenarioHelpers.GetOrderTaxDisplay(orderSummaryJson));
@@ -135,36 +136,36 @@ public sealed class CascadePersonaParityConformanceTests(CascadeConformanceFixtu
         // Rick re-review item 3): drain the final round's scripted reply before returning, so a
         // leftover FakeChatCompletionsServer message never leaks into whichever cascade test runs
         // next out of this fixture's shared, process-wide Chat queue.
-        var finalAnswer = await browser.ReceivedFrames.WaitForAsync(
+        RecordedFrame? finalAnswer = await browser.ReceivedFrames.WaitForAsync(
             f => f.Sequence > connection.GreetingWatermark && f.Type == "response.audio_transcript.delta",
-            FrameTimeout, ct);
+            s_frameTimeout, ct);
         Assert.True(finalAnswer is not null, "Expected the model's final answer as response.audio_transcript.delta.");
         Assert.Equal(finalReply, finalAnswer!.Json.GetProperty("delta").GetString());
     });
 
     private static SingleSizeItem? DiscoverSingleSizeItem(string personasDir, string personaId)
     {
-        var menuItemsPath = Path.Combine(personasDir, personaId, "menu", "menuItems.json");
+        string menuItemsPath = Path.Combine(personasDir, personaId, "menu", "menuItems.json");
         using var doc = JsonDocument.Parse(File.ReadAllText(menuItemsPath));
 
-        foreach (var category in doc.RootElement.GetProperty("menuItems").EnumerateArray())
+        foreach (JsonElement category in doc.RootElement.GetProperty("menuItems").EnumerateArray())
         {
-            foreach (var item in category.GetProperty("items").EnumerateArray())
+            foreach (JsonElement item in category.GetProperty("items").EnumerateArray())
             {
-                if (item.TryGetProperty("comboSlot", out var comboSlot) &&
+                if (item.TryGetProperty("comboSlot", out JsonElement comboSlot) &&
                     comboSlot.ValueKind == JsonValueKind.String &&
                     !string.Equals(comboSlot.GetString(), "none", StringComparison.Ordinal))
                 {
                     continue;
                 }
 
-                var sizes = item.GetProperty("sizes");
+                JsonElement sizes = item.GetProperty("sizes");
                 if (sizes.GetArrayLength() != 1)
                 {
                     continue;
                 }
 
-                var onlySize = sizes[0];
+                JsonElement onlySize = sizes[0];
                 return new SingleSizeItem(
                     item.GetProperty("name").GetString()!,
                     onlySize.GetProperty("size").GetString()!,
@@ -177,9 +178,9 @@ public sealed class CascadePersonaParityConformanceTests(CascadeConformanceFixtu
 
     private static decimal ReadTaxRate(string personasDir, string personaId)
     {
-        var personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
+        string personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
         using var doc = JsonDocument.Parse(File.ReadAllText(personaJsonPath));
-        var taxRateText = doc.RootElement.GetProperty("pricing").GetProperty("taxRate").GetString();
+        string? taxRateText = doc.RootElement.GetProperty("pricing").GetProperty("taxRate").GetString();
         return decimal.Parse(taxRateText!, System.Globalization.CultureInfo.InvariantCulture);
     }
 

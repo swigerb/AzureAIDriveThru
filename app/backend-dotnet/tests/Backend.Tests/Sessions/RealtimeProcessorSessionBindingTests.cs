@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Backend.Configuration;
 using Backend.Models;
 using Backend.Personas;
@@ -79,15 +80,15 @@ public sealed class RealtimeProcessorSessionBindingTests : IDisposable
                 NullLogger<NudgeScheduler>.Instance,
                 ToolExecutorFactory: ToolExecutorFactory));
 
-        var widgetcoPersona = PersonaCatalog.Load().Default with { Id = "widgetco" };
-        var northwindPersona = PersonaCatalog.Load().Default with { Id = "northwind" };
+        Persona widgetcoPersona = PersonaCatalog.Load().Default with { Id = "widgetco" };
+        Persona northwindPersona = PersonaCatalog.Load().Default with { Id = "northwind" };
 
         processor.ResolveSessionBinding(widgetcoPersona, menuMode: null);
         processor.ResolveSessionBinding(northwindPersona, menuMode: null);
 
         Assert.Equal(2, capturedLoaders.Count);
-        var widgetcoCapture = capturedLoaders.Single(c => c.PersonaId == "widgetco");
-        var northwindCapture = capturedLoaders.Single(c => c.PersonaId == "northwind");
+        (string PersonaId, PromptLoader? Loader) widgetcoCapture = capturedLoaders.Single(c => c.PersonaId == "widgetco");
+        (string PersonaId, PromptLoader? Loader) northwindCapture = capturedLoaders.Single(c => c.PersonaId == "northwind");
 
         Assert.Same(widgetcoLoader, widgetcoCapture.Loader);
         Assert.Same(northwindLoader, northwindCapture.Loader);
@@ -122,9 +123,9 @@ public sealed class RealtimeProcessorSessionBindingTests : IDisposable
                 NullLogger<RateLimitRecovery>.Instance,
                 NullLogger<NudgeScheduler>.Instance));
 
-        var widgetcoPersona = PersonaCatalog.Load().Default with { Id = "widgetco" };
+        Persona widgetcoPersona = PersonaCatalog.Load().Default with { Id = "widgetco" };
 
-        var binding = processor.ResolveSessionBinding(widgetcoPersona, menuMode: null);
+        (PromptLoader? PromptLoader, string? SystemMessage, string Voice, IReadOnlyList<JsonObject> ToolSchemas, IToolExecutor ToolExecutor) binding = processor.ResolveSessionBinding(widgetcoPersona, menuMode: null);
 
         Assert.Same(widgetcoLoader, binding.PromptLoader);
         Assert.Equal(widgetcoLoader.SystemPrompt, binding.SystemMessage);
@@ -133,7 +134,7 @@ public sealed class RealtimeProcessorSessionBindingTests : IDisposable
 
     private void WriteMinimalPromptPack(string personaId, string toolExecutionFailedText)
     {
-        var promptsDir = Path.Combine(_personasDir, personaId, "prompts");
+        string promptsDir = Path.Combine(_personasDir, personaId, "prompts");
         Directory.CreateDirectory(promptsDir);
 
         File.WriteAllText(Path.Combine(promptsDir, "system_prompt.yaml"), """

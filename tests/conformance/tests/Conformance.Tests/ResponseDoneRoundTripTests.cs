@@ -16,27 +16,27 @@ namespace Conformance.Tests;
 [Collection(ConformanceCollection.Name)]
 public sealed class ResponseDoneRoundTripTests(ConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Browser_receives_round_trip_token_after_the_greeting_and_backend_logs_no_traceback() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        bool noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(s_frameTimeout, ct);
         Assert.True(noneOpen, $"Expected no open upstream connections at test start, but " +
             $"{fixture.Realtime.OpenConnectionCount} are still open — a previous test leaked a connection.");
 
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
         await browser.SendStartSessionAsync(cancellationToken: ct);
 
         // The greeting response.create's response.done (Script default: one audio delta then
         // done) is what rtmt.py's response.done handler turns into extension.round_trip_token —
         // this is the frame that never used to arrive with a KeyError-shaped response.done.
-        var roundTripToken = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        RecordedFrame? roundTripToken = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token", s_frameTimeout, ct);
         Assert.True(roundTripToken is not null,
-            $"extension.round_trip_token never reached the browser within {FrameTimeout}.");
+            $"extension.round_trip_token never reached the browser within {s_frameTimeout}.");
 
         // The "backend logged no unhandled error during this scenario" invariant (PR #22 review
         // item N5) -- this test's original raison d'être before the KeyError-shaped

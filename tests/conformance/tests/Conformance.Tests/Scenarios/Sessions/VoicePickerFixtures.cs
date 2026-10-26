@@ -21,7 +21,7 @@ namespace Conformance.Tests;
 /// a voice and assert on bootstrap defaults, and running them alongside every other Default-
 /// collection scenario (which pins <see cref="BackendContract.DefaultVoice"/> for its own
 /// unrelated assertions) would make run order matter for no real benefit, exactly like the
-/// reasoning-by-deployment fixtures in <see cref="ReasoningDeploymentFixtures"/>.
+/// reasoning-by-deployment fixtures in <c>ReasoningDeploymentFixtures</c>.
 /// </summary>
 public sealed class VoicePickerConformanceFixture : ConformanceFixture
 {

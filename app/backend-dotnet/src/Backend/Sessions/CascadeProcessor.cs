@@ -1,14 +1,12 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net.WebSockets;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Backend.Cascade;
-using Backend.Configuration;
 using Backend.Models;
 using Backend.Personas;
 using Backend.Prompts;
 using Backend.Realtime;
-using Backend.Shared;
 using Backend.Tools;
 
 namespace Backend.Sessions;
@@ -86,7 +84,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
         CascadeProcessorDependencies dependencies)
     {
         _catalog = catalog;
-        var credential = dependencies.BearerTokenProvider ?? DefaultAzureCredentialTokenProvider.Instance.Value;
+        IUpstreamBearerTokenProvider credential = dependencies.BearerTokenProvider ?? DefaultAzureCredentialTokenProvider.Instance.Value;
         _chatClient = new FoundryChatClient(dependencies.HttpClient, options.FoundryEndpoint, credential);
         _audioClient = new FoundryAudioClient(dependencies.HttpClient, options.AudioEndpoint, credential);
         _rateLimitSettings = options.RateLimitSettings;
@@ -174,7 +172,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
         CascadeDiagnosticCapture? diagnostic = null)
     {
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var context = CreateSessionContext(browserSocket, persona, resolvedModel, sessionId, linkedCts, menuMode);
+        CascadeSessionContext context = CreateSessionContext(browserSocket, persona, resolvedModel, sessionId, linkedCts, menuMode);
         context.Diagnostic = diagnostic;
         var handler = new CascadeClientMessageHandler(context);
         await StartSessionAsync(context, handler).ConfigureAwait(false);
@@ -185,14 +183,14 @@ internal sealed class CascadeProcessor : IPipelineProcessor
         WebSocket browserSocket, Persona persona, ResolvedModel resolvedModel, string sessionId,
         CancellationTokenSource linkedCts, string? menuMode = null)
     {
-        _promptLoaders.TryGetValue(persona.Id, out var promptLoader);
-        var toolSchemas = BuildToolSchemas(promptLoader);
-        var toolDefinitions = CascadeToolDefinitions.FromToolSchemas(toolSchemas);
-        var toolExecutor = _toolExecutorFactory?.Invoke(persona, promptLoader, menuMode) ?? _toolExecutor;
-        var voice = ClientServerFilter.SanitizeVoice(persona.Voice.Default, _allowedVoices) ?? _defaultVoice;
+        _promptLoaders.TryGetValue(persona.Id, out PromptLoader? promptLoader);
+        IReadOnlyList<JsonObject> toolSchemas = BuildToolSchemas(promptLoader);
+        IReadOnlyList<JsonObject> toolDefinitions = CascadeToolDefinitions.FromToolSchemas(toolSchemas);
+        IToolExecutor toolExecutor = _toolExecutorFactory?.Invoke(persona, promptLoader, menuMode) ?? _toolExecutor;
+        string voice = ClientServerFilter.SanitizeVoice(persona.Voice.Default, _allowedVoices) ?? _defaultVoice;
         var identifiers = new SessionIdentifiers(persona.Id, resolvedModel.Id, sessionId, pipeline: "cascade");
 
-        var ct = linkedCts.Token;
+        CancellationToken ct = linkedCts.Token;
 
         var state = new CascadeSessionState
         {
@@ -228,7 +226,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
             PromptLoader = promptLoader,
             Detector = detector,
             AllowedVoices = _allowedVoices,
-            Logger = _logger!,
+            Logger = _logger,
             TimeProvider = _timeProvider,
             TurnRegistryLock = new object(),
             SessionId = sessionId,
@@ -240,11 +238,13 @@ internal sealed class CascadeProcessor : IPipelineProcessor
         context.AudioTurnPipeline = new CascadeAudioTurnPipeline(
             browserSocket, persona, state, detector, _catalog, _audioClient, _rateLimitSettings,
             _echoCooldownSeconds, () => context.SessionId, _timeProvider,
-            context.NotifyClientAsync, context.NowSeconds, _logger!, ct);
+            context.NotifyClientAsync, context.NowSeconds, _logger, ct);
         context.TurnCoordinator = new CascadeTurnCoordinator(context);
         return context;
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Per-message isolation: a failure replaying the leftover first frame is logged and must not end the session.")]
     private async Task StartSessionAsync(CascadeSessionContext context, CascadeClientMessageHandler handler)
     {
         JsonObject? leftoverFirstFrame = null;
@@ -254,7 +254,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
                 context.Identifiers.ToFrame("extension.session_metadata"), context.CancellationToken)
                 .ConfigureAwait(false);
 
-            var (greetingCts, greetingTask) = context.TurnCoordinator.Spawn(context.SendGreetingAsync, "greeting");
+            (CancellationTokenSource? greetingCts, Task? greetingTask) = context.TurnCoordinator.Spawn(context.SendGreetingAsync, "greeting");
             context.State.CurrentTurnCts = greetingCts;
             context.State.CurrentTurnTask = greetingTask;
         }
@@ -276,6 +276,8 @@ internal sealed class CascadeProcessor : IPipelineProcessor
         }
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Per-message isolation: one failing client message is logged and the receive loop keeps serving the session.")]
     private async Task ReceiveSessionAsync(CascadeSessionContext context, CascadeClientMessageHandler handler)
     {
         try
@@ -382,31 +384,26 @@ internal sealed class CascadeProcessor : IPipelineProcessor
     internal static async Task SendTextAsync(WebSocket socket, string payload, CancellationToken turnCt, CancellationToken socketCt)
     {
         turnCt.ThrowIfCancellationRequested();
-        if (socket.State != WebSocketState.Open)
-        {
-            return;
-        }
-        var bytes = Encoding.UTF8.GetBytes(payload);
-        await socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, socketCt).ConfigureAwait(false);
+        await FramePump.SendTextAsync(socket, payload, socketCt).ConfigureAwait(false);
     }
 
     /// <summary>Duplicated from <see cref="RealtimeProcessor"/>'s own private helper of the same
     /// name -- a defensive string read that never throws for a malformed/missing/non-string field,
     /// used for every piece of JSON this class reads off the wire or an upstream REST response.</summary>
     internal static string? GetString(JsonObject? obj, string key) =>
-        obj?[key] is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
+        obj?[key] is JsonValue v && v.TryGetValue<string>(out string? s) ? s : null;
 
     /// <summary>Duplicated from <see cref="RealtimeProcessor"/>'s own private helper of the same
     /// name (that one stays private to its class) -- both pipelines resolve a connection's own
     /// tool schemas from its bound persona's <see cref="PromptLoader"/> the same way.</summary>
-    private static IReadOnlyList<JsonObject> BuildToolSchemas(PromptLoader? promptLoader)
+    private static List<JsonObject> BuildToolSchemas(PromptLoader? promptLoader)
     {
         if (promptLoader is null)
         {
             return [];
         }
         var list = new List<JsonObject>(promptLoader.ToolSchemas.Count);
-        foreach (var schema in promptLoader.ToolSchemas)
+        foreach (IReadOnlyDictionary<object, object> schema in promptLoader.ToolSchemas)
         {
             if (YamlJson.ToJsonNode((IDictionary<object, object>)schema) is JsonObject obj)
             {

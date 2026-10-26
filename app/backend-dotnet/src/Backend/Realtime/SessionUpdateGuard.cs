@@ -27,9 +27,9 @@ internal sealed class SessionUpdateGuard
 
     // Insertion-ordered event_id -> event_id of the original if this is a fallback, else null.
     // A plain Dictionary<> plus a separate ordering list stands in for Python's OrderedDict here.
-    private readonly Dictionary<string, string?> _sent = new();
+    private readonly Dictionary<string, string?> _sent = [];
     private readonly List<string> _sentOrder = [];
-    private readonly Dictionary<string, JsonObject> _payloads = new();
+    private readonly Dictionary<string, JsonObject> _payloads = [];
     private readonly Queue<string> _inFlight = new();
     private readonly HashSet<string> _fallbackSentFor = [];
 
@@ -43,9 +43,9 @@ internal sealed class SessionUpdateGuard
         // anything else (a browser-forged {"event_id": {...}} or [...]) must not throw trying to
         // read it as a string; discard it and generate a fresh one instead, mirroring rtmt.py's
         // `isinstance(candidate, str) and candidate` guard.
-        var candidateNode = message["event_id"];
-        var candidate = candidateNode is JsonValue value && value.TryGetValue<string>(out var s) ? s : null;
-        var eventId = !string.IsNullOrEmpty(candidate)
+        JsonNode? candidateNode = message["event_id"];
+        string? candidate = candidateNode is JsonValue value && value.TryGetValue<string>(out string? s) ? s : null;
+        string eventId = !string.IsNullOrEmpty(candidate)
             ? candidate
             : EventIds.NewEventId(fallbackOf is not null ? "sonic_fallback" : "sonic_su");
         message["event_id"] = eventId;
@@ -63,7 +63,7 @@ internal sealed class SessionUpdateGuard
 
             while (_sentOrder.Count > MaxTracked)
             {
-                var oldest = _sentOrder[0];
+                string oldest = _sentOrder[0];
                 _sentOrder.RemoveAt(0);
                 _sent.Remove(oldest);
                 _payloads.Remove(oldest);
@@ -76,9 +76,9 @@ internal sealed class SessionUpdateGuard
     /// <summary>`Stamp` for an already-serialised session.update payload.</summary>
     public string Track(string payload, string? fallbackOf = null)
     {
-        var message = JsonNode.Parse(payload) as JsonObject
+        JsonObject message = JsonNode.Parse(payload) as JsonObject
             ?? throw new InvalidOperationException("Tracked session.update payload was not a JSON object.");
-        var hadId = message["event_id"] is JsonValue idValue && idValue.TryGetValue<string>(out var id) && !string.IsNullOrEmpty(id);
+        bool hadId = message["event_id"] is JsonValue idValue && idValue.TryGetValue<string>(out string? id) && !string.IsNullOrEmpty(id);
         Stamp(message, fallbackOf);
         return hadId ? payload : message.ToJsonString();
     }
@@ -98,7 +98,7 @@ internal sealed class SessionUpdateGuard
     public string? Correlate(JsonObject errorEvent)
     {
         var err = errorEvent["error"] as JsonObject;
-        var eventId = err?["event_id"] is JsonValue idValue && idValue.TryGetValue<string>(out var id) ? id : null;
+        string? eventId = err?["event_id"] is JsonValue idValue && idValue.TryGetValue<string>(out string? id) ? id : null;
 
         lock (_sync)
         {
@@ -112,9 +112,9 @@ internal sealed class SessionUpdateGuard
                 // as Python's `deque.remove(event_id)` (a no-op if it isn't present).
                 if (_inFlight.Contains(eventId))
                 {
-                    var rest = _inFlight.Where(inFlightId => inFlightId != eventId).ToArray();
+                    string[] rest = [.. _inFlight.Where(inFlightId => inFlightId != eventId)];
                     _inFlight.Clear();
-                    foreach (var inFlightId in rest)
+                    foreach (string? inFlightId in rest)
                     {
                         _inFlight.Enqueue(inFlightId);
                     }
@@ -122,8 +122,8 @@ internal sealed class SessionUpdateGuard
                 return eventId;
             }
 
-            var param = err?["param"]?.GetValue<string>() ?? "";
-            var errorType = err?["type"]?.GetValue<string>();
+            string param = err?["param"]?.GetValue<string>() ?? "";
+            string? errorType = err?["type"]?.GetValue<string>();
             // A rate limit is never a session.update rejection; only an echoed event_id (above) ties
             // one to an update.
             if (_inFlight.Count > 0 && errorType == "invalid_request_error" && !RateLimitDetection.IsRateLimitError(err)

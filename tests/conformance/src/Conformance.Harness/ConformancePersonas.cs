@@ -15,7 +15,7 @@ namespace Conformance.Harness;
 /// today, so <see cref="DiscoverFromDisk()"/> resolves all three as enabled with no harness code
 /// change required -- it was written to make a second/third pack "visible for free" and that is
 /// exactly what happened. <see cref="DefaultPersonaId"/> ("sonic") stays the harness's own
-/// DEFAULT_PERSONA unless a fixture explicitly overrides <see cref="ConformanceFixture.Persona"/>,
+/// DEFAULT_PERSONA unless a fixture explicitly overrides <c>ConformanceFixture.Persona</c>,
 /// matching PersonaCatalog.load()'s own "sonic wins if enabled" tie-break in
 /// <see cref="ResolveDefault"/> below.
 /// </summary>
@@ -39,17 +39,16 @@ public static class ConformancePersonas
     {
         if (!string.IsNullOrWhiteSpace(envValue))
         {
-            var explicitIds = envValue
+            string[] explicitIds = [.. envValue
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Where(id => id.Length > 0)
-                .ToArray();
+                .Where(id => id.Length > 0)];
             if (explicitIds.Length > 0)
             {
                 return explicitIds;
             }
         }
 
-        var discovered = discoverFromDisk();
+        IReadOnlyList<string> discovered = discoverFromDisk();
         return discovered.Count > 0 ? discovered : [DefaultPersonaId];
     }
 
@@ -95,7 +94,7 @@ public static class ConformancePersonas
             return enabled;
         }
 
-        return enabled.Append(overridePersonaId).OrderBy(id => id, StringComparer.Ordinal).ToArray();
+        return [.. enabled.Append(overridePersonaId).OrderBy(id => id, StringComparer.Ordinal)];
     }
 
     /// <summary>
@@ -112,11 +111,10 @@ public static class ConformancePersonas
             return [];
         }
 
-        return Directory.EnumerateDirectories(personasDir)
-            .Select(d => Path.GetFileName(d)!)
+        return [.. Directory.EnumerateDirectories(personasDir)
+            .Select(d => Path.GetFileName(d))
             .Where(id => File.Exists(Path.Combine(personasDir, id, "persona.json")))
-            .OrderBy(id => id, StringComparer.Ordinal)
-            .ToArray();
+            .OrderBy(id => id, StringComparer.Ordinal)];
     }
 
     /// <summary>Convenience overload: discovers from the real repo's personas/ folder, resolved via <see cref="RepoPaths.FindRepoRoot()"/>.</summary>

@@ -54,13 +54,13 @@ namespace Conformance.Tests.Scenarios.RateLimit;
 [Collection(RateLimitIdleInteractionTimersConformanceCollection.Name)]
 public sealed class RateLimitGuestSpeechCancellationTests(RateLimitIdleInteractionTimersConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     /// <summary>Comfortably longer than the fixed 3.0s post-greeting echo-suppression cooldown
     /// (audio.echo_cooldown_seconds=1.5, doubled because the greeting itself is in progress) --
     /// see this class's doc comment. Sending guest speech any earlier is silently dropped by
     /// rtmt.py's echo-suppression `continue` before it ever reaches the fake upstream.</summary>
-    private static readonly TimeSpan EchoCooldownWait = TimeSpan.FromSeconds(3.3);
+    private static readonly TimeSpan s_echoCooldownWait = TimeSpan.FromSeconds(3.3);
 
     /// <summary>Enqueues a rate-limited failure with no parseable hint, so retry_delay() falls
     /// through to the profile-overridden default instead of clamping a hint.</summary>
@@ -81,8 +81,8 @@ public sealed class RateLimitGuestSpeechCancellationTests(RateLimitIdleInteracti
     private static async Task<FakeRealtimeConnection> ConnectAndGetPastGreetingAsync(
         Task<FakeRealtimeConnection?> connectionTask, RealtimeBrowserClient browser, CancellationToken ct)
     {
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await browser.SendStartSessionAsync(cancellationToken: ct);
 
         // Same marker UpdateOrderToolCallTests uses: the greeting's round trip must fully finish
@@ -90,31 +90,31 @@ public sealed class RateLimitGuestSpeechCancellationTests(RateLimitIdleInteracti
         // automatic greeting response.create would consume our script instead. It also means the
         // greeting's own audio.done has already fired by the time this returns, so the echo
         // cooldown wait below starts from a stable, already-elapsed baseline.
-        var greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        RecordedFrame? greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token", s_frameTimeout, ct);
         Assert.True(greetingRoundTrip is not null, "Greeting round trip never completed.");
-        return connection!;
+        return connection;
     }
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task A_pending_retry_is_cancelled_by_guest_speech() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await ConnectAndGetPastGreetingAsync(connectionTask, browser, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection connection = await ConnectAndGetPastGreetingAsync(connectionTask, browser, ct);
 
         // Wait out the greeting's own echo-suppression cooldown (see class doc comment) *before*
         // starting the rate-limit ladder at all, so the guest-speech append below lands
         // comfortably past the cooldown window rather than racing it.
-        await Task.Delay(EchoCooldownWait, ct);
+        await Task.Delay(s_echoCooldownWait, ct);
 
         // Taken before the ladder starts, so the WaitForDiagnosticsAsync call below only ever
         // matches a cancellation log line produced by *this* scenario, not (for example) an
         // identically-worded line an earlier scenario sharing this collection's backend process
         // happened to log first (#66 S2).
-        var diagnosticsWatermark = fixture.Backend!.DiagnosticsWatermark;
+        int diagnosticsWatermark = fixture.Backend!.DiagnosticsWatermark;
 
         // Two scripted failures: attempt 0 (silent) and retry 1 (notifies {attempt:1}) -- the
         // ladder's own second retry (attempt 2) is by then scheduled ("pending"). That
@@ -129,9 +129,9 @@ public sealed class RateLimitGuestSpeechCancellationTests(RateLimitIdleInteracti
         connection.Script.Enqueue(NoHintRateLimited());
         await browser.SendResponseCreateAsync(ct);
 
-        var attempt1Notification = await browser.ReceivedFrames.WaitForAsync(
+        RecordedFrame? attempt1Notification = await browser.ReceivedFrames.WaitForAsync(
             f => f.Type == "extension.rate_limited" && f.Json.GetProperty("attempt").GetInt32() == 1,
-            FrameTimeout, ct);
+            s_frameTimeout, ct);
         Assert.True(attempt1Notification is not null,
             "Expected extension.rate_limited{attempt:1} after the first retry also failed.");
 
@@ -139,7 +139,7 @@ public sealed class RateLimitGuestSpeechCancellationTests(RateLimitIdleInteracti
         // the last one the fake has seen so far. Attempt 2 is pending now (its own second-retry
         // delay is 3.6s on this profile -- see class doc comment) -- guest speech must cancel it
         // before it ever reaches the fake.
-        var boundary = connection.ReceivedFrames.Snapshot().Last(f => f.Type == "response.create").Sequence;
+        int boundary = connection.ReceivedFrames.Snapshot().Last(f => f.Type == "response.create").Sequence;
 
         // input_audio_buffer.append is forwarded upstream (echo suppression's cooldown has long
         // since elapsed by now), where WithVadDefaults' rule replies with speech_started --
@@ -151,21 +151,21 @@ public sealed class RateLimitGuestSpeechCancellationTests(RateLimitIdleInteracti
         // on_guest_speech() actually ran and found (and cancelled) a pending retry. See class doc
         // comment for why observing this line is itself proof the retry can never fire
         // afterward, no margin needed.
-        var cancelled = await fixture.Backend!.WaitForDiagnosticsAsync(
+        bool cancelled = await fixture.Backend!.WaitForDiagnosticsAsync(
             d => d.Contains("Rate-limit retry cancelled: guest started speaking", StringComparison.Ordinal),
-            FrameTimeout, ct, sinceWatermark: diagnosticsWatermark);
+            s_frameTimeout, sinceWatermark: diagnosticsWatermark, cancellationToken: ct);
         Assert.True(cancelled,
             "Expected the backend to log \"Rate-limit retry cancelled: guest started speaking\" after " +
             "guest speech reached it.\n\n--- backend stdout/stderr ---\n" + fixture.Backend!.DumpDiagnostics());
 
         // A short, generous sanity bound (not the sole guarantee -- the log line above already is
         // one) that nothing slipped through regardless.
-        var thirdResponseCreate = await connection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? thirdResponseCreate = await connection.ReceivedFrames.WaitForAsync(
             f => f.Sequence > boundary && f.Type == "response.create", TimeSpan.FromSeconds(1), ct);
         Assert.True(thirdResponseCreate is null,
             "Expected no retried response.create -- guest speech should have cancelled the pending retry.");
 
-        var furtherNotification = await browser.ReceivedFrames.WaitForAsync(
+        RecordedFrame? furtherNotification = await browser.ReceivedFrames.WaitForAsync(
             f => f.Type == "extension.rate_limited" && f.Sequence > attempt1Notification!.Sequence,
             TimeSpan.FromSeconds(1), ct);
         Assert.True(furtherNotification is null, "A cancelled retry must never notify the browser.");
@@ -188,12 +188,12 @@ public sealed class RateLimitGuestSpeechCancellationTests(RateLimitIdleInteracti
     [Trait("Dotnet", "ready")]
     public Task A_pending_retry_still_fires_while_the_browser_keeps_streaming_audio_without_speech_started() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await ConnectAndGetPastGreetingAsync(connectionTask, browser, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection connection = await ConnectAndGetPastGreetingAsync(connectionTask, browser, ct);
 
-        await Task.Delay(EchoCooldownWait, ct);
+        await Task.Delay(s_echoCooldownWait, ct);
 
         // Opt out of WithVadDefaults' speech simulation for this row only: appends must still
         // reach the fake (proving echo suppression isn't what's blocking them), but never get a
@@ -205,18 +205,18 @@ public sealed class RateLimitGuestSpeechCancellationTests(RateLimitIdleInteracti
         connection.Script.Enqueue(NoHintRateLimited());
         await browser.SendResponseCreateAsync(ct);
 
-        var attempt1Notification = await browser.ReceivedFrames.WaitForAsync(
+        RecordedFrame? attempt1Notification = await browser.ReceivedFrames.WaitForAsync(
             f => f.Type == "extension.rate_limited" && f.Json.GetProperty("attempt").GetInt32() == 1,
-            FrameTimeout, ct);
+            s_frameTimeout, ct);
         Assert.True(attempt1Notification is not null,
             "Expected extension.rate_limited{attempt:1} after the first retry also failed.");
 
-        var boundary = connection.ReceivedFrames.Snapshot().Last(f => f.Type == "response.create").Sequence;
+        int boundary = connection.ReceivedFrames.Snapshot().Last(f => f.Type == "response.create").Sequence;
 
         // The browser keeps streaming mic audio the whole time the retry is pending, same as a
         // real guest's open mic -- none of it gets a speech_started reply (the rule was removed
         // above), so on_guest_speech() never runs for any of these frames.
-        for (var i = 0; i < 6; i++)
+        for (int i = 0; i < 6; i++)
         {
             await browser.SendInputAudioAppendAsync("dGVzdA==", ct);
             await Task.Delay(TimeSpan.FromMilliseconds(150), ct);
@@ -259,8 +259,8 @@ public sealed class RateLimitGuestSpeechCancellationTests(RateLimitIdleInteracti
         // CONFORMANCE_RATE_LIMIT_SECOND_RETRY_DELAY_SECONDS=3.6 on this profile (see class doc
         // comment) -- the pending retry must still reach the fake on schedule despite the
         // ongoing, speech_started-free audio stream above.
-        var retriedResponseCreate = await connection.ReceivedFrames.WaitForAsync(
-            f => f.Sequence > boundary && f.Type == "response.create", FrameTimeout, ct);
+        RecordedFrame? retriedResponseCreate = await connection.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > boundary && f.Type == "response.create", s_frameTimeout, ct);
         Assert.True(retriedResponseCreate is not null,
             "Expected the pending retry's response.create to still fire even though the browser kept " +
             "sending audio frames the fake never acknowledged with speech_started.");

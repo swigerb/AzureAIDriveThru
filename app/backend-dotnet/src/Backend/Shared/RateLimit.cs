@@ -20,7 +20,7 @@ namespace Backend.Shared;
 /// types (see each type's own doc comment for why) -- only these settings/parsing/bounds/event-
 /// shape pieces are shared.
 /// </summary>
-internal static class RateLimit
+internal static partial class RateLimit
 {
     public const string RateLimitedEventType = "extension.rate_limited";
 
@@ -29,9 +29,10 @@ internal static class RateLimit
 
     // "Please try again in 1.5s", "try again in 250ms", "retry after 7 seconds" -- byte-for-byte
     // port of rate_limit.py's own _HINT_RE.
-    private static readonly Regex HintRegex = new(
+    [GeneratedRegex(
         @"(?:try\s+again|retry)\s+(?:in|after)\s+(\d+(?:\.\d+)?)\s*(ms|msec|millisecond|milliseconds|s|sec|secs|second|seconds)\b",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        RegexOptions.IgnoreCase)]
+    private static partial Regex HintRegex { get; }
 
     /// <summary>Seconds the service asked us to wait, from an error message, else null. Port of
     /// rate_limit.py's `parse_retry_hint`.</summary>
@@ -41,13 +42,14 @@ internal static class RateLimit
         {
             return null;
         }
-        var match = HintRegex.Match(text);
+        Match match = HintRegex.Match(text);
         if (!match.Success)
         {
             return null;
         }
-        var value = double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
-        return match.Groups[2].Value.StartsWith("m", StringComparison.OrdinalIgnoreCase) ? value / 1000.0 : value;
+        double value = double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+        // Group 2 is never empty on a successful match; the unit is case-insensitive ("MS" == "ms").
+        return match.Groups[2].ValueSpan[0] is 'm' or 'M' ? value / 1000.0 : value;
     }
 
     /// <summary>The service's hint clamped to <paramref name="bounds"/>; <paramref name="defaultValue"/>
@@ -76,15 +78,15 @@ public sealed record RateLimitSettings(
     /// process environment when omitted).</summary>
     internal static RateLimitSettings FromAppConfig(AppConfig config, IReadOnlyDictionary<string, string>? environment = null)
     {
-        var resilienceSection = config.TryGetSection("resilience");
+        IDictionary<object, object>? resilienceSection = config.TryGetSection("resilience");
         IDictionary<object, object>? rateLimitSection = null;
-        if (resilienceSection is not null && resilienceSection.TryGetValue("rate_limit", out var raw))
+        if (resilienceSection is not null && resilienceSection.TryGetValue("rate_limit", out object? raw))
         {
             rateLimitSection = raw as IDictionary<object, object>;
         }
 
-        var enabled = GetBool(rateLimitSection, "enabled", true);
-        var envValue = environment is not null
+        bool enabled = GetBool(rateLimitSection, "enabled", true);
+        string? envValue = environment is not null
             ? environment.GetValueOrDefault(EnabledEnvVar)
             : BackendEnvironment.Get(EnabledEnvVar);
         if (!string.IsNullOrWhiteSpace(envValue))
@@ -92,11 +94,11 @@ public sealed record RateLimitSettings(
             enabled = Truthy(envValue);
         }
 
-        var retryDelaySeconds = ConformanceHooks.Seconds(
+        double retryDelaySeconds = ConformanceHooks.Seconds(
             "CONFORMANCE_RATE_LIMIT_RETRY_DELAY_SECONDS", GetDouble(rateLimitSection, "retry_delay_seconds", 1.5));
-        var secondRetryDelaySeconds = ConformanceHooks.Seconds(
+        double secondRetryDelaySeconds = ConformanceHooks.Seconds(
             "CONFORMANCE_RATE_LIMIT_SECOND_RETRY_DELAY_SECONDS", GetDouble(rateLimitSection, "second_retry_delay_seconds", 4.0));
-        var maxRetries = Math.Max(0, GetInt(rateLimitSection, "max_retries", 2));
+        int maxRetries = Math.Max(0, GetInt(rateLimitSection, "max_retries", 2));
 
         return new RateLimitSettings(enabled, retryDelaySeconds, secondRetryDelaySeconds, maxRetries);
     }
@@ -106,21 +108,21 @@ public sealed record RateLimitSettings(
 
     private static bool GetBool(IDictionary<object, object>? section, string key, bool fallback)
     {
-        if (section is null || !section.TryGetValue(key, out var value) || value is null)
+        if (section is null || !section.TryGetValue(key, out object? value) || value is null)
         {
             return fallback;
         }
         return value switch
         {
             bool b => b,
-            string s when bool.TryParse(s, out var parsed) => parsed,
+            string s when bool.TryParse(s, out bool parsed) => parsed,
             _ => fallback,
         };
     }
 
     private static double GetDouble(IDictionary<object, object>? section, string key, double fallback)
     {
-        if (section is null || !section.TryGetValue(key, out var value) || value is null)
+        if (section is null || !section.TryGetValue(key, out object? value) || value is null)
         {
             return fallback;
         }
@@ -129,14 +131,14 @@ public sealed record RateLimitSettings(
             double d => d,
             int i => i,
             long l => l,
-            string s when double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) => parsed,
+            string s when double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed) => parsed,
             _ => fallback,
         };
     }
 
     private static int GetInt(IDictionary<object, object>? section, string key, int fallback)
     {
-        if (section is null || !section.TryGetValue(key, out var value) || value is null)
+        if (section is null || !section.TryGetValue(key, out object? value) || value is null)
         {
             return fallback;
         }
@@ -144,7 +146,7 @@ public sealed record RateLimitSettings(
         {
             int i => i,
             long l => (int)l,
-            string s when int.TryParse(s, out var parsed) => parsed,
+            string s when int.TryParse(s, out int parsed) => parsed,
             _ => fallback,
         };
     }

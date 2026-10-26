@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 
 namespace Conformance.Harness;
@@ -12,10 +13,10 @@ namespace Conformance.Harness;
 /// hang that happened to time out, a <c>PortBindRaceException</c>, or a launcher/build error, none
 /// of which prove the fail-fast contract these rows exist to pin.
 /// </summary>
-public static class BackendExitCodeParser
+public static partial class BackendExitCodeParser
 {
-    private static readonly Regex Pattern =
-        new(@"exited (?:early|immediately) \(code (-?\d+)\)", RegexOptions.Compiled);
+    [GeneratedRegex(@"exited (?:early|immediately) \(code (-?\d+)\)")]
+    private static partial Regex ExitCodePattern { get; }
 
     /// <summary>
     /// Extracts the exit code from an "exited early (code N)" (<see cref="DotnetBackendLauncher"/>)
@@ -27,7 +28,9 @@ public static class BackendExitCodeParser
     /// </summary>
     public static int? TryParse(string message)
     {
-        var match = Pattern.Match(message);
-        return match.Success && int.TryParse(match.Groups[1].Value, out var code) ? code : null;
+        Match match = ExitCodePattern.Match(message);
+        return match.Success && int.TryParse(match.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int code)
+            ? code
+            : null;
     }
 }

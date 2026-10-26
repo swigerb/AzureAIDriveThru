@@ -18,25 +18,25 @@ namespace Conformance.Tests;
 [Trait("Dotnet", "ready")]
 public sealed class SmokeSessionBootstrapTests(ConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
     public Task Bootstrap_session_update_with_four_tools_is_the_first_upstream_frame() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         await AssertNoOpenConnectionsAtStartAsync(ct);
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
 
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
 
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
-        var bootstrap = await connection!.ReceivedFrames.WaitForAsync(f => f.Sequence == 0, FrameTimeout, ct);
-        Assert.True(bootstrap is not null, $"Expected the first frame on this connection (the bootstrap session.update) within {FrameTimeout}.");
+        RecordedFrame? bootstrap = await connection!.ReceivedFrames.WaitForAsync(f => f.Sequence == 0, s_frameTimeout, ct);
+        Assert.True(bootstrap is not null, $"Expected the first frame on this connection (the bootstrap session.update) within {s_frameTimeout}.");
         Assert.Equal("session.update", bootstrap!.Type);
 
-        var session = bootstrap.Json.GetProperty("session");
+        JsonElement session = bootstrap.Json.GetProperty("session");
         Assert.Equal("auto", session.GetProperty("tool_choice").GetString());
         Assert.Equal(4, session.GetProperty("tools").GetArrayLength());
     });
@@ -44,22 +44,22 @@ public sealed class SmokeSessionBootstrapTests(ConformanceFixture fixture)
     [Fact]
     public Task Greeting_response_create_arrives_only_after_the_browser_session_update() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         await AssertNoOpenConnectionsAtStartAsync(ct);
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
 
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
 
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
-        var bootstrap = await connection!.ReceivedFrames.WaitForAsync(f => f.Sequence == 0, FrameTimeout, ct);
+        RecordedFrame? bootstrap = await connection!.ReceivedFrames.WaitForAsync(f => f.Sequence == 0, s_frameTimeout, ct);
         Assert.True(bootstrap is not null, "Bootstrap session.update never arrived.");
 
         await browser.SendStartSessionAsync(cancellationToken: ct);
 
-        var browserUpdate = await connection.ReceivedFrames.WaitForAsync(
-            f => f.Sequence > 0 && f.Type == "session.update", FrameTimeout, ct);
+        RecordedFrame? browserUpdate = await connection.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > 0 && f.Type == "session.update", s_frameTimeout, ct);
         Assert.True(browserUpdate is not null, "The browser's session.update was never forwarded upstream.");
 
         // GA nests turn_detection/input_audio_transcription under session.audio.input — confirms
@@ -67,8 +67,8 @@ public sealed class SmokeSessionBootstrapTests(ConformanceFixture fixture)
         Assert.True(browserUpdate!.Json.GetProperty("session").TryGetProperty("audio", out _),
             "Expected the browser session.update to be GA-translated (session.audio.input.*).");
 
-        var greeting = await connection.ReceivedFrames.WaitForAsync(
-            f => f.Sequence > browserUpdate.Sequence && f.Type == "response.create", FrameTimeout, ct);
+        RecordedFrame? greeting = await connection.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > browserUpdate.Sequence && f.Type == "response.create", s_frameTimeout, ct);
         Assert.True(greeting is not null, "The greeting response.create never arrived after the browser's session.update.");
         Assert.True(greeting!.Sequence > browserUpdate.Sequence);
     });
@@ -80,7 +80,7 @@ public sealed class SmokeSessionBootstrapTests(ConformanceFixture fixture)
     /// </summary>
     private async Task AssertNoOpenConnectionsAtStartAsync(CancellationToken ct)
     {
-        var noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
+        bool noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(s_frameTimeout, ct);
         Assert.True(noneOpen, $"Expected no open upstream connections at test start, but " +
             $"{fixture.Realtime.OpenConnectionCount} are still open — a previous test leaked a connection.");
     }

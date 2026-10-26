@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using SearchIndexRequestBuilder;
 
 namespace SearchIndexIngestor;
@@ -12,7 +13,7 @@ public sealed class SearchIndexOrchestrator
     private const int BatchSize = 100;
     // verify_document_count's own retry knobs (setup_search_index.py lines 326-348).
     private const int VerifyAttempts = 10;
-    private static readonly TimeSpan VerifyDelay = TimeSpan.FromSeconds(2.0);
+    private static readonly TimeSpan s_verifyDelay = TimeSpan.FromSeconds(2.0);
 
     private readonly SearchIndexHttpClient _searchClient;
     private readonly IEmbeddingClient _embeddingClient;
@@ -40,12 +41,12 @@ public sealed class SearchIndexOrchestrator
     public async Task IngestAsync(PersonaIngestPlan plan, CancellationToken cancellationToken)
     {
         _log.WriteLine($"Persona '{plan.PersonaId}': setting up Azure AI Search index '{plan.IndexName}'...");
-        var indexDefinition = SearchIndexDefinitionBuilder.Build(plan.IndexName, _openAiEndpoint, _embeddingDeployment);
+        JsonObject indexDefinition = SearchIndexDefinitionBuilder.Build(plan.IndexName, _openAiEndpoint, _embeddingDeployment);
         await _searchClient.CreateOrUpdateIndexAsync(plan.IndexName, indexDefinition, cancellationToken)
             .ConfigureAwait(false);
 
         _log.WriteLine($"Persona '{plan.PersonaId}': generating embeddings for {plan.DocumentCount} document(s)...");
-        var embeddings = await _embeddingClient
+        IReadOnlyList<IReadOnlyList<double>> embeddings = await _embeddingClient
             .GenerateEmbeddingsAsync(plan.TextsForEmbedding, _embeddingDeployment, cancellationToken)
             .ConfigureAwait(false);
         if (embeddings.Count != plan.Documents.Count)
@@ -60,10 +61,10 @@ public sealed class SearchIndexOrchestrator
                 $"Persona '{plan.PersonaId}': Azure OpenAI returned {embeddings.Count} embedding(s) " +
                 $"for {plan.Documents.Count} document(s) -- expected one embedding per document.");
         }
-        for (var i = 0; i < plan.Documents.Count; i++)
+        for (int i = 0; i < plan.Documents.Count; i++)
         {
             var vector = new System.Text.Json.Nodes.JsonArray();
-            foreach (var component in embeddings[i])
+            foreach (double component in embeddings[i])
             {
                 // JsonValue.Create(double) drops the decimal point for a whole-number value (e.g.
                 // -1.0 serializes as "-1"), unlike Python's json.dumps, which always writes a float
@@ -81,21 +82,21 @@ public sealed class SearchIndexOrchestrator
         var keepIds = new HashSet<string>(
             plan.Documents.Select(d => d["id"]!.GetValue<string>()), StringComparer.Ordinal);
 
-        for (var i = 0; i < plan.Documents.Count; i += BatchSize)
+        for (int i = 0; i < plan.Documents.Count; i += BatchSize)
         {
             var batchDocuments = plan.Documents.Skip(i).Take(BatchSize).ToList();
-            var batchBody = DocumentBatchBuilder.BuildBatches(batchDocuments).Single();
-            var succeeded = await _searchClient.UploadBatchAsync(plan.IndexName, batchBody, cancellationToken)
+            JsonObject batchBody = DocumentBatchBuilder.BuildBatches(batchDocuments).Single();
+            int succeeded = await _searchClient.UploadBatchAsync(plan.IndexName, batchBody, cancellationToken)
                 .ConfigureAwait(false);
             _log.WriteLine($"Uploaded batch {i}-{i + batchDocuments.Count}: {succeeded}/{batchDocuments.Count} succeeded");
         }
 
         // delete_stale_documents always logs its deleted count, including zero (lines 442-443) --
         // not conditional on there being anything to delete.
-        var existingIds = await _searchClient.ListAllDocumentIdsAsync(plan.IndexName, cancellationToken)
+        IReadOnlyList<string> existingIds = await _searchClient.ListAllDocumentIdsAsync(plan.IndexName, cancellationToken)
             .ConfigureAwait(false);
         var staleIds = existingIds.Where(id => !keepIds.Contains(id)).OrderBy(id => id, StringComparer.Ordinal).ToList();
-        for (var i = 0; i < staleIds.Count; i += BatchSize)
+        for (int i = 0; i < staleIds.Count; i += BatchSize)
         {
             var batch = staleIds.Skip(i).Take(BatchSize).ToList();
             await _searchClient.DeleteBatchAsync(plan.IndexName, batch, cancellationToken).ConfigureAwait(false);
@@ -109,19 +110,20 @@ public sealed class SearchIndexOrchestrator
     /// <summary>
     /// <c>verify_document_count</c> (lines 326-348, issue #84 acceptance): Azure AI Search's own
     /// count endpoint can lag briefly behind a just-completed upload/delete, so this retries up to
-    /// <see cref="VerifyAttempts"/> times, <see cref="VerifyDelay"/> apart. Unlike every other
+    /// <see cref="VerifyAttempts"/> times, <see cref="s_verifyDelay"/> apart. Unlike every other
     /// "clean, catchable" error this port raises as <see cref="InvalidOperationException"/> (see
     /// <see cref="PersonaTargeting"/>'s remarks), a final count mismatch here mirrors Python's own
     /// <c>raise RuntimeError(...)</c> (an unhandled exception, not a <c>SystemExit</c> -- the one
     /// failure path in the whole script that is NOT a plain <c>SystemExit</c>/configuration error)
-    /// with a plain <see cref="Exception"/>, so <see cref="CliRunner"/>'s catch block (scoped to
+    /// with a <see cref="DocumentCountMismatchException"/> (deliberately NOT derived from
+    /// <see cref="InvalidOperationException"/>), so <see cref="CliRunner"/>'s catch block (scoped to
     /// <see cref="InvalidOperationException"/> only) does not swallow it the same clean way --
     /// matching Python's own distinct "ingest completed, but acceptance failed" failure mode.
     /// </summary>
     private async Task VerifyDocumentCountAsync(PersonaIngestPlan plan, CancellationToken cancellationToken)
     {
         int? actual = null;
-        for (var attempt = 0; attempt < VerifyAttempts; attempt++)
+        for (int attempt = 0; attempt < VerifyAttempts; attempt++)
         {
             actual = await _searchClient.GetDocumentCountAsync(plan.IndexName, cancellationToken)
                 .ConfigureAwait(false);
@@ -131,10 +133,10 @@ public sealed class SearchIndexOrchestrator
             }
             if (attempt < VerifyAttempts - 1)
             {
-                await _delay(VerifyDelay, cancellationToken).ConfigureAwait(false);
+                await _delay(s_verifyDelay, cancellationToken).ConfigureAwait(false);
             }
         }
-        throw new Exception(
+        throw new DocumentCountMismatchException(
             $"Index '{plan.IndexName}' holds {actual} document(s) after ingest; the plan has {plan.DocumentCount}.");
     }
 }

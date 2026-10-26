@@ -42,7 +42,7 @@ public sealed class FireAndForgetTests
         // instead of racing a fixed delay.
         await WaitForEntryAsync(logger);
 
-        var entry = Assert.Single(logger.Entries);
+        (LogLevel Level, string Message, Exception? Exception) entry = Assert.Single(logger.Entries);
         Assert.Equal(LogLevel.Error, entry.Level);
         Assert.Same(faultingException, entry.Exception);
         Assert.Contains("test-site", entry.Message);
@@ -57,7 +57,7 @@ public sealed class FireAndForgetTests
 
         task.FireAndForget(logger, "already-faulted-site");
 
-        var entry = Assert.Single(logger.Entries);
+        (LogLevel Level, string Message, Exception? Exception) entry = Assert.Single(logger.Entries);
         Assert.Equal(LogLevel.Error, entry.Level);
         Assert.Same(faultingException, entry.Exception);
     }
@@ -71,7 +71,7 @@ public sealed class FireAndForgetTests
 
         await WaitForEntryAsync(logger);
 
-        var entry = Assert.Single(logger.Entries);
+        (LogLevel Level, string Message, Exception? Exception) entry = Assert.Single(logger.Entries);
         Assert.Equal(LogLevel.Error, entry.Level);
         Assert.IsType<InvalidOperationException>(entry.Exception);
     }
@@ -108,14 +108,14 @@ public sealed class FireAndForgetTests
     {
         // EchoSuppressor's sites have no ILogger available; FireAndForget must still observe the
         // task (so it never becomes an unobserved-task-exception) without a logger to report to.
-        var exception = Record.Exception(() =>
+        Exception? exception = Record.Exception(() =>
             Task.FromException(new InvalidOperationException("no logger")).FireAndForget(null, "no-logger-site"));
         Assert.Null(exception);
     }
 
     private static async Task WaitForEntryAsync(RecordingLogger logger)
     {
-        for (var i = 0; i < 100 && logger.Entries.Count == 0; i++)
+        for (int i = 0; i < 100 && logger.Entries.Count == 0; i++)
         {
             await Task.Delay(10, TestContext.Current.CancellationToken);
         }

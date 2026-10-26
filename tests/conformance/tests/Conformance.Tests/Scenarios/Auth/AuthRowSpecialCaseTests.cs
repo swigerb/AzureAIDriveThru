@@ -23,12 +23,12 @@ public sealed class AuthRowSpecialCaseTests(ConformanceFixture fixture)
     [Fact]
     public Task Row_9_query_token_on_REST_is_rejected() => fixture.RunAuthRowAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var token = fixture.EntraIssuer!.Mint();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string token = fixture.EntraIssuer!.Mint();
 
         using var http = new HttpClient();
         var uri = new Uri(fixture.Backend!.BaseUri, $"/api/personas?access_token={Uri.EscapeDataString(token)}");
-        using var response = await http.GetAsync(uri, ct).ConfigureAwait(false);
+        using HttpResponseMessage response = await http.GetAsync(uri, ct).ConfigureAwait(false);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.True(
@@ -53,16 +53,16 @@ public sealed class AuthRowSpecialCaseTests(ConformanceFixture fixture)
     [Fact]
     public Task Row_10b_session_token_bound_to_another_oid_is_rejected() => fixture.RunAuthRowAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var issuer = fixture.EntraIssuer!;
-        var backend = fixture.Backend!.BaseUri;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        FakeEntraIssuer issuer = fixture.EntraIssuer!;
+        Uri backend = fixture.Backend!.BaseUri;
 
-        var connectingAccessToken = issuer.Mint();
+        string connectingAccessToken = issuer.Mint();
         // A real /api/auth/session fetch, but authorized with a *different* oid's access token --
         // once #144/#147 bind the returned session token to the caller's own oid, this genuinely
         // produces a session token that doesn't match the oid the socket connects with.
-        var otherOidAccessToken = issuer.Mint(new FakeEntraTokenOverrides { Oid = FakeEntraIssuer.OtherOid });
-        var mismatchedSessionToken = await RealtimeBrowserClient
+        string otherOidAccessToken = issuer.Mint(new FakeEntraTokenOverrides { Oid = FakeEntraIssuer.OtherOid });
+        string? mismatchedSessionToken = await RealtimeBrowserClient
             .FetchSessionTokenAsync(backend, otherOidAccessToken, ct)
             .ConfigureAwait(false);
 
@@ -117,9 +117,9 @@ public sealed class AuthRowSpecialCaseTests(ConformanceFixture fixture)
     [MemberData(nameof(AnonymousAllowListPaths))]
     public Task Row_12_anonymous_allow_list_path_is_reachable_with_no_token(string path) => fixture.RunAuthRowAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         using var http = new HttpClient();
-        using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, path), ct).ConfigureAwait(false);
+        using HttpResponseMessage response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, path), ct).ConfigureAwait(false);
         Assert.True(
             response.StatusCode == HttpStatusCode.OK,
             $"Row 12: expected 200 with no token on allow-listed {path}, got {(int)response.StatusCode}.");
@@ -140,10 +140,10 @@ public sealed class AuthRowSpecialCaseTests(ConformanceFixture fixture)
     [Fact]
     public Task Row_12_anonymous_allow_list_path_is_case_insensitive_on_extension() => fixture.RunAuthRowAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var path = $"/personas/{ConformancePersonas.DefaultPersonaId}/assets/LOGO.SVG";
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string path = $"/personas/{ConformancePersonas.DefaultPersonaId}/assets/LOGO.SVG";
         using var http = new HttpClient();
-        using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, path), ct).ConfigureAwait(false);
+        using HttpResponseMessage response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, path), ct).ConfigureAwait(false);
         Assert.True(
             response.StatusCode != HttpStatusCode.Unauthorized,
             $"Row 12 (case-insensitive extension, #163/#222 F4): expected {path} to NOT be " +
@@ -154,10 +154,10 @@ public sealed class AuthRowSpecialCaseTests(ConformanceFixture fixture)
     [Fact]
     public Task Row_12_protected_asset_outside_the_allow_list_still_401s() => fixture.RunAuthRowAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var path = $"/personas/{ConformancePersonas.DefaultPersonaId}/assets/demo/dummyOrder.json";
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string path = $"/personas/{ConformancePersonas.DefaultPersonaId}/assets/demo/dummyOrder.json";
         using var http = new HttpClient();
-        using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, path), ct).ConfigureAwait(false);
+        using HttpResponseMessage response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, path), ct).ConfigureAwait(false);
 
         Assert.True(
             response.StatusCode == HttpStatusCode.Unauthorized,
@@ -179,10 +179,10 @@ public sealed class AuthRowSpecialCaseTests(ConformanceFixture fixture)
     [Fact]
     public Task Row_12_dotfile_asset_has_no_extension_still_401s() => fixture.RunAuthRowAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var path = $"/personas/{ConformancePersonas.DefaultPersonaId}/assets/.png";
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string path = $"/personas/{ConformancePersonas.DefaultPersonaId}/assets/.png";
         using var http = new HttpClient();
-        using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, path), ct).ConfigureAwait(false);
+        using HttpResponseMessage response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, path), ct).ConfigureAwait(false);
 
         Assert.True(
             response.StatusCode == HttpStatusCode.Unauthorized,

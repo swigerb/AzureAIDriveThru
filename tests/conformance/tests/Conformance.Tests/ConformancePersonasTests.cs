@@ -17,7 +17,7 @@ public sealed class ConformancePersonasTests
     [Fact]
     public void ResolveEnabled_uses_explicit_env_value_when_set_trimming_and_dropping_empties()
     {
-        var result = ConformancePersonas.ResolveEnabled(
+        IReadOnlyList<string> result = ConformancePersonas.ResolveEnabled(
             " sonic , mcdonalds ,, dunkin ", () => throw new InvalidOperationException("must not discover when env var is set"));
 
         Assert.Equal(["sonic", "mcdonalds", "dunkin"], result);
@@ -29,7 +29,7 @@ public sealed class ConformancePersonasTests
     [InlineData("   ")]
     public void ResolveEnabled_falls_back_to_disk_discovery_when_env_value_is_null_or_blank(string? envValue)
     {
-        var result = ConformancePersonas.ResolveEnabled(envValue, () => ["dunkin", "mcdonalds", "sonic"]);
+        IReadOnlyList<string> result = ConformancePersonas.ResolveEnabled(envValue, () => ["dunkin", "mcdonalds", "sonic"]);
 
         Assert.Equal(["dunkin", "mcdonalds", "sonic"], result);
     }
@@ -39,7 +39,7 @@ public sealed class ConformancePersonasTests
     {
         // ",, ,," has no non-empty entries after trimming -- must behave like the env var was
         // never set, not return an empty enabled-persona list.
-        var result = ConformancePersonas.ResolveEnabled(",, ,,", () => ["mcdonalds"]);
+        IReadOnlyList<string> result = ConformancePersonas.ResolveEnabled(",, ,,", () => ["mcdonalds"]);
 
         Assert.Equal(["mcdonalds"], result);
     }
@@ -47,7 +47,7 @@ public sealed class ConformancePersonasTests
     [Fact]
     public void ResolveEnabled_falls_back_to_sonic_when_env_unset_and_disk_discovery_finds_nothing()
     {
-        var result = ConformancePersonas.ResolveEnabled(null, () => []);
+        IReadOnlyList<string> result = ConformancePersonas.ResolveEnabled(null, () => []);
 
         Assert.Equal([ConformancePersonas.DefaultPersonaId], result);
     }
@@ -106,7 +106,7 @@ public sealed class ConformancePersonasTests
     [Fact]
     public void EnsureIncluded_adds_and_ordinally_sorts_a_previously_unenabled_override()
     {
-        var result = ConformancePersonas.EnsureIncluded(["sonic"], "mcdonalds");
+        IReadOnlyList<string> result = ConformancePersonas.EnsureIncluded(["sonic"], "mcdonalds");
 
         Assert.Equal(["mcdonalds", "sonic"], result);
     }
@@ -114,7 +114,7 @@ public sealed class ConformancePersonasTests
     [Fact]
     public void DiscoverFromDisk_returns_empty_when_the_directory_does_not_exist()
     {
-        var missingDir = Path.Combine(Path.GetTempPath(), "conformance-personas-test-" + Guid.NewGuid());
+        string missingDir = Path.Combine(Path.GetTempPath(), "conformance-personas-test-" + Guid.NewGuid());
 
         Assert.Empty(ConformancePersonas.DiscoverFromDisk(missingDir));
     }
@@ -122,7 +122,7 @@ public sealed class ConformancePersonasTests
     [Fact]
     public void DiscoverFromDisk_returns_only_subfolders_containing_persona_json_sorted_ordinally()
     {
-        var root = Path.Combine(Path.GetTempPath(), "conformance-personas-test-" + Guid.NewGuid());
+        string root = Path.Combine(Path.GetTempPath(), "conformance-personas-test-" + Guid.NewGuid());
         try
         {
             Directory.CreateDirectory(Path.Combine(root, "sonic"));
@@ -134,7 +134,7 @@ public sealed class ConformancePersonasTests
             // No persona.json -- an in-progress/incomplete pack folder must not count as discovered.
             Directory.CreateDirectory(Path.Combine(root, "mcdonalds-wip"));
 
-            var result = ConformancePersonas.DiscoverFromDisk(root);
+            IReadOnlyList<string> result = ConformancePersonas.DiscoverFromDisk(root);
 
             Assert.Equal(["dunkin", "sonic"], result);
         }

@@ -30,18 +30,18 @@ public sealed class CanonicalItemNameConformanceTests(ZetaConformanceFixture fix
     [Trait("Dotnet", "ready")]
     public Task Add_with_the_unmarked_spelling_stores_the_menus_canonical_marked_name() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", UnmarkedName, "10 count", 1, Price)],
             roundTripIndex, ct);
 
         Assert.NotNull(result.ToolResultJson);
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
-        var items = order.GetProperty("items");
+        var order = JsonElement.Parse(result.ToolResultJson);
+        JsonElement items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Equal(MarkedName, items[0].GetProperty("item").GetString());
     });
@@ -50,11 +50,11 @@ public sealed class CanonicalItemNameConformanceTests(ZetaConformanceFixture fix
     [Trait("Dotnet", "ready")]
     public Task Adding_the_same_item_with_different_spellings_merges_into_one_line() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [
                 ("add", MarkedName, "10 count", 1, Price),
@@ -62,8 +62,8 @@ public sealed class CanonicalItemNameConformanceTests(ZetaConformanceFixture fix
             ],
             roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
-        var items = order.GetProperty("items");
+        var order = JsonElement.Parse(result.ToolResultJson!);
+        JsonElement items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Equal(2, items[0].GetProperty("quantity").GetInt32());
         Assert.Equal(MarkedName, items[0].GetProperty("item").GetString());
@@ -74,11 +74,11 @@ public sealed class CanonicalItemNameConformanceTests(ZetaConformanceFixture fix
     [Trait("Dotnet", "ready")]
     public Task Remove_with_the_unmarked_spelling_matches_a_line_added_with_the_marked_spelling() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [
                 ("add", MarkedName, "10 count", 1, Price),
@@ -86,7 +86,7 @@ public sealed class CanonicalItemNameConformanceTests(ZetaConformanceFixture fix
             ],
             roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         Assert.Equal(0, order.GetProperty("items").GetArrayLength());
     });
 
@@ -96,17 +96,17 @@ public sealed class CanonicalItemNameConformanceTests(ZetaConformanceFixture fix
     [Trait("Dotnet", "ready")]
     public Task Add_with_the_exact_canonical_paren_name_stores_it_unchanged_not_duplicated() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", ParenName, "regular", 1, ParenItemPrice)],
             roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
-        var items = order.GetProperty("items");
+        var order = JsonElement.Parse(result.ToolResultJson!);
+        JsonElement items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Equal(ParenName, items[0].GetProperty("item").GetString());
     });
@@ -115,11 +115,11 @@ public sealed class CanonicalItemNameConformanceTests(ZetaConformanceFixture fix
     [Trait("Dotnet", "ready")]
     public Task Add_with_the_paren_less_spelling_merges_into_the_same_line() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [
                 ("add", ParenName, "regular", 1, ParenItemPrice),
@@ -127,8 +127,8 @@ public sealed class CanonicalItemNameConformanceTests(ZetaConformanceFixture fix
             ],
             roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
-        var items = order.GetProperty("items");
+        var order = JsonElement.Parse(result.ToolResultJson!);
+        JsonElement items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Equal(2, items[0].GetProperty("quantity").GetInt32());
         Assert.Equal(ParenName, items[0].GetProperty("item").GetString());
@@ -149,11 +149,11 @@ public sealed class CanonicalItemNameModifyConformanceTests(ConformanceFixture f
     [Trait("Dotnet", "ready")]
     public Task Modify_with_an_alias_and_a_size_change_resolves_and_stores_the_canonical_name() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [
                 ("add", "Coke", "medium", 1, 2.49m),
@@ -161,8 +161,8 @@ public sealed class CanonicalItemNameModifyConformanceTests(ConformanceFixture f
             ],
             roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
-        var items = order.GetProperty("items");
+        var order = JsonElement.Parse(result.ToolResultJson!);
+        JsonElement items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Equal("Coca-Cola\u00ae", items[0].GetProperty("item").GetString());
     });

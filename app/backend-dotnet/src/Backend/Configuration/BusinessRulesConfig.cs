@@ -24,7 +24,7 @@ internal sealed class BusinessRulesConfig
     /// <c>_biz_cfg.get("max_order_items", 25)</c> -- same field names, same fallback defaults.</summary>
     public static BusinessRulesConfig FromAppConfig(AppConfig config)
     {
-        var section = config.TryGetSection("business_rules");
+        IDictionary<object, object>? section = config.TryGetSection("business_rules");
         return new BusinessRulesConfig(
             GetInt(section, "max_item_quantity", 10),
             GetInt(section, "max_order_items", 25));
@@ -32,7 +32,7 @@ internal sealed class BusinessRulesConfig
 
     private static int GetInt(IDictionary<object, object>? section, string key, int fallback)
     {
-        if (section is null || !section.TryGetValue(key, out var value) || value is null)
+        if (section is null || !section.TryGetValue(key, out object? value) || value is null)
         {
             return fallback;
         }
@@ -40,7 +40,7 @@ internal sealed class BusinessRulesConfig
         {
             int i => i,
             long l => (int)l,
-            string s when int.TryParse(s, out var parsed) => parsed,
+            string s when int.TryParse(s, out int parsed) => parsed,
             _ => fallback,
         };
     }

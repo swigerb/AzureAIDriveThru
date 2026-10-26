@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using Xunit.Sdk;
 
 namespace SearchIndexRequestBuilder.Tests;
 
@@ -45,7 +46,7 @@ public sealed class JsonStructuralAssertTests
         var expected = JsonNode.Parse("""{"dimensions": 3072}""");
         var actual = JsonNode.Parse("""{"dimensions": 3072.0}""");
 
-        var ex = Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => JsonStructuralAssert.Equal(expected, actual));
+        XunitException ex = Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => JsonStructuralAssert.Equal(expected, actual));
         Assert.Contains("int in one JSON body and a float in the other", ex.Message);
     }
 

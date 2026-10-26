@@ -1,7 +1,5 @@
-using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Conformance.Fakes;
 using Conformance.Harness;
 using Conformance.Tests.Scenarios.Ordering;
 using Xunit;
@@ -55,7 +53,7 @@ internal static class PersonaSmokeExpectations
     /// GoldenOrderPricingData.cs), so <see cref="JsonNumberHandling.AllowReadingFromString"/> lets
     /// it deserialize straight into a `decimal` with no intermediate `double`.
     /// </summary>
-    private static readonly JsonSerializerOptions Options = new()
+    private static readonly JsonSerializerOptions s_options = new()
     {
         PropertyNameCaseInsensitive = true,
         NumberHandling = JsonNumberHandling.AllowReadingFromString,
@@ -75,7 +73,7 @@ internal static class PersonaSmokeExpectations
     /// </summary>
     public static Expectation For(string personaId)
     {
-        var path = RepoPaths.PersonaSmokeDataPath(RepoPaths.FindRepoRoot(), personaId);
+        string path = RepoPaths.PersonaSmokeDataPath(RepoPaths.FindRepoRoot(), personaId);
         Assert.True(File.Exists(path),
             $"PersonaSmokeTests.cs's PersonaSmokeExpectations.For('{personaId}') found no data " +
             $"file at '{path}'. Create it (as part of the same PR that adds the pack) with " +
@@ -96,10 +94,10 @@ internal static class PersonaSmokeExpectations
             "  \"orderableItemPrice\": \"<that size's price, quoted, e.g. \\\"2.79\\\">\"\n" +
             "}");
 
-        var json = File.ReadAllText(path);
-        var expectation = JsonSerializer.Deserialize<Expectation>(json, Options);
+        string json = File.ReadAllText(path);
+        Expectation? expectation = JsonSerializer.Deserialize<Expectation>(json, s_options);
         Assert.True(expectation is not null, $"'{path}' deserialized to null.");
-        return expectation!;
+        return expectation;
     }
 }
 
@@ -108,14 +106,14 @@ file static class PersonaSmokeScenario
 {
     public static async Task RunAsync(ConformanceFixture fixture, string personaId, CancellationToken ct)
     {
-        var expected = PersonaSmokeExpectations.For(personaId);
+        PersonaSmokeExpectations.Expectation expected = PersonaSmokeExpectations.For(personaId);
 
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
             fixture, ct, persona: personaId);
-        await using var _ = browser;
+        await using RealtimeBrowserClient _ = browser;
 
         // The pack can use a legacy guest-item greeting or a response-scoped greeting.
-        var greetingText = OrderScenarioHelpers.GreetingInstructions(connection);
+        string greetingText = OrderScenarioHelpers.GreetingInstructions(connection);
         Assert.Contains(expected.GreetingSubstring, greetingText);
 
         // 2. Search returns only that pack's items (positive half; the dedicated
@@ -125,7 +123,7 @@ file static class PersonaSmokeScenario
         //    pack's exactly-3-item catalog under a wildcard, but a real pack's much larger catalog
         //    (the default pack) would only get whichever 3 documents happen to load first -- not necessarily
         //    this persona's own known item -- so a real search-by-name is used for every pack.
-        var searchResult = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult searchResult = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "search",
             JsonSerializer.Serialize(new { query = expected.SearchableOwnItem }),
             "call_smoke_search", roundTripIndex, ct, toClient: false);
@@ -142,7 +140,7 @@ file static class PersonaSmokeScenario
         //    (smoke.json's price literal matches the real menu below, and the charged total
         //    matches smoke.json's price further down despite the wrong tool price sent) prove
         //    this session is priced from its own pack's menu, not from the echoed tool argument.
-        var realMenuPrice = PersonaMenuPrice.Read(
+        decimal realMenuPrice = PersonaMenuPrice.Read(
             fixture.PersonasDirectory, personaId, expected.OrderableItemName, expected.OrderableItemSize);
         Assert.Equal(realMenuPrice, expected.OrderableItemPrice);
 
@@ -152,7 +150,7 @@ file static class PersonaSmokeScenario
         //    PersonaSmokeExpectations.For's template -- this fixture runs on the real wall clock,
         //    not a FixedClock, so a happy-hour-eligible item's charged price would be
         //    time-of-day-dependent and this exact-match assertion would flake).
-        var addResult = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult addResult = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", expected.OrderableItemName, expected.OrderableItemSize, 1, 0.01m)],
             roundTripIndex, ct, callIdPrefix: "call_smoke_add");
@@ -166,7 +164,7 @@ file static class PersonaSmokeScenario
             $"pack's listed menu price ({expected.OrderableItemPrice}), not just contain 1 item.");
 
         // 4. not_on_menu rejection works.
-        var rejected = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult rejected = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
             JsonSerializer.Serialize(new
             {
@@ -190,7 +188,7 @@ public sealed class RealPackPersonaSmokeTests(ConformanceFixture fixture)
     public static TheoryData<string> DiscoveredPersonaIds()
     {
         var data = new TheoryData<string>();
-        foreach (var id in ConformancePersonas.DiscoverFromDisk())
+        foreach (string id in ConformancePersonas.DiscoverFromDisk())
         {
             data.Add(id);
         }

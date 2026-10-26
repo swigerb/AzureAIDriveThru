@@ -69,7 +69,7 @@ Cascade turns are slower than realtime: with `gpt-5-mini` and tool calls, a gues
 
 - Windows PowerShell 7 or a compatible shell.
 - Azure Developer CLI (`azd`), Azure CLI, Docker, Node.js 24 LTS (24.15+), Python 3.15 (3.12-3.14 remain supported), and Git.
-- The .NET 11 RC2 SDK pinned in `global.json`, only if you run the C# backend or conformance suites.
+- The .NET 11 RC3 SDK pinned in `global.json`, only if you run the C# backend or conformance suites.
 - Azure and GitHub authentication for deployment workflows.
 
 ### Dependency compatibility
@@ -82,7 +82,7 @@ manifest changes. Dependabot checks npm, pip, NuGet, containers, and GitHub Acti
 
 Current compatibility constraints:
 
-- The C# backend targets .NET 11 RC2, a prerelease SDK/runtime pinned in `global.json`. Moving to
+- The C# backend targets .NET 11 RC3, a prerelease SDK/runtime pinned in `global.json`. Moving to
   stable .NET 10 requires a separate target-framework change.
 - `azure-ai-inference` uses `1.0.0b9`; no stable release is available.
 - PyYAML 6.0.3 has no Windows wheel for Python 3.15. Setup scripts, CI, and the production image

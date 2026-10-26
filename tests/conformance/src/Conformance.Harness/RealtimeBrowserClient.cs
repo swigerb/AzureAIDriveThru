@@ -14,7 +14,7 @@ namespace Conformance.Harness;
 /// `startSession()`. Sends an `Origin` header on the handshake like a real browser would — by
 /// default the backend's own HTTP origin, since app/backend/static serves the built frontend
 /// same-origin in production (no separate dev-server origin to fake). Permessage-deflate is
-/// still opt-in per connection via <paramref name="offerDeflate"/> — real browsers always offer
+/// still opt-in per connection via <c>offerDeflate</c> — real browsers always offer
 /// it, but the harness defaults to off so tests that don't care about compression aren't coupled
 /// to it.
 /// </summary>
@@ -26,7 +26,7 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
     /// dropping) before falling back to cancelling its in-flight receive -- see
     /// <see cref="DisposeAsync"/>'s doc comment for why that fallback still exists.
     /// </summary>
-    private static readonly TimeSpan DisposeGracePeriod = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan s_disposeGracePeriod = TimeSpan.FromSeconds(2);
 
     /// <remarks>
     /// Typed as the abstract <see cref="WebSocket"/> base class, not <see cref="ClientWebSocket"/>,
@@ -53,18 +53,6 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
     /// </summary>
     private readonly SemaphoreSlim _sendLock = new(1, 1);
     private Task? _readerTask;
-    private WebSocketCloseStatus? _observedCloseStatus;
-    private string? _observedCloseStatusDescription;
-
-    /// <summary>
-    /// Captured once, eagerly, right after a real <see cref="ClientWebSocket"/> connects (see
-    /// <see cref="ConnectAsync"/>) -- <c>ClientWebSocket.HttpResponseHeaders</c> is a
-    /// <see cref="ClientWebSocket"/>-only member, unavailable once <see cref="_socket"/> is typed
-    /// as the base <see cref="WebSocket"/> class, so this is read out while the concrete type is
-    /// still known rather than read lazily off <see cref="_socket"/> every time
-    /// <see cref="NegotiatedExtensions"/> is queried.
-    /// </summary>
-    private string? _negotiatedExtensions;
 
     private RealtimeBrowserClient(WebSocket socket)
     {
@@ -84,10 +72,10 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
     /// implementation updates its own properties versus when it hands back the result of the
     /// receive call that observed the frame; reading from the result itself sidesteps it entirely.
     /// </summary>
-    public WebSocketCloseStatus? CloseStatus => _observedCloseStatus;
+    public WebSocketCloseStatus? CloseStatus { get; private set; }
 
     /// <summary>The close reason text the backend sent, or null if no Close frame was observed yet.</summary>
-    public string? CloseStatusDescription => _observedCloseStatusDescription;
+    public string? CloseStatusDescription { get; private set; }
 
     /// <summary>
     /// #28 N10: the underlying socket's own <see cref="WebSocketState"/> — exposed so a test can
@@ -104,7 +92,7 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
     /// left null, mint/fetch a fresh valid pair with zero changes needed at any of this method's
     /// ~100 existing call sites: <paramref name="accessToken"/> defaults to
     /// <see cref="EntraDefaultCredentials.TryGetAccessToken"/> for <paramref name="backendBaseUri"/>
-    /// (null on a <see cref="DevelopmentPassThroughFixture"/>'s backend, which has nothing
+    /// (null on a <c>DevelopmentPassThroughFixture</c>'s backend, which has nothing
     /// registered -- so no `?access_token` is sent there either way), and
     /// <paramref name="sessionToken"/> defaults to a real <c>GET /api/auth/session</c> fetch using
     /// that same access token as its Bearer header. Set either <c>attach*</c> flag to false to
@@ -119,7 +107,7 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
         string? model = null, string? mode = null, bool attachAccessToken = true, string? accessToken = null,
         bool attachSessionToken = true, string? sessionToken = null, CancellationToken cancellationToken = default)
     {
-        var resolvedAccessToken = attachAccessToken
+        string? resolvedAccessToken = attachAccessToken
             ? accessToken ?? EntraDefaultCredentials.TryGetAccessToken(backendBaseUri)
             : null;
 
@@ -183,14 +171,14 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
         {
             queryParams.Add($"mode={Uri.EscapeDataString(mode)}");
         }
-        var query = queryParams.Count > 0 ? $"?{string.Join('&', queryParams)}" : "";
+        string query = queryParams.Count > 0 ? $"?{string.Join('&', queryParams)}" : "";
         var wsUri = new Uri($"ws://{backendBaseUri.Host}:{backendBaseUri.Port}/realtime{query}");
         await clientSocket.ConnectAsync(wsUri, cancellationToken).ConfigureAwait(false);
 
 
         var client = new RealtimeBrowserClient(clientSocket)
         {
-            _negotiatedExtensions = clientSocket.HttpResponseHeaders?.TryGetValue("Sec-WebSocket-Extensions", out var values) == true
+            NegotiatedExtensions = clientSocket.HttpResponseHeaders?.TryGetValue("Sec-WebSocket-Extensions", out IEnumerable<string>? values) == true
                 ? string.Join(", ", values)
                 : null,
         };
@@ -217,7 +205,7 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
         {
             http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
         }
-        var tokenResponse = await http.GetFromJsonAsyncSafe(new Uri(backendBaseUri, "/api/auth/session"), cancellationToken)
+        JsonElement tokenResponse = await http.GetFromJsonAsyncSafe(new Uri(backendBaseUri, "/api/auth/session"), cancellationToken)
             .ConfigureAwait(false);
         return tokenResponse.GetProperty("token").GetString();
     }
@@ -244,7 +232,7 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
     /// <see cref="AbortAsync"/>'s await of its reader task -- not just its early-return when no
     /// reader is running at all -- needs a way to start one against the fake socket first. Starts
     /// the same loop <see cref="ConnectAsync"/> would have, with no real handshake and no real
-    /// timing: whatever the fake socket's <see cref="WebSocket.ReceiveAsync"/> does (including
+    /// timing: whatever the fake socket's <see cref="WebSocket.ReceiveAsync(ArraySegment{byte}, CancellationToken)"/> does (including
     /// throwing synchronously) happens on this loop's very first iteration, deterministically.
     /// </summary>
     internal void StartReaderLoopForTesting() => _readerTask = PumpReceivedFramesAsync(_readerCts.Token);
@@ -258,7 +246,7 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
     /// down, the abrupt-drop case already covered elsewhere) and a graceful
     /// <see cref="CloseAsync"/>: cancelling only <see cref="_readerCts"/> stops this client's own
     /// background <see cref="PumpReceivedFramesAsync"/> loop from ever calling
-    /// <see cref="WebSocket.ReceiveAsync"/> again, which is exactly where .NET's managed WebSocket
+    /// <see cref="WebSocket.ReceiveAsync(ArraySegment{byte}, CancellationToken)"/> again, which is exactly where .NET's managed WebSocket
     /// would otherwise notice an incoming Close frame and send back the answering one -- so no
     /// close handshake can ever complete from this side, exactly like a real stuck/hung peer.
     /// </summary>
@@ -334,7 +322,7 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
     /// </summary>
     public async Task SendAsync(JsonNode command, CancellationToken cancellationToken = default)
     {
-        var payload = JsonSerializer.SerializeToElement(command);
+        JsonElement payload = JsonSerializer.SerializeToElement(command);
         await _sendLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -359,7 +347,7 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
     /// </summary>
     public async Task SendRawTextAsync(string rawText, CancellationToken cancellationToken = default)
     {
-        var bytes = Encoding.UTF8.GetBytes(rawText);
+        byte[] bytes = Encoding.UTF8.GetBytes(rawText);
         await _sendLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -372,7 +360,7 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
     }
 
     /// <summary>The negotiated `Sec-WebSocket-Extensions` response header, or null if none was granted.</summary>
-    public string? NegotiatedExtensions => _negotiatedExtensions;
+    public string? NegotiatedExtensions { get; private set; }
 
     /// <summary>
     /// Initiates a graceful WebSocket close by sending a Close frame. Uses
@@ -525,13 +513,13 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
             // may still arrive"), so the loop must keep receiving through it.
             while (_socket.State is WebSocketState.Open or WebSocketState.CloseSent)
             {
-                var received = await WebSocketJson.ReceiveJsonOrCloseAsync(_socket, cancellationToken).ConfigureAwait(false);
+                WebSocketMessageOrClose received = await WebSocketJson.ReceiveJsonOrCloseAsync(_socket, cancellationToken).ConfigureAwait(false);
                 if (received.IsClose)
                 {
                     // Capture from the result itself, before anything else can observe or race
                     // with the socket's own (platform-dependent-timed) CloseStatus property.
-                    _observedCloseStatus = received.CloseStatus;
-                    _observedCloseStatusDescription = received.CloseStatusDescription;
+                    CloseStatus = received.CloseStatus;
+                    CloseStatusDescription = received.CloseStatusDescription;
                     return;
                 }
                 if (received.Json is null)
@@ -582,8 +570,8 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
     {
         if (_socket.State is WebSocketState.Closed or WebSocketState.CloseReceived)
         {
-            _observedCloseStatus = _socket.CloseStatus;
-            _observedCloseStatusDescription = _socket.CloseStatusDescription;
+            CloseStatus = _socket.CloseStatus;
+            CloseStatusDescription = _socket.CloseStatusDescription;
         }
     }
 
@@ -596,7 +584,7 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
     /// subject matter had anything to do with that. The default is now deliberate: attempt the
     /// same graceful Close frame <see cref="CloseAsync"/> would (best-effort — a scenario that
     /// already called <see cref="CloseAsync"/> itself finds the socket no longer <c>Open</c> here
-    /// and this is a no-op), then give the reader loop up to <see cref="DisposeGracePeriod"/> to
+    /// and this is a no-op), then give the reader loop up to <see cref="s_disposeGracePeriod"/> to
     /// settle on its own — cancelling its in-flight receive still aborts the socket the same as
     /// before, so that only happens as a last-resort fallback if the peer hasn't answered within
     /// the grace period, not on every disposal. A scenario whose own subject matter genuinely is
@@ -632,8 +620,8 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
 
         if (_readerTask is not null)
         {
-            var settledOnItsOwn = await Task.WhenAny(_readerTask, Task.Delay(DisposeGracePeriod)).ConfigureAwait(false)
-                == _readerTask;
+            await _readerTask.WaitAsync(s_disposeGracePeriod).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            bool settledOnItsOwn = _readerTask.IsCompleted;
             if (!settledOnItsOwn)
             {
                 await _readerCts.CancelAsync().ConfigureAwait(false);
@@ -666,10 +654,10 @@ internal static class HttpClientJsonExtensions
 {
     public static async Task<JsonElement> GetFromJsonAsyncSafe(this HttpClient http, Uri uri, CancellationToken cancellationToken)
     {
-        using var response = await http.GetAsync(uri, cancellationToken).ConfigureAwait(false);
+        using HttpResponseMessage response = await http.GetAsync(uri, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
-        var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
+        Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using JsonDocument document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
         return document.RootElement.Clone();
     }
 }

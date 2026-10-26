@@ -4,7 +4,7 @@
 // Keeping the ALIAS (rather than renaming every call site to `RateLimitSettings`) means
 // CascadeProcessor.cs and every existing Cascade test keep compiling unchanged.
 global using CascadeRateLimitSettings = Backend.Shared.RateLimitSettings;
-
+using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace Backend.Cascade;
@@ -71,8 +71,8 @@ internal static class CascadeRateLimit
         // Issue #13 Wave 2 convention (RealtimeProcessor's own _timeProvider): sourced from an
         // injectable clock so a test can swap in a FakeTimeProvider instead of waiting on the
         // real 0.5-8s wall-clock delays below. Defaults to TimeProvider.System in production.
-        var clock = timeProvider ?? TimeProvider.System;
-        var attempt = 0;
+        TimeProvider clock = timeProvider ?? TimeProvider.System;
+        int attempt = 0;
         while (true)
         {
             try
@@ -81,12 +81,10 @@ internal static class CascadeRateLimit
             }
             catch (FoundryHttpException exc) when (exc.StatusCode == 429 && settings.Enabled)
             {
-                var hint = exc.RetryAfterSeconds ?? ParseRetryHint(exc.Message);
+                double? hint = exc.RetryAfterSeconds ?? ParseRetryHint(exc.Message);
                 if (attempt >= settings.MaxRetries)
                 {
-                    logger?.LogWarning(
-                        "Cascade {OpName} rate-limited; retries exhausted after {Attempt} attempt(s) (session={SessionId})",
-                        opName, attempt, sessionId);
+                    logger?.CascadeRateLimitRetriesExhausted(opName, attempt, sessionId);
                     await notifyClient(
                         new JsonObject { ["type"] = RateLimitedEvent, ["attempt"] = attempt, ["final"] = true }, ct)
                         .ConfigureAwait(false);
@@ -104,9 +102,7 @@ internal static class CascadeRateLimit
                     await notifyClient(new JsonObject { ["type"] = RateLimitedEvent, ["attempt"] = attempt }, ct)
                         .ConfigureAwait(false);
                 }
-                logger?.LogInformation(
-                    "Cascade {OpName} rate-limited; retry {Attempt} after {Delay:F2}s (session={SessionId})",
-                    opName, attempt + 1, delay, sessionId);
+                logger?.CascadeRateLimitRetrying(opName, attempt + 1, delay, sessionId);
                 await Task.Delay(TimeSpan.FromSeconds(delay), clock, ct).ConfigureAwait(false);
                 attempt++;
             }
@@ -165,9 +161,9 @@ internal sealed class FoundryHttpException(int statusCode, double? retryAfterSec
             try
             {
                 using var doc = System.Text.Json.JsonDocument.Parse(Message);
-                return doc.RootElement.TryGetProperty("error", out var error)
+                return doc.RootElement.TryGetProperty("error", out JsonElement error)
                     && error.ValueKind == System.Text.Json.JsonValueKind.Object
-                    && error.TryGetProperty("code", out var code)
+                    && error.TryGetProperty("code", out JsonElement code)
                     && code.ValueKind == System.Text.Json.JsonValueKind.String
                     && code.GetString() == "content_filter";
             }

@@ -25,7 +25,7 @@ public static class DotnetPlaceholderPolicy
     /// <summary>
     /// Builds the exception <see cref="BackendLauncherFactory"/> should throw for
     /// CONFORMANCE_BACKEND=dotnet: <see cref="ConformanceBackendNotImplementedException"/> (which
-    /// <see cref="ConformanceFixture"/> turns into a skip) when <see cref="ShouldSkip"/> allows
+    /// <c>ConformanceFixture</c> turns into a skip) when <see cref="ShouldSkip"/> allows
     /// it, otherwise <see cref="ConformanceBackendUnavailableException"/> (which is never caught
     /// specially, so it fails every test in the collection).
     /// </summary>

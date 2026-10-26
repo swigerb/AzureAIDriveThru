@@ -56,22 +56,22 @@ public sealed class BackendHttpClientsTests
     [Fact]
     public async Task AddBackendHttpClients_DoesNotLogRequestsUnderHttpClientCategory()
     {
-        const string clientName = "test-client";
+        const string ClientName = "test-client";
         var provider = new RecordingLoggerProvider();
 
         var services = new ServiceCollection();
         services.AddLogging(b => b.AddProvider(provider));
-        services.AddBackendHttpClients(TimeSpan.FromMinutes(10), clientName);
+        services.AddBackendHttpClients(TimeSpan.FromMinutes(10), ClientName);
         // Overrides AddBackendHttpClients' SocketsHttpHandler with a fake one for this test --
         // IHttpClientFactory evaluates the last-registered primary-handler factory for a given
         // name, so this doesn't affect which RemoveAllLoggers() call is under test.
-        services.AddHttpClient(clientName).ConfigurePrimaryHttpMessageHandler(() => new ImmediateOkHandler());
+        services.AddHttpClient(ClientName).ConfigurePrimaryHttpMessageHandler(() => new ImmediateOkHandler());
 
-        await using var serviceProvider = services.BuildServiceProvider();
-        var factory = serviceProvider.GetRequiredService<IHttpClientFactory>();
-        var client = factory.CreateClient(clientName);
+        await using ServiceProvider serviceProvider = services.BuildServiceProvider();
+        IHttpClientFactory factory = serviceProvider.GetRequiredService<IHttpClientFactory>();
+        HttpClient client = factory.CreateClient(ClientName);
 
-        using var response = await client.GetAsync(
+        using HttpResponseMessage response = await client.GetAsync(
             new Uri("http://backend-http-clients-test.invalid/"), TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);

@@ -17,7 +17,7 @@ public sealed class CliRunnerTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var dir in _tempDirs)
+        foreach (string dir in _tempDirs)
         {
             if (Directory.Exists(dir))
             {
@@ -28,7 +28,7 @@ public sealed class CliRunnerTests : IDisposable
 
     private string CreateEmptyRepoRoot()
     {
-        var dir = Path.Combine(Path.GetTempPath(), $"squanchy-search-index-cli-runner-{Guid.NewGuid():n}");
+        string dir = Path.Combine(Path.GetTempPath(), $"squanchy-search-index-cli-runner-{Guid.NewGuid():n}");
         Directory.CreateDirectory(dir);
         _tempDirs.Add(dir);
         return dir;
@@ -40,7 +40,7 @@ public sealed class CliRunnerTests : IDisposable
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = CliRunner.Run(["--help"], stdout, stderr);
+        int exitCode = CliRunner.Run(["--help"], stdout, stderr);
 
         Assert.Equal(0, exitCode);
         Assert.Contains("Usage:", stdout.ToString());
@@ -60,7 +60,7 @@ public sealed class CliRunnerTests : IDisposable
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = CliRunner.Run(
+        int exitCode = CliRunner.Run(
             [],
             stdout,
             stderr,
@@ -69,7 +69,7 @@ public sealed class CliRunnerTests : IDisposable
 
         Assert.Equal(1, exitCode);
         Assert.Equal("", stdout.ToString());
-        var stderrText = stderr.ToString();
+        string stderrText = stderr.ToString();
         Assert.Contains("AZURE_OPENAI_EASTUS2_ENDPOINT", stderrText);
         Assert.Contains("--openai-endpoint", stderrText);
         // A clean, single-line, actionable message -- not a stack trace, unlike Python's own
@@ -105,7 +105,7 @@ public sealed class CliRunnerTests : IDisposable
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = CliRunner.Run(
+        int exitCode = CliRunner.Run(
             ["--openai-endpoint", "https://real.openai.azure.com"],
             stdout,
             stderr,
@@ -113,7 +113,7 @@ public sealed class CliRunnerTests : IDisposable
             getEnvironmentVariable: _ => null);
 
         Assert.Equal(1, exitCode);
-        var stderrText = stderr.ToString();
+        string stderrText = stderr.ToString();
         // The failure is persona discovery's, not the endpoint's -- confirming the endpoint flag
         // was accepted and never re-triggered the "no Azure OpenAI endpoint configured" message.
         Assert.DoesNotContain("Azure OpenAI endpoint not set", stderrText);
@@ -135,7 +135,7 @@ public sealed class CliRunnerTests : IDisposable
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = CliRunner.Run(
+        int exitCode = CliRunner.Run(
             [],
             stdout,
             stderr,
@@ -161,8 +161,8 @@ public sealed class CliRunnerTests : IDisposable
     [Fact]
     public void Run_ResolvesOpenAiEndpoint_FromARealTempAzureFolder_WithNoInjectionAndNoRealAzdCall()
     {
-        var repoRoot = CreateEmptyRepoRoot();
-        var envDir = Path.Combine(repoRoot, ".azure", "dev");
+        string repoRoot = CreateEmptyRepoRoot();
+        string envDir = Path.Combine(repoRoot, ".azure", "dev");
         Directory.CreateDirectory(envDir);
         File.WriteAllText(
             Path.Combine(repoRoot, ".azure", "config.json"),
@@ -174,7 +174,7 @@ public sealed class CliRunnerTests : IDisposable
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = CliRunner.Run(
+        int exitCode = CliRunner.Run(
             [],
             stdout,
             stderr,

@@ -93,7 +93,7 @@ public static class BackendProfiles
     /// runs on the Development pass-through fixture (no MSAL, no bearer, matching the frontend
     /// bundle's own <c>VITE_AUTH_MODE=Development</c> build), the same "Not Production" shape
     /// <see cref="DevelopmentPassThrough"/> already gives the mode rows. Paired with
-    /// <see cref="Conformance.Tests.Scenarios.Browser.BrowserConformanceFixture"/>'s
+    /// <c>Conformance.Tests.Scenarios.Browser.BrowserConformanceFixture</c>'s
     /// <c>UseEntraMode =&gt; false</c> override so no <c>ENTRA_*</c>/<c>AUTH_MODE</c> env is set at
     /// all for the Browser collection.
     /// </summary>
@@ -322,7 +322,7 @@ public static class BackendProfiles
     public static BackendProfile HooksOff { get; } = new("HooksOff", new Dictionary<string, string>());
 
     /// <summary>
-    /// Issue #143/ADR-002: for <see cref="Conformance.Tests.DevelopmentPassThroughFixture"/> and
+    /// Issue #143/ADR-002: for <c>Conformance.Tests.DevelopmentPassThroughFixture</c> and
     /// its explicit-mode sibling -- persona-architecture.md 18.5's "Development pass-through" row
     /// needs a "Not Production" environment on BOTH backends, not just Python's own
     /// CONFORMANCE_TEST_HOOKS=1-driven RUNNING_IN_PRODUCTION downgrade (<see

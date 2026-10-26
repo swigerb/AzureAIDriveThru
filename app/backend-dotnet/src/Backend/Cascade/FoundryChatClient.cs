@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -52,7 +53,7 @@ internal sealed class FoundryChatClient(HttpClient httpClient, string endpoint, 
     {
         var body = new JsonObject
         {
-            ["messages"] = new JsonArray(messages.Select(m => (JsonNode)m.DeepClone()).ToArray()),
+            ["messages"] = new JsonArray(messages.Select(m => m.DeepClone()).ToArray()),
             ["model"] = deployment,
         };
         if (disableTools)
@@ -62,35 +63,37 @@ internal sealed class FoundryChatClient(HttpClient httpClient, string endpoint, 
         }
         else if (toolDefinitions is { Count: > 0 })
         {
-            body["tools"] = new JsonArray(toolDefinitions.Select(t => (JsonNode)t.DeepClone()).ToArray());
+            body["tools"] = new JsonArray(toolDefinitions.Select(t => t.DeepClone()).ToArray());
         }
 
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{_endpoint}/chat/completions?api-version={ApiVersion}")
         {
             Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"),
         };
-        var token = await credential.GetTokenAsync(ct).ConfigureAwait(false);
+        string token = await credential.GetTokenAsync(ct).ConfigureAwait(false);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         diagnostic?.Request(messages);
-        using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, ct)
+        using HttpResponseMessage response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, ct)
             .ConfigureAwait(false);
-        var responseText = await ReadBodySafelyAsync(response, ct).ConfigureAwait(false);
+        string responseText = await ReadBodySafelyAsync(response, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             throw BuildHttpException(response, responseText);
         }
 
-        var root = JsonNode.Parse(responseText) as JsonObject
+        JsonObject root = JsonNode.Parse(responseText) as JsonObject
             ?? throw new InvalidOperationException("Foundry chat-completions response was not a JSON object.");
         var choices = root["choices"] as JsonArray;
-        var firstChoice = choices?.Count > 0 ? choices[0] as JsonObject : null;
-        var message = firstChoice?["message"] as JsonObject
+        JsonObject? firstChoice = choices?.Count > 0 ? choices[0] as JsonObject : null;
+        JsonObject message = firstChoice?["message"] as JsonObject
             ?? throw new InvalidOperationException("Foundry chat-completions response had no choices[0].message.");
         diagnostic?.Choice(message, firstChoice?["finish_reason"]?.GetValue<string>());
         return message;
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Best-effort error-body read: any failure falls back to a status-code-only message.")]
     private static async Task<string> ReadBodySafelyAsync(HttpResponseMessage response, CancellationToken ct)
     {
         try
@@ -107,7 +110,7 @@ internal sealed class FoundryChatClient(HttpClient httpClient, string endpoint, 
     private static FoundryHttpException BuildHttpException(HttpResponseMessage response, string body)
     {
         double? retryAfter = response.Headers.RetryAfter?.Delta?.TotalSeconds;
-        var message = string.IsNullOrEmpty(body) ? $"HTTP {(int)response.StatusCode}" : body;
+        string message = string.IsNullOrEmpty(body) ? $"HTTP {(int)response.StatusCode}" : body;
         return new FoundryHttpException((int)response.StatusCode, retryAfter, message);
     }
 }
@@ -139,11 +142,11 @@ internal static class CascadeToolDefinitions
     public static IReadOnlyList<JsonObject> FromToolSchemas(IReadOnlyList<JsonObject> toolSchemas)
     {
         var definitions = new List<JsonObject>(toolSchemas.Count);
-        foreach (var schema in toolSchemas)
+        foreach (JsonObject schema in toolSchemas)
         {
-            var name = schema["name"]?.GetValue<string>() ?? "";
-            var description = schema["description"]?.GetValue<string>() ?? "";
-            var parameters = schema["parameters"] is JsonNode p ? p.DeepClone() : new JsonObject();
+            string name = schema["name"]?.GetValue<string>() ?? "";
+            string description = schema["description"]?.GetValue<string>() ?? "";
+            JsonNode parameters = schema["parameters"] is JsonNode p ? p.DeepClone() : new JsonObject();
             definitions.Add(new JsonObject
             {
                 ["type"] = "function",

@@ -27,12 +27,12 @@ public sealed class AuthModeLaunchTests
 {
     // Never-dialled: a genuinely fail-fast backend must exit before attempting to reach either of
     // these, so nothing needs to actually be listening at them.
-    private static readonly Uri NeverDialedRealtime = new("http://127.0.0.1:1/");
-    private static readonly Uri NeverDialedSearch = new("http://127.0.0.1:1/");
+    private static readonly Uri s_neverDialedRealtime = new("http://127.0.0.1:1/");
+    private static readonly Uri s_neverDialedSearch = new("http://127.0.0.1:1/");
 
     private static async Task AssertFailsFastAsync(IReadOnlyDictionary<string, string> extraEnvironment, string caseLabel)
     {
-        var skipReason = AuthRowCapability.ShouldSkipCurrentBackend();
+        string? skipReason = AuthRowCapability.ShouldSkipCurrentBackend();
         if (skipReason is not null)
         {
             Assert.Skip(skipReason);
@@ -45,7 +45,7 @@ public sealed class AuthModeLaunchTests
         // exact port requested here never actually matters for what's under test, but a stray
         // NetworkUtils.GetFreeTcpPort() probe-then-release TOCTOU window (however unlikely to
         // matter here) is no longer the only path left in the harness that still does this.
-        var port = 0;
+        int port = 0;
         // R7 (Rick's PR #158 round 1 review): InvalidOperationException specifically -- both
         // launchers' own "exited early"/"exited immediately" message, never a TimeoutException (a
         // hang, not a fail-fast exit), a PortBindRaceException, or a build/launch error. Any of
@@ -53,16 +53,16 @@ public sealed class AuthModeLaunchTests
         // exactly why every row here passed today with "No exception was thrown" as the ONLY
         // real failure signal once #144/#147 actually implement the mode gate this row is meant
         // to pin.
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => BackendLauncherFactory.StartAsync(
-            NeverDialedRealtime, NeverDialedSearch, port, extraEnvironment: extraEnvironment,
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() => BackendLauncherFactory.StartAsync(
+            s_neverDialedRealtime, s_neverDialedSearch, port, extraEnvironment: extraEnvironment,
             cancellationToken: TestContext.Current.CancellationToken));
 
-        var exitCode = BackendExitCodeParser.TryParse(ex.Message);
+        int? exitCode = BackendExitCodeParser.TryParse(ex.Message);
         Assert.True(
             exitCode.HasValue,
             $"{caseLabel}: expected an \"exited early/immediately (code N)\" message proving the " +
             $"process actually exited before the port opened, got: {ex.Message}");
-        Assert.NotEqual(0, exitCode!.Value);
+        Assert.NotEqual(0, exitCode.Value);
     }
 
     [Fact]

@@ -7,14 +7,14 @@ namespace Backend.Tests.Auth;
 /// see docs/dotnet_mapping.md and the #44 comment for the position this suite backs up).</summary>
 public sealed class SessionTokenServiceTests
 {
-    private static readonly byte[] Secret = "test-secret-at-least-32-bytes-long!"u8.ToArray();
+    private static readonly byte[] s_secret = "test-secret-at-least-32-bytes-long!"u8.ToArray();
 
     [Fact]
     public void CreateThenValidate_RoundTrips()
     {
-        var service = new SessionTokenService(Secret);
+        var service = new SessionTokenService(s_secret);
 
-        var token = service.Create();
+        string token = service.Create();
 
         Assert.True(service.Validate(token));
     }
@@ -22,9 +22,9 @@ public sealed class SessionTokenServiceTests
     [Fact]
     public void Validate_RejectsExpiredToken()
     {
-        var service = new SessionTokenService(Secret);
+        var service = new SessionTokenService(s_secret);
 
-        var token = service.Create(expirySeconds: -10);
+        string token = service.Create(expirySeconds: -10);
 
         Assert.False(service.Validate(token));
     }
@@ -32,10 +32,10 @@ public sealed class SessionTokenServiceTests
     [Fact]
     public void Validate_RejectsTamperedPayload()
     {
-        var service = new SessionTokenService(Secret);
-        var token = service.Create();
-        var lastDot = token.LastIndexOf('.');
-        var tampered = token[..lastDot] + "AAAA" + token[lastDot..];
+        var service = new SessionTokenService(s_secret);
+        string token = service.Create();
+        int lastDot = token.LastIndexOf('.');
+        string tampered = token[..lastDot] + "AAAA" + token[lastDot..];
 
         Assert.False(service.Validate(tampered));
     }
@@ -43,10 +43,10 @@ public sealed class SessionTokenServiceTests
     [Fact]
     public void Validate_RejectsTamperedSignature()
     {
-        var service = new SessionTokenService(Secret);
-        var token = service.Create();
-        var lastDot = token.LastIndexOf('.');
-        var tampered = token[..(lastDot + 1)] + new string('0', token.Length - lastDot - 1);
+        var service = new SessionTokenService(s_secret);
+        string token = service.Create();
+        int lastDot = token.LastIndexOf('.');
+        string tampered = token[..(lastDot + 1)] + new string('0', token.Length - lastDot - 1);
 
         Assert.False(service.Validate(tampered));
     }
@@ -54,10 +54,10 @@ public sealed class SessionTokenServiceTests
     [Fact]
     public void Validate_RejectsTokenSignedWithDifferentSecret()
     {
-        var issuer = new SessionTokenService(Secret);
+        var issuer = new SessionTokenService(s_secret);
         var verifier = new SessionTokenService("a-completely-different-secret!!"u8.ToArray());
 
-        var token = issuer.Create();
+        string token = issuer.Create();
 
         Assert.False(verifier.Validate(token));
     }
@@ -68,7 +68,7 @@ public sealed class SessionTokenServiceTests
     [InlineData(".")]
     public void Validate_RejectsMalformedTokens(string malformed)
     {
-        var service = new SessionTokenService(Secret);
+        var service = new SessionTokenService(s_secret);
 
         Assert.False(service.Validate(malformed));
     }
@@ -79,11 +79,11 @@ public sealed class SessionTokenServiceTests
         // Byte-compatibility guard for #44: Python's json.dumps({"exp": n}) inserts exactly one
         // space after the colon and no other whitespace. Decode our own base64url payload and
         // assert the exact string shape rather than just round-tripping through our own Validate.
-        var service = new SessionTokenService(Secret);
+        var service = new SessionTokenService(s_secret);
 
-        var token = service.Create(expirySeconds: 900);
-        var payloadB64 = token[..token.LastIndexOf('.')];
-        var payloadJson = System.Text.Encoding.UTF8.GetString(
+        string token = service.Create(expirySeconds: 900);
+        string payloadB64 = token[..token.LastIndexOf('.')];
+        string payloadJson = System.Text.Encoding.UTF8.GetString(
             Convert.FromBase64String(payloadB64.Replace('-', '+').Replace('_', '/')));
 
         Assert.Matches(@"^\{""exp"": \d+\}$", payloadJson);
@@ -97,10 +97,10 @@ public sealed class SessionTokenServiceTests
         // signature re-cased to uppercase must be rejected, not silently accepted. A previous
         // draft called .ToLowerInvariant() on the presented signature before comparing, which
         // broke this parity.
-        var service = new SessionTokenService(Secret);
-        var token = service.Create();
-        var lastDot = token.LastIndexOf('.');
-        var uppercased = token[..(lastDot + 1)] + token[(lastDot + 1)..].ToUpperInvariant();
+        var service = new SessionTokenService(s_secret);
+        string token = service.Create();
+        int lastDot = token.LastIndexOf('.');
+        string uppercased = token[..(lastDot + 1)] + token[(lastDot + 1)..].ToUpperInvariant();
 
         Assert.False(service.Validate(uppercased));
     }
@@ -110,30 +110,30 @@ public sealed class SessionTokenServiceTests
     [Fact]
     public void TryValidate_RoundTripsOid()
     {
-        var service = new SessionTokenService(Secret);
-        var token = service.Create(expirySeconds: 900, oid: "33333333-3333-3333-3333-333333333333");
+        var service = new SessionTokenService(s_secret);
+        string token = service.Create(expirySeconds: 900, oid: "33333333-3333-3333-3333-333333333333");
 
-        Assert.True(service.TryValidate(token, out var oid));
+        Assert.True(service.TryValidate(token, out string? oid));
         Assert.Equal("33333333-3333-3333-3333-333333333333", oid);
     }
 
     [Fact]
     public void TryValidate_OmittedOid_ReturnsNull()
     {
-        var service = new SessionTokenService(Secret);
-        var token = service.Create(expirySeconds: 900);
+        var service = new SessionTokenService(s_secret);
+        string token = service.Create(expirySeconds: 900);
 
-        Assert.True(service.TryValidate(token, out var oid));
+        Assert.True(service.TryValidate(token, out string? oid));
         Assert.Null(oid);
     }
 
     [Fact]
     public void TryValidate_ExpiredTokenWithOid_ReturnsNullOid()
     {
-        var service = new SessionTokenService(Secret);
-        var token = service.Create(expirySeconds: -10, oid: "33333333-3333-3333-3333-333333333333");
+        var service = new SessionTokenService(s_secret);
+        string token = service.Create(expirySeconds: -10, oid: "33333333-3333-3333-3333-333333333333");
 
-        Assert.False(service.TryValidate(token, out var oid));
+        Assert.False(service.TryValidate(token, out string? oid));
         Assert.Null(oid);
     }
 
@@ -143,11 +143,11 @@ public sealed class SessionTokenServiceTests
         // Same byte-compatibility guard as the exp-only case above, but for create_hmac_token's
         // `oid` branch: Python's json.dumps({"exp": n, "oid": oid}) inserts exp before oid, one
         // space after each colon, one space after the comma, no trailing whitespace.
-        var service = new SessionTokenService(Secret);
+        var service = new SessionTokenService(s_secret);
 
-        var token = service.Create(expirySeconds: 900, oid: "33333333-3333-3333-3333-333333333333");
-        var payloadB64 = token[..token.LastIndexOf('.')];
-        var payloadJson = System.Text.Encoding.UTF8.GetString(
+        string token = service.Create(expirySeconds: 900, oid: "33333333-3333-3333-3333-333333333333");
+        string payloadB64 = token[..token.LastIndexOf('.')];
+        string payloadJson = System.Text.Encoding.UTF8.GetString(
             Convert.FromBase64String(payloadB64.Replace('-', '+').Replace('_', '/')));
 
         Assert.Matches(
@@ -160,15 +160,15 @@ public sealed class SessionTokenServiceTests
         // The oid is inside the signed payload, not appended after it -- swapping it for a
         // different (still well-formed) oid must fail the HMAC check like any other payload
         // tamper, not silently validate with the attacker's substituted oid.
-        var service = new SessionTokenService(Secret);
-        var token = service.Create(expirySeconds: 900, oid: "33333333-3333-3333-3333-333333333333");
-        var forged = service.Create(expirySeconds: 900, oid: "44444444-4444-4444-4444-444444444444");
-        var lastDot = token.LastIndexOf('.');
-        var forgedLastDot = forged.LastIndexOf('.');
+        var service = new SessionTokenService(s_secret);
+        string token = service.Create(expirySeconds: 900, oid: "33333333-3333-3333-3333-333333333333");
+        string forged = service.Create(expirySeconds: 900, oid: "44444444-4444-4444-4444-444444444444");
+        int lastDot = token.LastIndexOf('.');
+        int forgedLastDot = forged.LastIndexOf('.');
         // Re-attach the ORIGINAL signature to the FORGED (different-oid) payload.
-        var tampered = forged[..forgedLastDot] + "." + token[(lastDot + 1)..];
+        string tampered = forged[..forgedLastDot] + "." + token[(lastDot + 1)..];
 
-        Assert.False(service.TryValidate(tampered, out var oid));
+        Assert.False(service.TryValidate(tampered, out string? oid));
         Assert.Null(oid);
     }
 }

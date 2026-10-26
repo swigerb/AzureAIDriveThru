@@ -29,29 +29,29 @@ namespace Conformance.Tests;
 [Collection(ConformanceCollection.Name)]
 public sealed class HeartbeatPongSurvivalTests(ConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Data_frame_sent_immediately_after_a_raw_pong_frame_in_the_same_write_is_still_processed() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        bool noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(s_frameTimeout, ct);
         Assert.True(noneOpen, $"Expected no open upstream connections at test start, but " +
             $"{fixture.Realtime.OpenConnectionCount} are still open — a previous test leaked a connection.");
 
-        var backendUri = fixture.Backend!.BaseUri;
-        var query = await RealtimeUris.BuildQueryAsync(backendUri, cancellationToken: ct);
+        Uri backendUri = fixture.Backend!.BaseUri;
+        string query = await RealtimeUris.BuildQueryAsync(backendUri, cancellationToken: ct);
 
         using var tcp = new TcpClient();
         await tcp.ConnectAsync(backendUri.Host, backendUri.Port, ct);
-        await using var stream = tcp.GetStream();
+        await using NetworkStream stream = tcp.GetStream();
 
-        var keyBytes = new byte[16];
+        byte[] keyBytes = new byte[16];
         Random.Shared.NextBytes(keyBytes);
-        var secWebSocketKey = Convert.ToBase64String(keyBytes);
-        var origin = $"{backendUri.Scheme}://{backendUri.Authority}";
-        var request =
+        string secWebSocketKey = Convert.ToBase64String(keyBytes);
+        string origin = $"{backendUri.Scheme}://{backendUri.Authority}";
+        string request =
             $"GET /realtime?{query} HTTP/1.1\r\n" +
             $"Host: {backendUri.Host}:{backendUri.Port}\r\n" +
             "Upgrade: websocket\r\n" +
@@ -62,33 +62,33 @@ public sealed class HeartbeatPongSurvivalTests(ConformanceFixture fixture)
             "\r\n";
         await stream.WriteAsync(Encoding.ASCII.GetBytes(request), ct);
 
-        var handshakeResponse = await ReadHttpHeadersAsync(stream, ct);
+        string handshakeResponse = await ReadHttpHeadersAsync(stream, ct);
         Assert.Contains("101", handshakeResponse.Split("\r\n", 2)[0], StringComparison.Ordinal);
 
         // The browser's own startSession() session.update (see
         // RealtimeBrowserClient.SendStartSessionAsync) -- a real data frame that should trigger a
         // full greeting round trip if the connection is still healthy after the PONG.
-        var startSessionJson = """{"type":"session.update","session":{"turn_detection":{"type":"server_vad","threshold":0.7,"prefix_padding_ms":300,"silence_duration_ms":500},"input_audio_transcription":{"model":"whisper-1"}}}""";
+        string startSessionJson = """{"type":"session.update","session":{"turn_detection":{"type":"server_vad","threshold":0.7,"prefix_padding_ms":300,"silence_duration_ms":500},"input_audio_transcription":{"model":"whisper-1"}}}""";
 
-        var pongFrame = BuildMaskedClientFrame(opcode: 0xA, payload: []); // unsolicited Pong, empty payload
-        var textFrame = BuildMaskedClientFrame(opcode: 0x1, payload: Encoding.UTF8.GetBytes(startSessionJson));
+        byte[] pongFrame = BuildMaskedClientFrame(opcode: 0xA, payload: []); // unsolicited Pong, empty payload
+        byte[] textFrame = BuildMaskedClientFrame(opcode: 0x1, payload: Encoding.UTF8.GetBytes(startSessionJson));
 
         // The whole point: both frames in ONE write, so they land in the server's read buffer
         // together -- the exact byte-adjacency #13274 was about, reproduced deterministically
         // instead of waited for.
-        var combined = new byte[pongFrame.Length + textFrame.Length];
+        byte[] combined = new byte[pongFrame.Length + textFrame.Length];
         Buffer.BlockCopy(pongFrame, 0, combined, 0, pongFrame.Length);
         Buffer.BlockCopy(textFrame, 0, combined, pongFrame.Length, textFrame.Length);
         await stream.WriteAsync(combined, ct);
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeoutCts.CancelAfter(FrameTimeout);
-        var sawRoundTripToken = false;
+        timeoutCts.CancelAfter(s_frameTimeout);
+        bool sawRoundTripToken = false;
         try
         {
             while (!sawRoundTripToken)
             {
-                var (opcode, payload) = await ReadServerFrameAsync(stream, timeoutCts.Token);
+                (byte opcode, byte[]? payload) = await ReadServerFrameAsync(stream, timeoutCts.Token);
                 if (opcode == 0x8) // Close
                 {
                     Assert.Fail("Server closed the connection instead of processing the frame after the PONG.");
@@ -98,7 +98,7 @@ public sealed class HeartbeatPongSurvivalTests(ConformanceFixture fixture)
                     continue;
                 }
                 using var doc = JsonDocument.Parse(payload);
-                if (doc.RootElement.TryGetProperty("type", out var typeProp) && typeProp.GetString() == "extension.round_trip_token")
+                if (doc.RootElement.TryGetProperty("type", out JsonElement typeProp) && typeProp.GetString() == "extension.round_trip_token")
                 {
                     sawRoundTripToken = true;
                 }
@@ -106,7 +106,7 @@ public sealed class HeartbeatPongSurvivalTests(ConformanceFixture fixture)
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            Assert.Fail($"Never observed extension.round_trip_token within {FrameTimeout} after the PONG-then-data write -- " +
+            Assert.Fail($"Never observed extension.round_trip_token within {s_frameTimeout} after the PONG-then-data write -- " +
                 "the connection did not survive the PONG-then-data sequence, or stopped forwarding frames.");
         }
 
@@ -117,10 +117,10 @@ public sealed class HeartbeatPongSurvivalTests(ConformanceFixture fixture)
     private static async Task<string> ReadHttpHeadersAsync(NetworkStream stream, CancellationToken cancellationToken)
     {
         var sb = new StringBuilder();
-        var single = new byte[1];
+        byte[] single = new byte[1];
         while (!sb.ToString().EndsWith("\r\n\r\n", StringComparison.Ordinal))
         {
-            var read = await stream.ReadAsync(single.AsMemory(0, 1), cancellationToken);
+            int read = await stream.ReadAsync(single.AsMemory(0, 1), cancellationToken);
             if (read == 0)
             {
                 throw new IOException("Connection closed before the WebSocket handshake completed.");
@@ -138,10 +138,10 @@ public sealed class HeartbeatPongSurvivalTests(ConformanceFixture fixture)
             throw new NotSupportedException("This minimal test helper doesn't support 64-bit extended frame lengths.");
         }
 
-        var mask = new byte[4];
+        byte[] mask = new byte[4];
         Random.Shared.NextBytes(mask);
-        var masked = new byte[payload.Length];
-        for (var i = 0; i < payload.Length; i++)
+        byte[] masked = new byte[payload.Length];
+        for (int i = 0; i < payload.Length; i++)
         {
             masked[i] = (byte)(payload[i] ^ mask[i % 4]);
         }
@@ -166,23 +166,23 @@ public sealed class HeartbeatPongSurvivalTests(ConformanceFixture fixture)
     /// <summary>Reads one raw (server-to-client, unmasked per RFC 6455) WebSocket frame.</summary>
     private static async Task<(byte Opcode, byte[] Payload)> ReadServerFrameAsync(NetworkStream stream, CancellationToken cancellationToken)
     {
-        var header = new byte[2];
+        byte[] header = new byte[2];
         await ReadExactAsync(stream, header, cancellationToken);
-        var opcode = (byte)(header[0] & 0x0F);
-        var masked = (header[1] & 0x80) != 0;
+        byte opcode = (byte)(header[0] & 0x0F);
+        bool masked = (header[1] & 0x80) != 0;
         long length = header[1] & 0x7F;
         if (length == 126)
         {
-            var ext = new byte[2];
+            byte[] ext = new byte[2];
             await ReadExactAsync(stream, ext, cancellationToken);
             length = (ext[0] << 8) | ext[1];
         }
         else if (length == 127)
         {
-            var ext = new byte[8];
+            byte[] ext = new byte[8];
             await ReadExactAsync(stream, ext, cancellationToken);
             length = 0;
-            foreach (var b in ext)
+            foreach (byte b in ext)
             {
                 length = (length << 8) | b;
             }
@@ -195,11 +195,11 @@ public sealed class HeartbeatPongSurvivalTests(ConformanceFixture fixture)
             await ReadExactAsync(stream, maskKey, cancellationToken);
         }
 
-        var payload = new byte[length];
+        byte[] payload = new byte[length];
         await ReadExactAsync(stream, payload, cancellationToken);
         if (masked)
         {
-            for (var i = 0; i < payload.Length; i++)
+            for (int i = 0; i < payload.Length; i++)
             {
                 payload[i] ^= maskKey![i % 4];
             }
@@ -209,10 +209,10 @@ public sealed class HeartbeatPongSurvivalTests(ConformanceFixture fixture)
 
     private static async Task ReadExactAsync(NetworkStream stream, byte[] buffer, CancellationToken cancellationToken)
     {
-        var offset = 0;
+        int offset = 0;
         while (offset < buffer.Length)
         {
-            var read = await stream.ReadAsync(buffer.AsMemory(offset), cancellationToken);
+            int read = await stream.ReadAsync(buffer.AsMemory(offset), cancellationToken);
             if (read == 0)
             {
                 throw new IOException("Connection closed while reading a WebSocket frame.");

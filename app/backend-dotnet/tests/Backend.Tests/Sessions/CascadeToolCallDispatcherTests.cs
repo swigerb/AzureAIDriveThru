@@ -72,21 +72,22 @@ public sealed class CascadeToolCallDispatcherTests
             ["id"] = "synthetic-call",
             ["function"] = new JsonObject { ["name"] = "get_order", ["arguments"] = "{}" },
         };
-        var handler = new RoutingFoundryHandler()
-            .EnqueueChatMessage("assistant", "Adding your combo.", new JsonArray(call))
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", "Adding your combo.", [call])
             .EnqueueChatMessage("assistant", "What drink would you like?");
-        var state = NewState();
+        CascadeProcessor.CascadeSessionState state = NewState();
         state.Messages.Add(CascadeChatMessage.User("NEVER-COPY-GUEST"));
         var logger = new CascadeDiagnosticCaptureTests.RecordingLogger();
         var capture = new CascadeDiagnosticCapture("session-1", DateTimeOffset.UtcNow.AddMinutes(10),
-            TimeProvider.System, logger) { ResponseId = "response-1" };
-        var dispatcher = NewDispatcher(handler, new RecordingToolExecutor(["get_order"]), state,
+            TimeProvider.System, logger)
+        { ResponseId = "response-1" };
+        CascadeToolCallDispatcher dispatcher = NewDispatcher(handler, new RecordingToolExecutor(["get_order"]), state,
             configureContext: context => context.Diagnostic = capture);
 
-        Assert.Equal("What drink would you like?", await dispatcher.RunChatToolLoopAsync(CancellationToken.None));
+        Assert.Equal("What drink would you like?", await dispatcher.RunChatToolLoopAsync(TestContext.Current.CancellationToken));
 
-        var secondRequest = JsonNode.Parse(handler.ChatRequestBodies[1])!;
-        Assert.Equal(new[] { "user", "assistant", "tool" },
+        JsonNode secondRequest = JsonNode.Parse(handler.ChatRequestBodies[1])!;
+        Assert.Equal<string>(["user", "assistant", "tool"],
             secondRequest["messages"]!.AsArray().Select(m => m!["role"]!.GetValue<string>()));
         Assert.Equal("Adding your combo.", secondRequest["messages"]![1]!["content"]!.GetValue<string>());
         Assert.Equal(4, state.Messages.Count);
@@ -99,10 +100,10 @@ public sealed class CascadeToolCallDispatcherTests
     [Fact]
     public async Task Diagnostic_does_not_follow_resumed_session_binding()
     {
-        var handler = new RoutingFoundryHandler().EnqueueChatMessage("assistant", "Restored.");
+        RoutingFoundryHandler handler = new RoutingFoundryHandler().EnqueueChatMessage("assistant", "Restored.");
         var logger = new CascadeDiagnosticCaptureTests.RecordingLogger();
         CascadeSessionContext? context = null;
-        var dispatcher = NewDispatcher(handler, new RecordingToolExecutor([]), NewState(),
+        CascadeToolCallDispatcher dispatcher = NewDispatcher(handler, new RecordingToolExecutor([]), NewState(),
             configureContext: created =>
             {
                 context = created;
@@ -111,7 +112,7 @@ public sealed class CascadeToolCallDispatcherTests
             });
         context!.SessionId = "resumed-session";
 
-        Assert.Equal("Restored.", await dispatcher.RunChatToolLoopAsync(CancellationToken.None));
+        Assert.Equal("Restored.", await dispatcher.RunChatToolLoopAsync(TestContext.Current.CancellationToken));
 
         Assert.Null(context.Diagnostic);
         Assert.Empty(logger.Lines);
@@ -120,22 +121,22 @@ public sealed class CascadeToolCallDispatcherTests
     [Fact]
     public async Task RunChatToolLoopAsync_usesTheResumedExecutorInsteadOfTheProvisionalBinding()
     {
-        var handler = new RoutingFoundryHandler()
-            .EnqueueChatMessage("assistant", null, new JsonArray(new JsonObject
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", null, [new JsonObject
             {
                 ["id"] = "resumed-call",
                 ["function"] = new JsonObject { ["name"] = "get_order", ["arguments"] = "{}" },
-            }))
+            }])
             .EnqueueChatMessage("assistant", "Restored.");
         var provisional = new RecordingToolExecutor(["get_order"]);
         var resumed = new RecordingToolExecutor(["get_order"]);
         CascadeSessionContext? context = null;
-        var dispatcher = NewDispatcher(handler, provisional, NewState(),
+        CascadeToolCallDispatcher dispatcher = NewDispatcher(handler, provisional, NewState(),
             configureContext: created => context = created);
         context!.SessionId = "resumed-session";
         context.ToolExecutor = resumed;
 
-        Assert.Equal("Restored.", await dispatcher.RunChatToolLoopAsync(CancellationToken.None));
+        Assert.Equal("Restored.", await dispatcher.RunChatToolLoopAsync(TestContext.Current.CancellationToken));
 
         Assert.Empty(provisional.ReceivedArgumentsJson);
         Assert.Single(resumed.ReceivedArgumentsJson);
@@ -144,11 +145,11 @@ public sealed class CascadeToolCallDispatcherTests
     [Fact]
     public async Task RunChatToolLoopAsync_NoToolCalls_ReturnsAssistantContentAndAppendsIt()
     {
-        var handler = new RoutingFoundryHandler().EnqueueChatMessage("assistant", "Order confirmed.");
-        var state = NewState();
-        var dispatcher = NewDispatcher(handler, new StubToolExecutor([]), state);
+        RoutingFoundryHandler handler = new RoutingFoundryHandler().EnqueueChatMessage("assistant", "Order confirmed.");
+        CascadeProcessor.CascadeSessionState state = NewState();
+        CascadeToolCallDispatcher dispatcher = NewDispatcher(handler, new StubToolExecutor([]), state);
 
-        var result = await dispatcher.RunChatToolLoopAsync(CancellationToken.None);
+        string result = await dispatcher.RunChatToolLoopAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("Order confirmed.", result);
         Assert.Contains(state.Messages, m => m["role"]?.GetValue<string>() == "assistant"
@@ -163,14 +164,14 @@ public sealed class CascadeToolCallDispatcherTests
             ["id"] = "call-1",
             ["function"] = new JsonObject { ["name"] = "get_order", ["arguments"] = """{"a":1}""" },
         };
-        var handler = new RoutingFoundryHandler()
-            .EnqueueChatMessage("assistant", null, new JsonArray(toolCall))
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", null, [toolCall])
             .EnqueueChatMessage("assistant", "Here's your order.");
         var toolExecutor = new RecordingToolExecutor(["get_order"]);
-        var state = NewState();
-        var dispatcher = NewDispatcher(handler, toolExecutor, state);
+        CascadeProcessor.CascadeSessionState state = NewState();
+        CascadeToolCallDispatcher dispatcher = NewDispatcher(handler, toolExecutor, state);
 
-        var result = await dispatcher.RunChatToolLoopAsync(CancellationToken.None);
+        string result = await dispatcher.RunChatToolLoopAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("Here's your order.", result);
         Assert.Single(toolExecutor.ReceivedArgumentsJson);
@@ -185,18 +186,18 @@ public sealed class CascadeToolCallDispatcherTests
             ["id"] = "call-2",
             ["function"] = new JsonObject { ["name"] = "not_a_real_tool", ["arguments"] = "{}" },
         };
-        var handler = new RoutingFoundryHandler()
-            .EnqueueChatMessage("assistant", null, new JsonArray(toolCall))
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", null, [toolCall])
             .EnqueueChatMessage("assistant", "Done.");
         var toolExecutor = new RecordingToolExecutor(["get_order"]);
-        var state = NewState();
-        var dispatcher = NewDispatcher(handler, toolExecutor, state);
+        CascadeProcessor.CascadeSessionState state = NewState();
+        CascadeToolCallDispatcher dispatcher = NewDispatcher(handler, toolExecutor, state);
 
-        var result = await dispatcher.RunChatToolLoopAsync(CancellationToken.None);
+        string result = await dispatcher.RunChatToolLoopAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("Done.", result);
         Assert.Empty(toolExecutor.ReceivedArgumentsJson);
-        var toolMessage = Assert.Single(state.Messages, m => m["role"]?.GetValue<string>() == "tool");
+        JsonObject toolMessage = Assert.Single(state.Messages, m => m["role"]?.GetValue<string>() == "tool");
         Assert.Equal("", toolMessage["content"]?.GetValue<string>());
     }
 
@@ -208,18 +209,18 @@ public sealed class CascadeToolCallDispatcherTests
             ["id"] = "call-3",
             ["function"] = new JsonObject { ["name"] = "get_order", ["arguments"] = "{}" },
         };
-        var handler = new RoutingFoundryHandler()
-            .EnqueueChatMessage("assistant", null, new JsonArray(toolCall))
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
+            .EnqueueChatMessage("assistant", null, [toolCall])
             .EnqueueChatMessage("assistant", "Recovered.");
         var toolExecutor = new RecordingToolExecutor(
             ["get_order"], (_, _, _) => throw new InvalidOperationException("boom"));
-        var state = NewState();
-        var dispatcher = NewDispatcher(handler, toolExecutor, state);
+        CascadeProcessor.CascadeSessionState state = NewState();
+        CascadeToolCallDispatcher dispatcher = NewDispatcher(handler, toolExecutor, state);
 
-        var result = await dispatcher.RunChatToolLoopAsync(CancellationToken.None);
+        string result = await dispatcher.RunChatToolLoopAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("Recovered.", result);
-        var toolMessage = Assert.Single(state.Messages, m => m["role"]?.GetValue<string>() == "tool");
+        JsonObject toolMessage = Assert.Single(state.Messages, m => m["role"]?.GetValue<string>() == "tool");
         Assert.Contains("Something went wrong", toolMessage["content"]?.GetValue<string>());
     }
 
@@ -227,20 +228,20 @@ public sealed class CascadeToolCallDispatcherTests
     public async Task RunChatToolLoopAsync_CapsAtMaxRounds_ReturnsEmptyString()
     {
         var handler = new RoutingFoundryHandler();
-        for (var i = 0; i < CascadeProcessor.MaxToolRounds; i++)
+        for (int i = 0; i < CascadeProcessor.MaxToolRounds; i++)
         {
             var toolCall = new JsonObject
             {
                 ["id"] = $"call-{i}",
                 ["function"] = new JsonObject { ["name"] = "get_order", ["arguments"] = "{}" },
             };
-            handler.EnqueueChatMessage("assistant", null, new JsonArray(toolCall));
+            handler.EnqueueChatMessage("assistant", null, [toolCall]);
         }
         var toolExecutor = new RecordingToolExecutor(["get_order"]);
-        var state = NewState();
-        var dispatcher = NewDispatcher(handler, toolExecutor, state);
+        CascadeProcessor.CascadeSessionState state = NewState();
+        CascadeToolCallDispatcher dispatcher = NewDispatcher(handler, toolExecutor, state);
 
-        var result = await dispatcher.RunChatToolLoopAsync(CancellationToken.None);
+        string result = await dispatcher.RunChatToolLoopAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("", result);
         Assert.Equal(CascadeProcessor.MaxToolRounds, toolExecutor.ReceivedArgumentsJson.Count);

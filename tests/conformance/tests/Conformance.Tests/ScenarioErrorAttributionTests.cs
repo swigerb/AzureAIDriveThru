@@ -41,7 +41,7 @@ public sealed class ScenarioErrorAttributionTests
         var attribution = new ScenarioErrorAttribution();
         attribution.RecordScenarioChecked("GreetingTimeoutFallbackTests.Greeting_still_fires", checkedAgainstCount: 5, unusedAllowance: 0);
 
-        var message = attribution.ChargeStrandedErrorsToPreviousScenario(currentCount: 6);
+        string? message = attribution.ChargeStrandedErrorsToPreviousScenario(currentCount: 6);
 
         Assert.NotNull(message);
         Assert.Contains("GreetingTimeoutFallbackTests.Greeting_still_fires", message);
@@ -55,7 +55,7 @@ public sealed class ScenarioErrorAttributionTests
         attribution.RecordScenarioChecked("ScenarioA", checkedAgainstCount: 10, unusedAllowance: 1);
 
         // 3 stranded errors landed; only 1 is covered by ScenarioA's leftover allowance.
-        var message = attribution.ChargeStrandedErrorsToPreviousScenario(currentCount: 13);
+        string? message = attribution.ChargeStrandedErrorsToPreviousScenario(currentCount: 13);
 
         Assert.NotNull(message);
         Assert.Contains("ScenarioA", message);
@@ -132,7 +132,7 @@ public sealed class ScenarioErrorAttributionTests
 
         // Scenario B's own pre-body charge is the first to observe the late line from A -- it
         // fails, naming A.
-        var messageForB = attribution.ChargeStrandedErrorsToPreviousScenario(currentCount: 6);
+        string? messageForB = attribution.ChargeStrandedErrorsToPreviousScenario(currentCount: 6);
         Assert.NotNull(messageForB);
         Assert.Contains("ScenarioA", messageForB);
 
@@ -166,7 +166,7 @@ public sealed class ScenarioErrorAttributionTests
         var attribution = new ScenarioErrorAttribution();
         attribution.RecordScenarioChecked("ScenarioA", checkedAgainstCount: 5, unusedAllowance: 0);
 
-        var firstCharge = attribution.ChargeStrandedErrorsToPreviousScenario(currentCount: 6);
+        string? firstCharge = attribution.ChargeStrandedErrorsToPreviousScenario(currentCount: 6);
         Assert.NotNull(firstCharge);
         Assert.Contains("ScenarioA", firstCharge);
 
@@ -196,7 +196,7 @@ public sealed class ScenarioErrorAttributionTests
         // pre-body charge -- this must fail, clearly naming the startup pseudo-scenario, not the
         // "<unknown scenario>" fallback (which would mean nobody ever recorded any history at
         // all).
-        var messageForA = attribution.ChargeStrandedErrorsToPreviousScenario(currentCount: 2);
+        string? messageForA = attribution.ChargeStrandedErrorsToPreviousScenario(currentCount: 2);
         Assert.NotNull(messageForA);
         Assert.Contains(ScenarioErrorAttribution.StartupScenarioName, messageForA);
         Assert.DoesNotContain("<unknown scenario>", messageForA);
@@ -223,14 +223,14 @@ public sealed class ScenarioErrorAttributionTests
     public void BeginScenario_reads_the_unhandled_error_count_exactly_once()
     {
         var attribution = new ScenarioErrorAttribution();
-        var callCount = 0;
+        int callCount = 0;
         int ReadCount()
         {
             callCount++;
             return 10 + callCount;
         }
 
-        var (baseline, strandedMessage) = attribution.BeginScenario(ReadCount);
+        (int baseline, string? strandedMessage) = attribution.BeginScenario(ReadCount);
 
         Assert.Equal(1, callCount);
         Assert.Equal(11, baseline); // the one (and only) call's own return value
@@ -245,14 +245,14 @@ public sealed class ScenarioErrorAttributionTests
     public void EndScenario_reads_the_unhandled_error_count_exactly_once()
     {
         var attribution = new ScenarioErrorAttribution();
-        var callCount = 0;
+        int callCount = 0;
         int ReadCount()
         {
             callCount++;
             return 5 + callCount;
         }
 
-        var (actual, withinBound) = attribution.EndScenario(
+        (int actual, bool withinBound) = attribution.EndScenario(
             "ScenarioA", ReadCount, baseline: 5, allowedNewBackendErrors: 1);
 
         Assert.Equal(1, callCount);
@@ -277,13 +277,13 @@ public sealed class ScenarioErrorAttributionTests
     public void BeginScenario_and_EndScenario_together_attribute_a_line_landing_in_the_gap_between_scenarios_not_lose_it()
     {
         var attribution = new ScenarioErrorAttribution();
-        var count = 0;
+        int count = 0;
         int ReadCount() => count;
 
         // Scenario A: begins and ends with no errors at all.
-        var (baselineA, strandedBeforeA) = attribution.BeginScenario(ReadCount);
+        (int baselineA, string? strandedBeforeA) = attribution.BeginScenario(ReadCount);
         Assert.Null(strandedBeforeA);
-        var (actualA, withinBoundA) = attribution.EndScenario(
+        (int actualA, bool withinBoundA) = attribution.EndScenario(
             "ScenarioA", ReadCount, baselineA, allowedNewBackendErrors: 0);
         Assert.True(withinBoundA);
 
@@ -293,17 +293,17 @@ public sealed class ScenarioErrorAttributionTests
 
         // Scenario B's own BeginScenario is the FIRST thing to read the count after that line
         // landed -- it must see it and charge it to A.
-        var (baselineB, strandedBeforeB) = attribution.BeginScenario(ReadCount);
+        (int baselineB, string? strandedBeforeB) = attribution.BeginScenario(ReadCount);
         Assert.NotNull(strandedBeforeB);
         Assert.Contains("ScenarioA", strandedBeforeB);
         Assert.Equal(1, baselineB); // B's own baseline still reflects the real, current count --
-                                     // charging it to A does not also hide it from B.
+                                    // charging it to A does not also hide it from B.
 
         attribution.RecordScenarioChecked("ScenarioB", checkedAgainstCount: 1, unusedAllowance: 0);
 
         // Scenario C must be completely unaffected -- B's own BeginScenario already consumed
         // (advanced past) the one stranded line; it must not cascade.
-        var (_, strandedBeforeC) = attribution.BeginScenario(ReadCount);
+        (int _, string? strandedBeforeC) = attribution.BeginScenario(ReadCount);
         Assert.Null(strandedBeforeC);
     }
 }

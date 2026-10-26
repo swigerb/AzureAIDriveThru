@@ -27,7 +27,7 @@ public static class RealtimeUris
     public static async Task<Uri> WithDefaultCredentialsAsync(
         Uri backendBaseUri, string? extraQuery = null, CancellationToken cancellationToken = default)
     {
-        var query = await BuildQueryAsync(backendBaseUri, extraQuery, cancellationToken).ConfigureAwait(false);
+        string query = await BuildQueryAsync(backendBaseUri, extraQuery, cancellationToken).ConfigureAwait(false);
         return new Uri($"ws://{backendBaseUri.Host}:{backendBaseUri.Port}/realtime{(query.Length > 0 ? $"?{query}" : "")}");
     }
 
@@ -40,10 +40,10 @@ public static class RealtimeUris
         Uri backendBaseUri, string? extraQuery = null, CancellationToken cancellationToken = default)
     {
         var queryParams = new List<string>();
-        var accessToken = EntraDefaultCredentials.TryGetAccessToken(backendBaseUri);
+        string? accessToken = EntraDefaultCredentials.TryGetAccessToken(backendBaseUri);
         if (accessToken is not null)
         {
-            var sessionToken = await RealtimeBrowserClient.FetchSessionTokenAsync(backendBaseUri, accessToken, cancellationToken)
+            string? sessionToken = await RealtimeBrowserClient.FetchSessionTokenAsync(backendBaseUri, accessToken, cancellationToken)
                 .ConfigureAwait(false);
             queryParams.Add($"access_token={Uri.EscapeDataString(accessToken)}");
             queryParams.Add($"token={Uri.EscapeDataString(sessionToken ?? "")}");

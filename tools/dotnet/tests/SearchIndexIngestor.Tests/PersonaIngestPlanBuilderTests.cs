@@ -24,7 +24,7 @@ public sealed class PersonaIngestPlanBuilderTests : IDisposable
         var persona = new EnabledPersonaDiscovery.DiscoveredPersona(
             "alpha", "alpha-index", Path.Combine(_dir, "does-not-exist.json"));
 
-        var ex = Assert.Throws<InvalidOperationException>(() => PersonaIngestPlanBuilder.Build(persona));
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => PersonaIngestPlanBuilder.Build(persona));
         Assert.Contains("alpha", ex.Message);
         Assert.Contains("menu data file not found", ex.Message);
     }
@@ -33,7 +33,7 @@ public sealed class PersonaIngestPlanBuilderTests : IDisposable
     public void Build_ReturnsPlan_WithOneDocumentAndTextPerMenuItem_InFileOrder()
     {
         Directory.CreateDirectory(_dir);
-        var menuPath = Path.Combine(_dir, "menuItems.json");
+        string menuPath = Path.Combine(_dir, "menuItems.json");
         File.WriteAllText(
             menuPath,
             """
@@ -51,7 +51,7 @@ public sealed class PersonaIngestPlanBuilderTests : IDisposable
             """);
         var persona = new EnabledPersonaDiscovery.DiscoveredPersona("alpha", "alpha-index", menuPath);
 
-        var plan = PersonaIngestPlanBuilder.Build(persona);
+        PersonaIngestPlan plan = PersonaIngestPlanBuilder.Build(persona);
 
         Assert.Equal("alpha", plan.PersonaId);
         Assert.Equal("alpha-index", plan.IndexName);

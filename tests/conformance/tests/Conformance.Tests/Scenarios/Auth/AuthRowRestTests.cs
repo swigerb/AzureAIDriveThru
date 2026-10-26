@@ -22,7 +22,7 @@ public sealed class AuthRowRestTokenTests(ConformanceFixture fixture)
 {
     /// <summary>18.11's own three named REST routes -- deliberately not the anonymous allow-list
     /// (row 12 covers that separately) or an unknown route (row 13 is realtime-only).</summary>
-    private static readonly string[] RestPaths =
+    private static readonly string[] s_restPaths =
     [
         "/api/personas",
         "/api/auth/session",
@@ -32,7 +32,7 @@ public sealed class AuthRowRestTokenTests(ConformanceFixture fixture)
     public static TheoryData<int> CaseIndexes()
     {
         var data = new TheoryData<int>();
-        for (var i = 0; i < AuthRowTokenCase.All.Length; i++)
+        for (int i = 0; i < AuthRowTokenCase.All.Length; i++)
         {
             data.Add(i);
         }
@@ -44,11 +44,11 @@ public sealed class AuthRowRestTokenTests(ConformanceFixture fixture)
     [MemberData(nameof(CaseIndexes))]
     public Task Row_asserts_on_every_REST_path(int caseIndex) => fixture.RunAuthRowAsync(async () =>
     {
-        var row = AuthRowTokenCase.All[caseIndex];
-        var token = row.MintToken(fixture.EntraIssuer!);
-        var ct = TestContext.Current.CancellationToken;
+        AuthRowTokenCase row = AuthRowTokenCase.All[caseIndex];
+        string? token = row.MintToken(fixture.EntraIssuer!);
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
-        foreach (var path in RestPaths)
+        foreach (string path in s_restPaths)
         {
             // A raw HttpClient, not ConformanceHttpClient.Create(): this row controls the
             // Authorization header itself (including "no header at all" for row 1), which the
@@ -60,7 +60,7 @@ public sealed class AuthRowRestTokenTests(ConformanceFixture fixture)
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             }
 
-            using var response = await http.SendAsync(request, ct).ConfigureAwait(false);
+            using HttpResponseMessage response = await http.SendAsync(request, ct).ConfigureAwait(false);
             AssertExpectedOutcome(row, path, response);
         }
     });
@@ -118,14 +118,14 @@ public sealed class AuthRowRestTokenTests(ConformanceFixture fixture)
     [InlineData("BeArEr")]
     public Task Scheme_case_insensitive_Bearer_scheme_is_accepted(string scheme) => fixture.RunAuthRowAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var token = fixture.EntraIssuer!.Mint();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string token = fixture.EntraIssuer!.Mint();
 
         using var http = new HttpClient();
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(fixture.Backend!.BaseUri, "/api/personas"));
         request.Headers.Authorization = new AuthenticationHeaderValue(scheme, token);
 
-        using var response = await http.SendAsync(request, ct).ConfigureAwait(false);
+        using HttpResponseMessage response = await http.SendAsync(request, ct).ConfigureAwait(false);
 
         Assert.True(
             response.StatusCode == HttpStatusCode.OK,

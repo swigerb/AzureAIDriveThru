@@ -14,7 +14,7 @@ namespace SearchIndexRequestBuilder;
 /// <c>load_azd_env()</c> -- <c>load_dotenv(path, override=True)</c> -- BEFORE <c>run()</c> reads
 /// <c>os.environ</c>, so an azd-managed value always wins over a pre-existing process environment
 /// variable of the same name. This port's precedence is therefore CLI flag (Python has none) &gt;
-/// azd default-environment value (<paramref name="azdEnvValues"/>, see
+/// azd default-environment value (<c>azdEnvValues</c>, see
 /// <see cref="AzdEnvLoader"/>) &gt; process environment variable &gt; (deployment only) the
 /// built-in default. (PR #250 review R5.)
 /// </summary>
@@ -28,7 +28,7 @@ internal static class OpenAiSettingsResolver
     private const string OpenAiEndpointVariableName = "AZURE_OPENAI_EASTUS2_ENDPOINT";
     private const string EmbeddingDeploymentVariableName = "AZURE_OPENAI_EMBEDDING_DEPLOYMENT";
 
-    private static readonly IReadOnlyDictionary<string, string> EmptyAzdValues =
+    private static readonly IReadOnlyDictionary<string, string> s_emptyAzdValues =
         new Dictionary<string, string>();
 
     public sealed record Settings(string OpenAiEndpoint, string EmbeddingDeployment);
@@ -78,10 +78,10 @@ internal static class OpenAiSettingsResolver
         Func<string, string?>? getEnvironmentVariable = null,
         IReadOnlyDictionary<string, string>? azdEnvValues = null)
     {
-        var getEnv = getEnvironmentVariable ?? Environment.GetEnvironmentVariable;
-        var azdValues = azdEnvValues ?? EmptyAzdValues;
+        Func<string, string?> getEnv = getEnvironmentVariable ?? Environment.GetEnvironmentVariable;
+        IReadOnlyDictionary<string, string> azdValues = azdEnvValues ?? s_emptyAzdValues;
 
-        var openAiEndpoint = openAiEndpointFlag;
+        string? openAiEndpoint = openAiEndpointFlag;
         if (string.IsNullOrEmpty(openAiEndpoint))
         {
             openAiEndpoint = GetNonEmptyOrNull(azdValues, OpenAiEndpointVariableName);
@@ -98,7 +98,7 @@ internal static class OpenAiSettingsResolver
                 "AZURE_OPENAI_EASTUS2_ENDPOINT environment variable.");
         }
 
-        var embeddingDeployment = embeddingDeploymentFlag;
+        string? embeddingDeployment = embeddingDeploymentFlag;
         if (string.IsNullOrEmpty(embeddingDeployment))
         {
             embeddingDeployment = GetNonEmptyOrNull(azdValues, EmbeddingDeploymentVariableName);
@@ -116,5 +116,5 @@ internal static class OpenAiSettingsResolver
     }
 
     private static string? GetNonEmptyOrNull(IReadOnlyDictionary<string, string> values, string key) =>
-        values.TryGetValue(key, out var value) && !string.IsNullOrEmpty(value) ? value : null;
+        values.TryGetValue(key, out string? value) && !string.IsNullOrEmpty(value) ? value : null;
 }

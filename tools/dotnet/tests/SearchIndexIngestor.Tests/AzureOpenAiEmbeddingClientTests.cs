@@ -24,17 +24,17 @@ public sealed class AzureOpenAiEmbeddingClientTests
             """{"data":[{"embedding":[0.2,0.3],"index":1},{"embedding":[0.0,0.1],"index":0}]}"""));
         using var client = new AzureOpenAiEmbeddingClient(new HttpClient(handler), "https://fake.openai.azure.com");
 
-        var result = await client.GenerateEmbeddingsAsync(["first text", "second text"], "my-deployment", CancellationToken.None);
+        IReadOnlyList<IReadOnlyList<double>> result = await client.GenerateEmbeddingsAsync(["first text", "second text"], "my-deployment", CancellationToken.None);
 
         Assert.Equal([0.0, 0.1], result[0]);
         Assert.Equal([0.2, 0.3], result[1]);
 
-        var request = Assert.Single(handler.Requests);
+        CapturedRequest request = Assert.Single(handler.Requests);
         Assert.Equal(HttpMethod.Post, request.Method);
         Assert.Equal(
             "https://fake.openai.azure.com/openai/deployments/my-deployment/embeddings?api-version=2024-06-01",
             request.Uri);
-        var body = JsonNode.Parse(request.Body!)!.AsObject();
+        JsonObject body = JsonNode.Parse(request.Body!)!.AsObject();
         Assert.Equal(["first text", "second text"], body["input"]!.AsArray().Select(v => v!.GetValue<string>()));
         // Matches openai's own embeddings.create(input=texts, model=deployment) body shape
         // (Rick's review, item 4/round 2). "encoding_format" is a documented, accepted divergence
@@ -60,7 +60,7 @@ public sealed class AzureOpenAiEmbeddingClientTests
         var handler = new FakeHttpMessageHandler(_ => FakeHttpMessageHandler.PlainText(HttpStatusCode.Unauthorized, "denied"));
         using var client = new AzureOpenAiEmbeddingClient(new HttpClient(handler), "https://fake.openai.azure.com");
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => client.GenerateEmbeddingsAsync(["text"], "my-deployment", CancellationToken.None));
         Assert.Contains("401", ex.Message);
     }
@@ -71,7 +71,7 @@ public sealed class AzureOpenAiEmbeddingClientTests
         // Rick's review, item 2b: openai==1.109.1's own pinned Timeout(connect=5, read=600,
         // write=600, pool=600). This port represents that single 600 s "overall" budget via
         // HttpClient.Timeout (see AzureOpenAiEmbeddingClient.CreateForProduction's own remarks).
-        using var http = AzureOpenAiEmbeddingClient.CreateProductionHttpClient(new FakeTokenCredential());
+        using HttpClient http = AzureOpenAiEmbeddingClient.CreateProductionHttpClient(new FakeTokenCredential());
 
         Assert.Equal(TimeSpan.FromSeconds(600), http.Timeout);
         Assert.Equal(TimeSpan.FromSeconds(5), AzureOpenAiEmbeddingClient.ProductionConnectTimeout);
@@ -84,7 +84,7 @@ public sealed class AzureOpenAiEmbeddingClientTests
         // End-to-end proof that CreateForProduction's handler chain (OpenAiRetryHandler wrapping
         // the bearer-token handler) actually retries -- not just that OpenAiRetryHandler's own unit
         // tests pass in isolation.
-        var attempts = 0;
+        int attempts = 0;
         var innerHandler = new FakeHttpMessageHandler(_ =>
         {
             attempts++;

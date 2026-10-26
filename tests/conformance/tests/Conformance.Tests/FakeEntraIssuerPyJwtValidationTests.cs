@@ -36,7 +36,7 @@ namespace Conformance.Tests;
 [Trait("Dotnet", "n/a-harness")] // Issue #21: backend-agnostic harness self-test, never exercises app/backend or app/backend-dotnet.
 public sealed class FakeEntraIssuerPyJwtValidationTests
 {
-    private static readonly string ScriptPath = Path.Combine(
+    private static readonly string s_scriptPath = Path.Combine(
         RepoPaths.FindRepoRoot(), "tests", "conformance", "tests", "Conformance.Tests", "Scripts",
         "verify_fake_entra_token.py");
 
@@ -55,7 +55,7 @@ public sealed class FakeEntraIssuerPyJwtValidationTests
     /// <summary>The first candidate interpreter with PyJWT importable, or null if none qualify.</summary>
     private static async Task<string?> FindInterpreterWithPyJwtAsync(CancellationToken cancellationToken)
     {
-        foreach (var candidate in CandidateInterpreters())
+        foreach (string candidate in CandidateInterpreters())
         {
             if (await CanImportPyJwtAsync(candidate, cancellationToken).ConfigureAwait(false))
             {
@@ -73,14 +73,14 @@ public sealed class FakeEntraIssuerPyJwtValidationTests
     /// </summary>
     private static async Task<string> RequireInterpreterWithPyJwtAsync(CancellationToken cancellationToken)
     {
-        var interpreter = await FindInterpreterWithPyJwtAsync(cancellationToken).ConfigureAwait(false);
+        string? interpreter = await FindInterpreterWithPyJwtAsync(cancellationToken).ConfigureAwait(false);
         if (interpreter is not null)
         {
             return interpreter;
         }
 
-        var isCi = CiEnvironment.IsCi;
-        var message = PyJwtInteropPolicy.BuildMessage(interpreterFound: false, isCi);
+        bool isCi = CiEnvironment.IsCi;
+        string message = PyJwtInteropPolicy.BuildMessage(interpreterFound: false, isCi);
         if (PyJwtInteropPolicy.ShouldSkip(interpreterFound: false, isCi))
         {
             Assert.Skip(message);
@@ -97,7 +97,7 @@ public sealed class FakeEntraIssuerPyJwtValidationTests
     {
         try
         {
-            var (exitCode, _, _) = await RunProcessAsync(
+            (int exitCode, string _, string _) = await RunProcessAsync(
                 interpreter, ["-c", "import jwt"], cancellationToken).ConfigureAwait(false);
             return exitCode == 0;
         }
@@ -121,36 +121,36 @@ public sealed class FakeEntraIssuerPyJwtValidationTests
                 UseShellExecute = false,
             },
         };
-        foreach (var arg in arguments)
+        foreach (string arg in arguments)
         {
             process.StartInfo.ArgumentList.Add(arg);
         }
 
         process.Start();
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        Task<string> stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
         await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
         return (process.ExitCode, await stdoutTask.ConfigureAwait(false), await stderrTask.ConfigureAwait(false));
     }
 
     private static async Task<(int ExitCode, string Stdout, string Stderr)> VerifyAsync(
         string interpreter, string issuerUrl, string audience, string token, CancellationToken cancellationToken) =>
-        await RunProcessAsync(interpreter, [ScriptPath, issuerUrl, audience, token], cancellationToken)
+        await RunProcessAsync(interpreter, [s_scriptPath, issuerUrl, audience, token], cancellationToken)
             .ConfigureAwait(false);
 
     [Fact]
     public async Task Valid_minted_token_validates_with_stock_PyJWT()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var interpreter = await RequireInterpreterWithPyJwtAsync(ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string interpreter = await RequireInterpreterWithPyJwtAsync(ct);
 
         await using var issuer = new FakeEntraIssuer();
         await issuer.StartAsync(ct);
         try
         {
-            var token = issuer.Mint();
+            string token = issuer.Mint();
 
-            var (exitCode, stdout, stderr) = await VerifyAsync(
+            (int exitCode, string? stdout, string? stderr) = await VerifyAsync(
                 interpreter, issuer.Issuer, FakeEntraIssuer.DefaultClientId, token, ct);
 
             Assert.True(exitCode == 0, $"Expected PyJWT to accept a valid minted token. stdout: {stdout} stderr: {stderr}");
@@ -165,16 +165,16 @@ public sealed class FakeEntraIssuerPyJwtValidationTests
     [Fact]
     public async Task Token_signed_by_the_unpublished_key_is_rejected_by_PyJWT()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var interpreter = await RequireInterpreterWithPyJwtAsync(ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string interpreter = await RequireInterpreterWithPyJwtAsync(ct);
 
         await using var issuer = new FakeEntraIssuer();
         await issuer.StartAsync(ct);
         try
         {
-            var token = issuer.Mint(new FakeEntraTokenOverrides { Key = FakeEntraSigningKey.Unpublished });
+            string token = issuer.Mint(new FakeEntraTokenOverrides { Key = FakeEntraSigningKey.Unpublished });
 
-            var (exitCode, _, stderr) = await VerifyAsync(
+            (int exitCode, string _, string? stderr) = await VerifyAsync(
                 interpreter, issuer.Issuer, FakeEntraIssuer.DefaultClientId, token, ct);
 
             Assert.NotEqual(0, exitCode);
@@ -189,20 +189,20 @@ public sealed class FakeEntraIssuerPyJwtValidationTests
     [Fact]
     public async Task Expired_token_is_rejected_by_PyJWT()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var interpreter = await RequireInterpreterWithPyJwtAsync(ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string interpreter = await RequireInterpreterWithPyJwtAsync(ct);
 
         await using var issuer = new FakeEntraIssuer();
         await issuer.StartAsync(ct);
         try
         {
-            var token = issuer.Mint(new FakeEntraTokenOverrides
+            string token = issuer.Mint(new FakeEntraTokenOverrides
             {
                 Exp = DateTimeOffset.UtcNow.AddMinutes(-20),
                 Nbf = DateTimeOffset.UtcNow.AddMinutes(-30),
             });
 
-            var (exitCode, _, stderr) = await VerifyAsync(
+            (int exitCode, string _, string? stderr) = await VerifyAsync(
                 interpreter, issuer.Issuer, FakeEntraIssuer.DefaultClientId, token, ct);
 
             Assert.NotEqual(0, exitCode);

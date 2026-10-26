@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Conformance.Fakes;
 using Conformance.Harness;
 using Conformance.Tests.Scenarios.Ordering;
@@ -16,32 +17,32 @@ namespace Conformance.Tests;
 [Collection(FixedClockConformanceCollection.Name)]
 public sealed class HappyHourPricingTests(FixedClockConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Happy_hour_discount_applies_at_the_frozen_clock_instant() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        bool noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(s_frameTimeout, ct);
         Assert.True(noneOpen, $"Expected no open upstream connections at test start, but " +
             $"{fixture.Realtime.OpenConnectionCount} are still open — a previous test leaked a connection.");
 
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
         await browser.SendStartSessionAsync(cancellationToken: ct);
-        var greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        RecordedFrame? greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token", s_frameTimeout, ct);
         Assert.True(greetingRoundTrip is not null, "Greeting round trip never completed.");
 
-        const string callId = "call_update_order_happy_hour";
+        const string CallId = "call_update_order_happy_hour";
         // #104: update_order now prices from the resolved menu record, not the caller-supplied
         // tool price, so this must be the real menu price (personas/sonic/menu/menuItems.json,
         // "Cherry Limeade" medium) rather than an arbitrary tool-call constant.
-        const double price = 2.89;
+        const double Price = 2.89;
         connection!.Script.Enqueue(new ResponseScript([
             new FunctionCallEvent(
                 Name: "update_order",
@@ -51,45 +52,45 @@ public sealed class HappyHourPricingTests(FixedClockConformanceFixture fixture)
                 // Size must be one of Cherry Limeade's real sizes (mini/small/medium/large/route 44)
                 // or the #73 size gate rejects it as size_not_available -- "Regular" was never a
                 // real size for this item and is replaced with "medium" here.
-                ArgumentsJson: $$"""{"action":"add","item_name":"Cherry Limeade","size":"medium","quantity":1,"price":{{price}}}""",
-                CallId: callId),
+                ArgumentsJson: $$"""{"action":"add","item_name":"Cherry Limeade","size":"medium","quantity":1,"price":{{Price}}}""",
+                CallId: CallId),
             new DoneEvent(),
         ]));
         await browser.SendResponseCreateAsync(ct);
 
-        var functionCallOutput = await connection!.ReceivedFrames.WaitForAsync(
+        RecordedFrame? functionCallOutput = await connection!.ReceivedFrames.WaitForAsync(
             f => f.Type == "conversation.item.create" &&
-                 f.Json.TryGetProperty("item", out var item) &&
-                 item.TryGetProperty("type", out var itemType) &&
+                 f.Json.TryGetProperty("item", out JsonElement item) &&
+                 item.TryGetProperty("type", out JsonElement itemType) &&
                  itemType.GetString() == "function_call_output" &&
-                 item.TryGetProperty("call_id", out var respondedCallId) &&
-                 respondedCallId.GetString() == callId,
-            FrameTimeout, ct);
+                 item.TryGetProperty("call_id", out JsonElement respondedCallId) &&
+                 respondedCallId.GetString() == CallId,
+            s_frameTimeout, ct);
         Assert.True(functionCallOutput is not null,
-            $"Expected a conversation.item.create(function_call_output) for call_id={callId} upstream within {FrameTimeout}.");
+            $"Expected a conversation.item.create(function_call_output) for call_id={CallId} upstream within {s_frameTimeout}.");
 
-        var toolResponse = await browser.ReceivedFrames.WaitForAsync(
+        RecordedFrame? toolResponse = await browser.ReceivedFrames.WaitForAsync(
             f => f.Type == "extension.middle_tier_tool_response" &&
-                 f.Json.TryGetProperty("tool_name", out var toolName) &&
+                 f.Json.TryGetProperty("tool_name", out JsonElement toolName) &&
                  toolName.GetString() == "update_order",
-            FrameTimeout, ct);
+            s_frameTimeout, ct);
         Assert.True(toolResponse is not null,
-            $"Expected extension.middle_tier_tool_response for update_order on the browser within {FrameTimeout}.");
+            $"Expected extension.middle_tier_tool_response for update_order on the browser within {s_frameTimeout}.");
 
         // tool_result is the order summary's JSON-serialised OrderSummary (see
         // app/backend/tools.py's update_order -> client_text=json_order_summary). Parsed as
         // decimal per the money contract (golden-order-pricing.json's own `description` /
         // README's "Money contract" section) -- never GetDouble(), which would reintroduce the
         // double-arithmetic rounding this suite's decimal contract exists to catch.
-        var toolResultJson = toolResponse!.Json.GetProperty("tool_result").GetString();
+        string? toolResultJson = toolResponse!.Json.GetProperty("tool_result").GetString();
         Assert.NotNull(toolResultJson);
-        var finalTotal = OrderScenarioHelpers.GetOrderFinalTotal(toolResultJson!);
+        decimal finalTotal = OrderScenarioHelpers.GetOrderFinalTotal(toolResultJson!);
 
         // price(2.89) * qty(1) * happy_hour_discount(0.5) = 1.445 subtotal; tax = 1.445 * tax_rate
         // (0.08) = 0.1156; finalTotal = 1.5606. See app/backend/config.yaml's business_rules and
         // order_state.py's _update_summary. Exact decimal, no rounding at any step (must-fix #1).
-        const decimal expectedFinalTotal = 1.5606m;
-        OrderScenarioHelpers.AssertMoneyEqual(expectedFinalTotal, finalTotal);
+        const decimal ExpectedFinalTotal = 1.5606m;
+        OrderScenarioHelpers.AssertMoneyEqual(ExpectedFinalTotal, finalTotal);
 
         // The "backend logged no unhandled error during this scenario" invariant (PR #22 review
         // item N5) is now a fixture-wide, language-neutral check applied by
@@ -112,63 +113,63 @@ public sealed class HappyHourPricingTests(FixedClockConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Pre_discounted_tool_call_price_is_not_double_discounted_at_the_frozen_clock_instant() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        bool noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(s_frameTimeout, ct);
         Assert.True(noneOpen, $"Expected no open upstream connections at test start, but " +
             $"{fixture.Realtime.OpenConnectionCount} are still open — a previous test leaked a connection.");
 
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
         await browser.SendStartSessionAsync(cancellationToken: ct);
-        var greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        RecordedFrame? greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token", s_frameTimeout, ct);
         Assert.True(greetingRoundTrip is not null, "Greeting round trip never completed.");
 
-        const string callId = "call_update_order_happy_hour_pre_discounted";
+        const string CallId = "call_update_order_happy_hour_pre_discounted";
         // Deliberately the already-halved price (2.89 * 0.5 = 1.445, rounded here to 1.45 as a
         // model might send it) -- the point of this test is that this value is ignored entirely.
-        const double preDiscountedPrice = 1.45;
+        const double PreDiscountedPrice = 1.45;
         connection!.Script.Enqueue(new ResponseScript([
             new FunctionCallEvent(
                 Name: "update_order",
-                ArgumentsJson: $$"""{"action":"add","item_name":"Cherry Limeade","size":"medium","quantity":1,"price":{{preDiscountedPrice}}}""",
-                CallId: callId),
+                ArgumentsJson: $$"""{"action":"add","item_name":"Cherry Limeade","size":"medium","quantity":1,"price":{{PreDiscountedPrice}}}""",
+                CallId: CallId),
             new DoneEvent(),
         ]));
         await browser.SendResponseCreateAsync(ct);
 
-        var functionCallOutput = await connection!.ReceivedFrames.WaitForAsync(
+        RecordedFrame? functionCallOutput = await connection!.ReceivedFrames.WaitForAsync(
             f => f.Type == "conversation.item.create" &&
-                 f.Json.TryGetProperty("item", out var item) &&
-                 item.TryGetProperty("type", out var itemType) &&
+                 f.Json.TryGetProperty("item", out JsonElement item) &&
+                 item.TryGetProperty("type", out JsonElement itemType) &&
                  itemType.GetString() == "function_call_output" &&
-                 item.TryGetProperty("call_id", out var respondedCallId) &&
-                 respondedCallId.GetString() == callId,
-            FrameTimeout, ct);
+                 item.TryGetProperty("call_id", out JsonElement respondedCallId) &&
+                 respondedCallId.GetString() == CallId,
+            s_frameTimeout, ct);
         Assert.True(functionCallOutput is not null,
-            $"Expected a conversation.item.create(function_call_output) for call_id={callId} upstream within {FrameTimeout}.");
+            $"Expected a conversation.item.create(function_call_output) for call_id={CallId} upstream within {s_frameTimeout}.");
 
-        var toolResponse = await browser.ReceivedFrames.WaitForAsync(
+        RecordedFrame? toolResponse = await browser.ReceivedFrames.WaitForAsync(
             f => f.Type == "extension.middle_tier_tool_response" &&
-                 f.Json.TryGetProperty("tool_name", out var toolName) &&
+                 f.Json.TryGetProperty("tool_name", out JsonElement toolName) &&
                  toolName.GetString() == "update_order",
-            FrameTimeout, ct);
+            s_frameTimeout, ct);
         Assert.True(toolResponse is not null,
-            $"Expected extension.middle_tier_tool_response for update_order on the browser within {FrameTimeout}.");
+            $"Expected extension.middle_tier_tool_response for update_order on the browser within {s_frameTimeout}.");
 
-        var toolResultJson = toolResponse!.Json.GetProperty("tool_result").GetString();
+        string? toolResultJson = toolResponse!.Json.GetProperty("tool_result").GetString();
         Assert.NotNull(toolResultJson);
-        var finalTotal = OrderScenarioHelpers.GetOrderFinalTotal(toolResultJson!);
+        decimal finalTotal = OrderScenarioHelpers.GetOrderFinalTotal(toolResultJson!);
 
         // menu_price(2.89) * qty(1) * happy_hour_discount(0.5) = 1.445 subtotal; tax = 1.445 *
         // tax_rate (0.08) = 0.1156; finalTotal = 1.5606 -- identical to the real-menu-price test
         // above, proving the ignored tool-call price (already pre-discounted or not) never changes
         // the result.
-        const decimal expectedFinalTotal = 1.5606m;
-        OrderScenarioHelpers.AssertMoneyEqual(expectedFinalTotal, finalTotal,
+        const decimal ExpectedFinalTotal = 1.5606m;
+        OrderScenarioHelpers.AssertMoneyEqual(ExpectedFinalTotal, finalTotal,
             "A pre-discounted tool-call price (1.45) must not be discounted again -- the resolved " +
             "menu price (2.89) must be discounted exactly once, landing on the same 1.5606 " +
             "finalTotal as an undiscounted tool-call price, never 0.783 (double-discounted).");

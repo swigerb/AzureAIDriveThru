@@ -16,7 +16,7 @@ internal sealed record AssetCacheConfig(long ImmutableMaxAgeSeconds, long Defaul
 
     public static AssetCacheConfig FromConfig(AppConfig config)
     {
-        var section = config.TryGetSection("compression");
+        IDictionary<object, object>? section = config.TryGetSection("compression");
         return new AssetCacheConfig(
             ImmutableMaxAgeSeconds: ReadLong(section, "static_immutable_max_age", DefaultImmutableMaxAgeSeconds),
             DefaultMaxAgeSeconds: ReadLong(section, "static_default_max_age", DefaultDefaultMaxAgeSeconds));
@@ -24,7 +24,7 @@ internal sealed record AssetCacheConfig(long ImmutableMaxAgeSeconds, long Defaul
 
     private static long ReadLong(IDictionary<object, object>? section, string key, long fallback)
     {
-        if (section is not null && section.TryGetValue(key, out var raw) && raw is not null)
+        if (section is not null && section.TryGetValue(key, out object? raw) && raw is not null)
         {
             return Convert.ToInt64(raw, CultureInfo.InvariantCulture);
         }

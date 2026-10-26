@@ -1,10 +1,8 @@
 using System.Net;
 using System.Net.Http.Headers;
-using System.Linq;
 using Conformance.Fakes;
 using Conformance.Tests.Scenarios.Auth;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -44,7 +42,7 @@ public sealed class FakeEntraIssuerJwtBearerValidationTests
         var issuer = new FakeEntraIssuer();
         await issuer.StartAsync(cancellationToken).ConfigureAwait(false);
 
-        var builder = WebApplication.CreateBuilder();
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Services
@@ -69,7 +67,7 @@ public sealed class FakeEntraIssuerJwtBearerValidationTests
             });
         builder.Services.AddAuthorization();
 
-        var app = builder.Build();
+        WebApplication app = builder.Build();
         app.UseAuthentication();
         app.UseAuthorization();
         app.MapGet("/secure", () => Results.Ok()).RequireAuthorization();
@@ -91,14 +89,14 @@ public sealed class FakeEntraIssuerJwtBearerValidationTests
     [Fact]
     public async Task Valid_minted_token_is_accepted_by_stock_JwtBearer()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (issuer, app, client) = await StartAsync(ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (FakeEntraIssuer? issuer, WebApplication? app, HttpClient? client) = await StartAsync(ct);
         try
         {
-            var token = issuer.Mint();
+            string token = issuer.Mint();
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-            using var response = await client.GetAsync("/secure", ct);
+            using HttpResponseMessage response = await client.GetAsync("/secure", ct);
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }
@@ -111,14 +109,14 @@ public sealed class FakeEntraIssuerJwtBearerValidationTests
     [Fact]
     public async Task Token_signed_by_the_unpublished_key_is_rejected()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (issuer, app, client) = await StartAsync(ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (FakeEntraIssuer? issuer, WebApplication? app, HttpClient? client) = await StartAsync(ct);
         try
         {
-            var token = issuer.Mint(new FakeEntraTokenOverrides { Key = FakeEntraSigningKey.Unpublished });
+            string token = issuer.Mint(new FakeEntraTokenOverrides { Key = FakeEntraSigningKey.Unpublished });
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-            using var response = await client.GetAsync("/secure", ct);
+            using HttpResponseMessage response = await client.GetAsync("/secure", ct);
 
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         }
@@ -131,18 +129,18 @@ public sealed class FakeEntraIssuerJwtBearerValidationTests
     [Fact]
     public async Task Expired_token_is_rejected()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (issuer, app, client) = await StartAsync(ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (FakeEntraIssuer? issuer, WebApplication? app, HttpClient? client) = await StartAsync(ct);
         try
         {
-            var token = issuer.Mint(new FakeEntraTokenOverrides
+            string token = issuer.Mint(new FakeEntraTokenOverrides
             {
                 Exp = DateTimeOffset.UtcNow.AddMinutes(-20),
                 Nbf = DateTimeOffset.UtcNow.AddMinutes(-30),
             });
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-            using var response = await client.GetAsync("/secure", ct);
+            using HttpResponseMessage response = await client.GetAsync("/secure", ct);
 
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         }
@@ -155,14 +153,14 @@ public sealed class FakeEntraIssuerJwtBearerValidationTests
     [Fact]
     public async Task Wrong_audience_token_is_rejected()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (issuer, app, client) = await StartAsync(ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (FakeEntraIssuer? issuer, WebApplication? app, HttpClient? client) = await StartAsync(ct);
         try
         {
-            var token = issuer.Mint(new FakeEntraTokenOverrides { Audience = "99999999-9999-9999-9999-999999999999" });
+            string token = issuer.Mint(new FakeEntraTokenOverrides { Audience = "99999999-9999-9999-9999-999999999999" });
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-            using var response = await client.GetAsync("/secure", ct);
+            using HttpResponseMessage response = await client.GetAsync("/secure", ct);
 
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         }
@@ -175,11 +173,11 @@ public sealed class FakeEntraIssuerJwtBearerValidationTests
     [Fact]
     public async Task No_token_is_rejected()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (issuer, app, client) = await StartAsync(ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (FakeEntraIssuer? issuer, WebApplication? app, HttpClient? client) = await StartAsync(ct);
         try
         {
-            using var response = await client.GetAsync("/secure", ct);
+            using HttpResponseMessage response = await client.GetAsync("/secure", ct);
 
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         }
@@ -200,15 +198,15 @@ public sealed class FakeEntraIssuerJwtBearerValidationTests
     [InlineData("6c-outside", HttpStatusCode.Unauthorized)]
     public async Task Clock_skew_boundary_row_at_the_five_minute_skew(string rowName, HttpStatusCode expected)
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (issuer, app, client) = await StartAsync(ct, clockSkew: TimeSpan.FromMinutes(5));
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (FakeEntraIssuer? issuer, WebApplication? app, HttpClient? client) = await StartAsync(ct, clockSkew: TimeSpan.FromMinutes(5));
         try
         {
-            var row = AuthRowTokenCase.All.Single(r => r.Row == rowName);
-            var token = row.MintToken(issuer);
+            AuthRowTokenCase row = AuthRowTokenCase.All.Single(r => r.Row == rowName);
+            string? token = row.MintToken(issuer);
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-            using var response = await client.GetAsync("/secure", ct);
+            using HttpResponseMessage response = await client.GetAsync("/secure", ct);
 
             Assert.Equal(expected, response.StatusCode);
         }
@@ -225,15 +223,15 @@ public sealed class FakeEntraIssuerJwtBearerValidationTests
     [Fact]
     public async Task Six_b_inside_is_rejected_with_a_two_minute_skew()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (issuer, app, client) = await StartAsync(ct, clockSkew: TimeSpan.FromMinutes(2));
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (FakeEntraIssuer? issuer, WebApplication? app, HttpClient? client) = await StartAsync(ct, clockSkew: TimeSpan.FromMinutes(2));
         try
         {
-            var row = AuthRowTokenCase.All.Single(r => r.Row == "6b-inside");
-            var token = row.MintToken(issuer);
+            AuthRowTokenCase row = AuthRowTokenCase.All.Single(r => r.Row == "6b-inside");
+            string? token = row.MintToken(issuer);
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-            using var response = await client.GetAsync("/secure", ct);
+            using HttpResponseMessage response = await client.GetAsync("/secure", ct);
 
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         }
@@ -255,15 +253,15 @@ public sealed class FakeEntraIssuerJwtBearerValidationTests
     [InlineData("7 (HS256, published kid)")]
     public async Task Published_kid_row_7_variant_is_rejected_by_stock_JwtBearer(string rowName)
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (issuer, app, client) = await StartAsync(ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (FakeEntraIssuer? issuer, WebApplication? app, HttpClient? client) = await StartAsync(ct);
         try
         {
-            var row = AuthRowTokenCase.All.Single(r => r.Row == rowName);
-            var token = row.MintToken(issuer);
+            AuthRowTokenCase row = AuthRowTokenCase.All.Single(r => r.Row == rowName);
+            string? token = row.MintToken(issuer);
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-            using var response = await client.GetAsync("/secure", ct);
+            using HttpResponseMessage response = await client.GetAsync("/secure", ct);
 
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         }

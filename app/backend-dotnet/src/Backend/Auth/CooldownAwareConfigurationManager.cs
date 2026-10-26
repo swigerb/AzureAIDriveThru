@@ -90,7 +90,7 @@ internal sealed class CooldownAwareConfigurationManager :
     {
         try
         {
-            var configuration = await _inner.GetBaseConfigurationAsync(cancel).ConfigureAwait(false);
+            BaseConfiguration configuration = await _inner.GetBaseConfigurationAsync(cancel).ConfigureAwait(false);
             _hasConfiguration = true;
             return configuration;
         }

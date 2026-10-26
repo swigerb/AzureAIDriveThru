@@ -55,22 +55,18 @@ internal sealed class ContextMonitor
 
     private void CheckThresholds()
     {
-        var pct = UsagePct;
-        var tokens = EstimatedTokens;
+        double pct = UsagePct;
+        int tokens = EstimatedTokens;
 
         if (!_warnedCritical && pct >= _criticalPct)
         {
-            _logger.LogWarning(
-                "CRITICAL: Context window at {Pct}% ({Tokens:N0}/{MaxTokens:N0} tokens) for session {SessionId}",
-                (int)pct, tokens, _maxTokens, _sessionId);
+            _logger.ContextWindowCritical((int)pct, tokens, _maxTokens, _sessionId);
             _warnedCritical = true;
             _warnedWarning = true;
         }
         else if (!_warnedWarning && pct >= _warningPct)
         {
-            _logger.LogWarning(
-                "WARNING: Context window at {Pct}% ({Tokens:N0}/{MaxTokens:N0} tokens) for session {SessionId}",
-                (int)pct, tokens, _maxTokens, _sessionId);
+            _logger.ContextWindowWarning((int)pct, tokens, _maxTokens, _sessionId);
             _warnedWarning = true;
         }
     }

@@ -22,31 +22,31 @@ internal static class JsonStructuralAssert
         switch (expected)
         {
             case JsonObject expectedObject:
-                var actualObject = Assert.IsType<JsonObject>(actual, exactMatch: false);
+                JsonObject actualObject = Assert.IsType<JsonObject>(actual, exactMatch: false);
                 var expectedKeys = expectedObject.Select(p => p.Key).OrderBy(k => k, StringComparer.Ordinal).ToList();
                 var actualKeys = actualObject.Select(p => p.Key).OrderBy(k => k, StringComparer.Ordinal).ToList();
                 Assert.True(
                     expectedKeys.SequenceEqual(actualKeys),
                     $"At {path}: key sets differ.\nexpected: [{string.Join(", ", expectedKeys)}]\nactual:   [{string.Join(", ", actualKeys)}]");
-                foreach (var key in expectedKeys)
+                foreach (string? key in expectedKeys)
                 {
                     Equal(expectedObject[key], actualObject[key], $"{path}.{key}");
                 }
                 break;
 
             case JsonArray expectedArray:
-                var actualArray = Assert.IsType<JsonArray>(actual, exactMatch: false);
+                JsonArray actualArray = Assert.IsType<JsonArray>(actual, exactMatch: false);
                 Assert.True(
                     expectedArray.Count == actualArray.Count,
                     $"At {path}: array length differs. expected {expectedArray.Count}, actual {actualArray.Count}.");
-                for (var i = 0; i < expectedArray.Count; i++)
+                for (int i = 0; i < expectedArray.Count; i++)
                 {
                     Equal(expectedArray[i], actualArray[i], $"{path}[{i}]");
                 }
                 break;
 
             case JsonValue expectedValue:
-                var actualValue = Assert.IsType<JsonValue>(actual, exactMatch: false);
+                JsonValue actualValue = Assert.IsType<JsonValue>(actual, exactMatch: false);
                 AssertValuesEqual(expectedValue, actualValue, path);
                 break;
 
@@ -57,13 +57,13 @@ internal static class JsonStructuralAssert
 
     private static void AssertValuesEqual(JsonValue expected, JsonValue actual, string path)
     {
-        var expectedKind = expected.GetValueKind();
-        var actualKind = actual.GetValueKind();
+        JsonValueKind expectedKind = expected.GetValueKind();
+        JsonValueKind actualKind = actual.GetValueKind();
 
         if (expectedKind == JsonValueKind.Number && actualKind == JsonValueKind.Number)
         {
-            var expectedNumber = double.Parse(expected.ToJsonString(), System.Globalization.CultureInfo.InvariantCulture);
-            var actualNumber = double.Parse(actual.ToJsonString(), System.Globalization.CultureInfo.InvariantCulture);
+            double expectedNumber = double.Parse(expected.ToJsonString(), System.Globalization.CultureInfo.InvariantCulture);
+            double actualNumber = double.Parse(actual.ToJsonString(), System.Globalization.CultureInfo.InvariantCulture);
             Assert.True(
                 expectedNumber == actualNumber,
                 $"At {path}: number differs. expected {expectedNumber}, actual {actualNumber}.");

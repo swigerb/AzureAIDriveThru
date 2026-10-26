@@ -29,8 +29,8 @@ public sealed class OrderToolExecutorHappyHourBannerTests : IDisposable
 
     private static OrderToolExecutor NewExecutor(Persona persona)
     {
-        var menu = PersonaOrderFactory.GetMenuCatalog(persona);
-        var order = PersonaOrderFactory.CreateOrderState(persona);
+        MenuCatalog menu = PersonaOrderFactory.GetMenuCatalog(persona);
+        OrderState order = PersonaOrderFactory.CreateOrderState(persona);
         return new OrderToolExecutor(order, menu, promptLoader: null, MaxItemQuantity, MaxOrderItems);
     }
 
@@ -54,9 +54,9 @@ public sealed class OrderToolExecutorHappyHourBannerTests : IDisposable
     public async Task StandaloneDiscountedLine_GetsHappyHourNoteNamingThatLine()
     {
         FreezeAt("2026-01-15T21:00:00Z");
-        var executor = NewExecutor(DeltaFixture.Load("test-epsilon"));
+        OrderToolExecutor executor = NewExecutor(DeltaFixture.Load("test-epsilon"));
 
-        var result = await executor.ExecuteAsync(
+        ToolResult result = await executor.ExecuteAsync(
             "update_order", Args("add", "Epsilon Cola", "medium", 1, 1.50m), TestContext.Current.CancellationToken);
 
         Assert.Contains("[EPSILON HAPPY HOUR ACTIVE]", result.ToText());
@@ -67,14 +67,14 @@ public sealed class OrderToolExecutorHappyHourBannerTests : IDisposable
     public async Task ComboComponentOnly_GetsNoHappyHourClaimEvenWhenTheComponentItemIsDiscountable()
     {
         FreezeAt("2026-01-15T21:00:00Z");
-        var executor = NewExecutor(DeltaFixture.Load("test-epsilon"));
-        var ct = TestContext.Current.CancellationToken;
+        OrderToolExecutor executor = NewExecutor(DeltaFixture.Load("test-epsilon"));
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
-        var meal = await executor.ExecuteAsync(
+        ToolResult meal = await executor.ExecuteAsync(
             "update_order", Args("add", "Epsilon Standard Meal", "standard", 1, 3.49m), ct);
         Assert.DoesNotContain("HAPPY HOUR", meal.ToText());
 
-        var component = await executor.ExecuteAsync(
+        ToolResult component = await executor.ExecuteAsync(
             "update_order", Args("add", "Epsilon Cola", "medium", 1, 1.50m), ct);
 
         Assert.DoesNotContain("HAPPY HOUR", component.ToText());
@@ -87,9 +87,9 @@ public sealed class OrderToolExecutorHappyHourBannerTests : IDisposable
     public async Task OutsideWindow_GetsNoHappyHourNote()
     {
         FreezeAt("2026-01-15T19:00:00Z");
-        var executor = NewExecutor(DeltaFixture.Load("test-epsilon"));
+        OrderToolExecutor executor = NewExecutor(DeltaFixture.Load("test-epsilon"));
 
-        var result = await executor.ExecuteAsync(
+        ToolResult result = await executor.ExecuteAsync(
             "update_order", Args("add", "Epsilon Cola", "medium", 1, 1.50m), TestContext.Current.CancellationToken);
 
         Assert.DoesNotContain("HAPPY HOUR", result.ToText());
@@ -99,17 +99,17 @@ public sealed class OrderToolExecutorHappyHourBannerTests : IDisposable
     public async Task AnnounceFalse_StillDiscountsButGetsNoHappyHourNote()
     {
         FreezeAt("2026-01-15T21:00:00Z");
-        var epsilon = DeltaFixture.Load("test-epsilon");
-        var quiet = epsilon with
+        Persona epsilon = DeltaFixture.Load("test-epsilon");
+        Persona quiet = epsilon with
         {
             Pricing = epsilon.Pricing with
             {
                 HappyHour = epsilon.Pricing.HappyHour! with { Announce = false },
             },
         };
-        var executor = NewExecutor(quiet);
+        OrderToolExecutor executor = NewExecutor(quiet);
 
-        var result = await executor.ExecuteAsync(
+        ToolResult result = await executor.ExecuteAsync(
             "update_order", Args("add", "Epsilon Cola", "medium", 1, 1.50m), TestContext.Current.CancellationToken);
 
         Assert.DoesNotContain("HAPPY HOUR", result.ToText());

@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 
@@ -18,17 +19,17 @@ namespace Conformance.Tests.Scenarios.Sessions;
 [Collection(ShortTimersConformanceCollection.Name)]
 public sealed class IdleTimeoutTests(ShortTimersConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Attached_session_is_closed_with_4000_after_the_idle_budget() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
         // session.update is a non-append client frame, so it touches the idle clock (rtmt.py's
         // from_client_to_server: "if session_id and _MARKER_AUDIO_APPEND not in msg.data:
@@ -48,21 +49,21 @@ public sealed class IdleTimeoutTests(ShortTimersConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Idle_closed_session_cannot_be_resumed_the_credential_is_gone() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
         // No client frame is sent at all -- create_session() seeds last_activity at connect time,
         // so a bare connect with nothing afterward idles out on the same schedule as if a
         // session.update had been sent and never followed up. This also proves a session gets a
         // resume id purely from connecting (issue #10: "resumeId in extension.session_metadata"
         // is offered on the very first, otherwise-idle socket).
-        var metadata = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        RecordedFrame? metadata = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata", s_frameTimeout, ct);
         Assert.True(metadata is not null, "Expected extension.session_metadata on a fresh connect.");
-        var resumeId = metadata!.Json.GetProperty("resumeId").GetString();
+        string? resumeId = metadata!.Json.GetProperty("resumeId").GetString();
         Assert.True(!string.IsNullOrEmpty(resumeId), "extension.session_metadata carried no resumeId.");
 
         await browser.WaitForCloseAsync(TimeSpan.FromSeconds(6), ct);
@@ -73,22 +74,22 @@ public sealed class IdleTimeoutTests(ShortTimersConformanceFixture fixture)
         // session's resume digest and its _resume_index entry -- an idle-closed session's
         // resume id must come back "unknown", the same as one that was never issued, never
         // "expired" (which implies the id was still recognised).
-        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var second = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var secondConnection = await secondConnectionTask;
-        Assert.True(secondConnection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient second = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? secondConnection = await secondConnectionTask;
+        Assert.True(secondConnection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await second.SendExtensionResumeAsync(resumeId!, ct);
 
-        var rejected = await second.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.resume_rejected", FrameTimeout, ct);
+        RecordedFrame? rejected = await second.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.resume_rejected", s_frameTimeout, ct);
         Assert.True(rejected is not null, "Expected extension.resume_rejected for an idle-closed session's resume id.");
         Assert.Equal("unknown", rejected!.Json.GetProperty("reason").GetString());
 
         // A rejected resume still gets fresh metadata so the tab can start a new order (issue
         // #10: "wrong/expired/reused/malformed -> extension.resume_rejected {reason} + fresh
         // metadata").
-        var freshMetadata = await second.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_metadata" && f.Sequence > rejected.Sequence, FrameTimeout, ct);
+        RecordedFrame? freshMetadata = await second.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata" && f.Sequence > rejected.Sequence, s_frameTimeout, ct);
         Assert.True(freshMetadata is not null, "Expected fresh extension.session_metadata after the rejected resume.");
     });
 
@@ -99,18 +100,18 @@ public sealed class IdleTimeoutTests(ShortTimersConformanceFixture fixture)
         // Named for the invariant under test (the idle clock isn't reset by a drop), not for the
         // exact rejection reason -- see the comment above the final assertion for why either
         // "unknown" or "expired" is an acceptable outcome here.
-        var ct = TestContext.Current.CancellationToken;
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
         // t=0: this session.update is the last real activity the idle clock will ever see.
         await browser.SendStartSessionAsync(cancellationToken: ct);
-        var metadata = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        RecordedFrame? metadata = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.session_metadata", s_frameTimeout, ct);
         Assert.True(metadata is not null, "Expected extension.session_metadata after connecting.");
-        var resumeId = metadata!.Json.GetProperty("resumeId").GetString();
+        string? resumeId = metadata!.Json.GetProperty("resumeId").GetString();
         Assert.True(!string.IsNullOrEmpty(resumeId));
 
         // t=0.6s: drop while still comfortably under idle_timeout_seconds=1 -- the attached-idle
@@ -122,7 +123,7 @@ public sealed class IdleTimeoutTests(ShortTimersConformanceFixture fixture)
         // only an explicit extension.end_session *frame* takes the different, non-resumable path.
         await Task.Delay(TimeSpan.FromMilliseconds(600), ct);
         await browser.CloseAsync(cancellationToken: ct);
-        await browser.WaitForCloseAsync(FrameTimeout, ct);
+        await browser.WaitForCloseAsync(s_frameTimeout, ct);
         await browser.DisposeAsync();
 
         // detached_expires_at = min(detached_at(0.6) + grace(1) = 1.6, last_activity(0) +
@@ -146,17 +147,17 @@ public sealed class IdleTimeoutTests(ShortTimersConformanceFixture fixture)
         var elapsedSinceDrop = TimeSpan.FromMilliseconds(1350 - 600);
         await Task.Delay(elapsedSinceDrop, ct);
 
-        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var second = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var secondConnection = await secondConnectionTask;
-        Assert.True(secondConnection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient second = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? secondConnection = await secondConnectionTask;
+        Assert.True(secondConnection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await second.SendExtensionResumeAsync(resumeId!, ct);
 
-        var rejected = await second.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.resume_rejected", FrameTimeout, ct);
+        RecordedFrame? rejected = await second.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.resume_rejected", s_frameTimeout, ct);
         Assert.True(rejected is not null,
             "Expected extension.resume_rejected once the idle clock (not the grace hold) expired.");
-        var reason = rejected!.Json.GetProperty("reason").GetString();
+        string? reason = rejected!.Json.GetProperty("reason").GetString();
         Assert.True(reason is "unknown" or "expired",
             $"Expected the idle-expired resume id to be rejected as \"unknown\" or \"expired\", got \"{reason}\".");
     });

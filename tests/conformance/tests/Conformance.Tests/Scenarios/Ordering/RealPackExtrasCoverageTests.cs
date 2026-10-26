@@ -1,4 +1,3 @@
-using System.Linq;
 using System.Reflection;
 using Conformance.Harness;
 using Xunit;
@@ -28,10 +27,8 @@ public sealed class RealPackExtrasCoverageTests
     [Trait("Dotnet", "ready")]
     public void Every_real_pack_with_an_extra_item_has_an_extras_theory_row()
     {
-        var personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
-        var discovered = ConformancePersonas.DiscoverFromDisk()
-            .Where(id => PersonaExtrasMenuData.HasAnyExtraItem(personasDir, id))
-            .ToArray();
+        string personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
+        string[] discovered = [.. ConformancePersonas.DiscoverFromDisk().Where(id => PersonaExtrasMenuData.HasAnyExtraItem(personasDir, id))];
 
         // Issue #274 follow-up D (#266 re-review): an empty `discovered` set produces an empty
         // `missing` set below, which trivially passes `Assert.True(missing.Length == 0, ...)` --
@@ -40,10 +37,10 @@ public sealed class RealPackExtrasCoverageTests
         // the qualifying set must turn this test red, not green.
         Assert.NotEmpty(discovered);
 
-        var covered = GetTheoryDataValues<string>(
+        List<string> covered = GetTheoryDataValues<string>(
             typeof(RealPackExtrasConformanceTests), nameof(RealPackExtrasConformanceTests.DiscoveredPersonaIdsWithExtras));
 
-        var missing = discovered.Except(covered).ToArray();
+        string[] missing = [.. discovered.Except(covered)];
         Assert.True(missing.Length == 0,
             $"Real pack(s) with at least one isExtra menu item have no " +
             $"RealPackExtrasConformanceTests row: {string.Join(", ", missing)}. Either " +
@@ -60,9 +57,9 @@ public sealed class RealPackExtrasCoverageTests
     /// Theory itself will run against, not a copy that could drift from it.</summary>
     private static List<T> GetTheoryDataValues<T>(Type declaringType, string methodName)
     {
-        var method = declaringType.GetMethod(methodName, BindingFlags.Public | BindingFlags.Static)
+        MethodInfo method = declaringType.GetMethod(methodName, BindingFlags.Public | BindingFlags.Static)
             ?? throw new InvalidOperationException($"{declaringType.Name}.{methodName} not found.");
         var data = (TheoryData<T>)method.Invoke(null, null)!;
-        return data.Select(row => row.Data).ToList();
+        return [.. data.Select(row => row.Data)];
     }
 }

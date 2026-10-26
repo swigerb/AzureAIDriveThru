@@ -1,6 +1,4 @@
-using System.Linq;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
@@ -22,7 +20,7 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// cref="FakeSearchServer.ReceivedRequests"/>, already recorded for every request -- see <see
 /// cref="Conformance.Tests.Scenarios.Ordering.SearchToolTests"/>'s existing use of the same log),
 /// never the search RESULTS: the fake matches any word and falls back to the whole catalog (see
-/// <see cref="FakeSearchServer.Filter"/>), so a results-based assertion would be vacuous.
+/// <c>FakeSearchServer.Filter</c>), so a results-based assertion would be vacuous.
 ///
 /// Deliberately reads EVERY brand-specific fact it asserts -- the strategy itself (<see
 /// cref="PersonaSearchStrategy.Read"/>, that SAME pack's own persona.json), the guest's own query
@@ -30,7 +28,7 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// and the expected item name(s) (<see cref="PersonaMealNumberItems.Read"/>, that SAME pack's own
 /// menu/menuItems.json) -- so this file itself carries no brand-specific literal (no pack id, no
 /// menu item name) of its own, other than the single neutral "number 1" literal every non-opt-in
-/// pack's row uses (see <see cref="NeutralQuery"/>'s own doc comment for why that's safe). A
+/// pack's row uses (see <see cref="RealPackMealNumberConformanceTests.NeutralQuery"/>'s own doc comment for why that's safe). A
 /// data-only pack PR (matching #111/#112's own pattern) adds its own pack's meal-number smoke
 /// coverage by adding ONE optional block to its OWN
 /// tests/conformance/testdata/personas/&lt;id&gt;/smoke.json, without touching this file -- required
@@ -77,10 +75,10 @@ internal static class PersonaSearchStrategy
     /// <c>MenuCatalog.from_persona</c> reads to build <c>self.search_query_rewrite</c>.</summary>
     public static string Read(string personasDir, string personaId)
     {
-        var personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
-        using var stream = File.OpenRead(personaJsonPath);
+        string personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
+        using FileStream stream = File.OpenRead(personaJsonPath);
         using var document = JsonDocument.Parse(stream);
-        var value = document.RootElement.GetProperty("strategies").GetProperty("searchQueryRewrite").GetString();
+        string? value = document.RootElement.GetProperty("strategies").GetProperty("searchQueryRewrite").GetString();
         if (string.IsNullOrEmpty(value))
         {
             throw new InvalidOperationException(
@@ -103,16 +101,16 @@ internal static class PersonaMealNumberItems
 {
     public static IReadOnlyList<string> Read(string personasDir, string personaId, string number)
     {
-        var menuItemsJsonPath = Path.Combine(personasDir, personaId, "menu", "menuItems.json");
-        using var stream = File.OpenRead(menuItemsJsonPath);
+        string menuItemsJsonPath = Path.Combine(personasDir, personaId, "menu", "menuItems.json");
+        using FileStream stream = File.OpenRead(menuItemsJsonPath);
         using var document = JsonDocument.Parse(stream);
 
         var names = new List<string>();
-        foreach (var category in document.RootElement.GetProperty("menuItems").EnumerateArray())
+        foreach (JsonElement category in document.RootElement.GetProperty("menuItems").EnumerateArray())
         {
-            foreach (var item in category.GetProperty("items").EnumerateArray())
+            foreach (JsonElement item in category.GetProperty("items").EnumerateArray())
             {
-                if (item.TryGetProperty("mealNumber", out var mealNumberElement) &&
+                if (item.TryGetProperty("mealNumber", out JsonElement mealNumberElement) &&
                     mealNumberElement.ValueKind == JsonValueKind.String &&
                     string.Equals(mealNumberElement.GetString(), number, StringComparison.Ordinal))
                 {
@@ -136,7 +134,7 @@ internal static class PersonaMealNumberSmokeExpectations
 {
     public sealed record Expectation(string Query, string Number);
 
-    private static readonly JsonSerializerOptions Options = new()
+    private static readonly JsonSerializerOptions s_options = new()
     {
         PropertyNameCaseInsensitive = true,
     };
@@ -153,14 +151,14 @@ internal static class PersonaMealNumberSmokeExpectations
     /// </summary>
     public static Expectation? For(string personaId, bool isOptIn)
     {
-        var path = RepoPaths.PersonaSmokeDataPath(RepoPaths.FindRepoRoot(), personaId);
+        string path = RepoPaths.PersonaSmokeDataPath(RepoPaths.FindRepoRoot(), personaId);
         Assert.True(File.Exists(path),
             $"RealPackMealNumberConformanceTests.cs's PersonaMealNumberSmokeExpectations.For('{personaId}') " +
             $"found no smoke.json at '{path}' at all -- see PersonaSmokeExpectations.For's own " +
             "message in PersonaSmokeTests.cs for the base file this pack is missing entirely.");
 
         using var document = JsonDocument.Parse(File.ReadAllText(path));
-        var hasBlock = document.RootElement.TryGetProperty("mealNumber", out var mealNumberElement)
+        bool hasBlock = document.RootElement.TryGetProperty("mealNumber", out JsonElement mealNumberElement)
             && mealNumberElement.ValueKind != JsonValueKind.Null;
 
         if (!isOptIn)
@@ -187,7 +185,7 @@ internal static class PersonaMealNumberSmokeExpectations
             "breakfast meal and an all-day meal sharing the same number), so the overlap assertion " +
             "below is genuinely exercised rather than vacuously true.");
 
-        var expectation = mealNumberElement.Deserialize<Expectation>(Options);
+        Expectation? expectation = mealNumberElement.Deserialize<Expectation>(s_options);
         Assert.True(expectation is not null, $"'{path}''s mealNumber block deserialized to null.");
         return expectation;
     }
@@ -220,7 +218,7 @@ public sealed class RealPackMealNumberConformanceTests
     public static TheoryData<string> DiscoveredPersonaIds()
     {
         var data = new TheoryData<string>();
-        foreach (var id in ConformancePersonas.DiscoverFromDisk())
+        foreach (string id in ConformancePersonas.DiscoverFromDisk())
         {
             data.Add(id);
         }
@@ -233,9 +231,9 @@ public sealed class RealPackMealNumberConformanceTests
     [MemberData(nameof(DiscoveredPersonaIds))]
     public async Task Discovered_pack_honors_its_own_search_query_rewrite_strategy(string personaId)
     {
-        var ct = TestContext.Current.CancellationToken;
-        var personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
-        var isOptIn = PersonaSearchStrategy.Read(personasDir, personaId) == "meal_numbers";
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
+        bool isOptIn = PersonaSearchStrategy.Read(personasDir, personaId) == "meal_numbers";
 
         await using var fixture = new MealNumberFixture(personaId);
         await fixture.InitializeAsync();
@@ -254,8 +252,8 @@ public sealed class RealPackMealNumberConformanceTests
     private static async Task RunOptInPackProofAsync(
         ConformanceFixture fixture, string personaId, string personasDir, CancellationToken ct)
     {
-        var expectation = PersonaMealNumberSmokeExpectations.For(personaId, isOptIn: true)!;
-        var expectedNames = PersonaMealNumberItems.Read(personasDir, personaId, expectation.Number);
+        PersonaMealNumberSmokeExpectations.Expectation expectation = PersonaMealNumberSmokeExpectations.For(personaId, isOptIn: true)!;
+        IReadOnlyList<string> expectedNames = PersonaMealNumberItems.Read(personasDir, personaId, expectation.Number);
         Assert.True(expectedNames.Count > 0,
             $"persona '{personaId}': smoke.json's mealNumber.number ('{expectation.Number}') " +
             "matches no item's own mealNumber field in this pack's own menu/menuItems.json -- fix " +
@@ -272,24 +270,24 @@ public sealed class RealPackMealNumberConformanceTests
             "number), so the overlap assertion below is genuinely exercised -- pick a different " +
             "mealNumber value if the one currently chosen only has a single match.");
 
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+        (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
             fixture, ct, persona: personaId);
-        await using var _ = browser;
+        await using RealtimeBrowserClient _ = browser;
 
         await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "search",
             JsonSerializer.Serialize(new { query = expectation.Query }),
             "call_meal_number_search", roundTripIndex, ct, toClient: false);
 
-        var request = fixture.Search.ReceivedRequests.Snapshot().LastOrDefault(f =>
-            f.Json.TryGetProperty("search", out var s) && s.ValueKind == JsonValueKind.String);
+        RecordedFrame? request = fixture.Search.ReceivedRequests.Snapshot().LastOrDefault(f =>
+            f.Json.TryGetProperty("search", out JsonElement s) && s.ValueKind == JsonValueKind.String);
         Assert.True(request is not null,
             $"persona '{personaId}': no search request with a string 'search' field reached " +
             "FakeSearchServer at all.");
 
-        var searchText = request!.Json.GetProperty("search").GetString()!;
+        string searchText = request!.Json.GetProperty("search").GetString()!;
         Assert.StartsWith(expectation.Query, searchText, StringComparison.Ordinal);
-        foreach (var expectedName in expectedNames)
+        foreach (string expectedName in expectedNames)
         {
             Assert.Contains(expectedName, searchText);
         }
@@ -302,22 +300,22 @@ public sealed class RealPackMealNumberConformanceTests
     /// </summary>
     private static async Task RunNonOptInPackProofAsync(ConformanceFixture fixture, string personaId, CancellationToken ct)
     {
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+        (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
             fixture, ct, persona: personaId);
-        await using var _ = browser;
+        await using RealtimeBrowserClient _ = browser;
 
         await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "search",
             JsonSerializer.Serialize(new { query = RealPackMealNumberConformanceTests.NeutralQuery }),
             "call_meal_number_search", roundTripIndex, ct, toClient: false);
 
-        var request = fixture.Search.ReceivedRequests.Snapshot().LastOrDefault(f =>
-            f.Json.TryGetProperty("search", out var s) && s.ValueKind == JsonValueKind.String);
+        RecordedFrame? request = fixture.Search.ReceivedRequests.Snapshot().LastOrDefault(f =>
+            f.Json.TryGetProperty("search", out JsonElement s) && s.ValueKind == JsonValueKind.String);
         Assert.True(request is not null,
             $"persona '{personaId}': no search request with a string 'search' field reached " +
             "FakeSearchServer at all.");
 
-        var searchText = request!.Json.GetProperty("search").GetString();
+        string? searchText = request.Json.GetProperty("search").GetString();
         Assert.Equal(RealPackMealNumberConformanceTests.NeutralQuery, searchText);
     }
 }

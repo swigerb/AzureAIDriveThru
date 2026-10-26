@@ -20,8 +20,8 @@ internal sealed class SessionToolExecutorFactory(
 {
     public IToolExecutor Create(Persona sessionPersona, PromptLoader? sessionPromptLoader, string? sessionMenuMode)
     {
-        var menu = PersonaOrderFactory.GetMenuCatalog(sessionPersona);
-        var orderState = PersonaOrderFactory.CreateOrderState(sessionPersona);
+        MenuCatalog menu = PersonaOrderFactory.GetMenuCatalog(sessionPersona);
+        OrderState orderState = PersonaOrderFactory.CreateOrderState(sessionPersona);
         var orderTools = new OrderToolExecutor(
             orderState,
             menu,

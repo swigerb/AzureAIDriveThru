@@ -52,15 +52,15 @@ namespace Conformance.Tests.Scenarios.Ordering;
 [Collection(ConformanceCollection.Name)]
 public sealed class ToolErrorSessionSurvivesTests(ConformanceFixture fixture)
 {
-    private static readonly TimeSpan ShortFrameTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan s_shortFrameTimeout = TimeSpan.FromSeconds(10);
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Session_survives_a_graceful_application_level_tool_error() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
         // #104: tools.py::update_order no longer rejects action=="add" && price<=0.0 (the tool
         // call's own price is ignored entirely, never validated -- see
@@ -69,7 +69,7 @@ public sealed class ToolErrorSessionSurvivesTests(ConformanceFixture fixture)
         // rejection" is now the #73 on-menu gate instead: an off-menu item name still gets an
         // apology ToolResult(..., ToolResultDirection.TO_SERVER) rather than raising -- this is
         // the "error result to the model" the issue describes.
-        var errored = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult errored = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
             """{"action":"add","item_name":"Nonexistent Off-Menu Item","size":"medium","quantity":1,"price":2.79}""",
             "call_graceful_error", roundTripIndex, ct, toClient: false);
@@ -77,11 +77,11 @@ public sealed class ToolErrorSessionSurvivesTests(ConformanceFixture fixture)
         Assert.Null(errored.ToolResultJson); // TO_SERVER-only: never reaches the browser
 
         // The session survives: the very next tool call, on the same connection, still works.
-        var next = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult next = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", "Tots", "medium", 1, 2.79m)],
             errored.RoundTripIndex, ct);
-        var order = JsonDocument.Parse(next.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(next.ToolResultJson!);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
     });
 
@@ -89,50 +89,50 @@ public sealed class ToolErrorSessionSurvivesTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Session_survives_an_unhandled_tool_exception() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
         // Deliberately omits the required "item_name" argument. tools.py::update_order does
         // `item_name = args["item_name"]` with no .get()/default, so this raises an unhandled
         // KeyError inside the tool handler.
-        const string callId = "call_unhandled_exception";
+        const string CallId = "call_unhandled_exception";
 
         // Watermark taken before scripting, same as OrderScenarioHelpers.CallToolAsync's own
         // rejection-path pattern (PR #38 review item 3 / re-review follow-up 8: this test
         // hand-rolls its scripting instead of going through CallToolAsync, and so was missing
         // the same rejection-path checks that toClient:false callers get for free).
-        var browserWatermark = browser.ReceivedFrames.Count;
+        int browserWatermark = browser.ReceivedFrames.Count;
 
         connection.Script.Enqueue(new ResponseScript([
             new FunctionCallEvent(
                 Name: "update_order",
                 ArgumentsJson: """{"action":"add","size":"medium","quantity":1,"price":2.79}""",
-                CallId: callId),
+                CallId: CallId),
             new DoneEvent(),
         ]));
         await browser.SendResponseCreateAsync(ct);
 
-        var functionCallOutput = await connection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? functionCallOutput = await connection.ReceivedFrames.WaitForAsync(
             f => f.Type == "conversation.item.create" &&
-                 f.Json.TryGetProperty("item", out var item) &&
-                 item.TryGetProperty("type", out var itemType) &&
+                 f.Json.TryGetProperty("item", out JsonElement item) &&
+                 item.TryGetProperty("type", out JsonElement itemType) &&
                  itemType.GetString() == "function_call_output" &&
-                 item.TryGetProperty("call_id", out var respondedCallId) &&
-                 respondedCallId.GetString() == callId,
-            ShortFrameTimeout, ct);
+                 item.TryGetProperty("call_id", out JsonElement respondedCallId) &&
+                 respondedCallId.GetString() == CallId,
+            s_shortFrameTimeout, ct);
         Assert.True(functionCallOutput is not null,
             "Expected a graceful function_call_output for the malformed call -- if this is null, the " +
             "tool exception killed the connection instead of producing a model-visible error.");
-        var outputText = functionCallOutput!.Json.GetProperty("item").GetProperty("output").GetString() ?? "";
+        string outputText = functionCallOutput!.Json.GetProperty("item").GetProperty("output").GetString() ?? "";
 
         // Session survives: prove the connection is still usable for a further tool call.
-        var nextRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+        RecordedFrame? nextRoundTrip = await browser.ReceivedFrames.WaitForAsync(
             f => f.Type == "extension.round_trip_token" &&
                  f.Json.GetProperty("roundTripIndex").GetInt32() > roundTripIndex,
-            ShortFrameTimeout, ct);
+            s_shortFrameTimeout, ct);
         Assert.True(nextRoundTrip is not null, "Round trip after the malformed call never completed.");
-        var nextIndex = nextRoundTrip!.Json.GetProperty("roundTripIndex").GetInt32();
+        int nextIndex = nextRoundTrip!.Json.GetProperty("roundTripIndex").GetInt32();
 
         // Rejection-path checks (PR #38 review item 3 / re-review must-fix 1 and follow-up 8),
         // run AFTER the round trip wait above -- not immediately after functionCallOutput -- for
@@ -140,25 +140,25 @@ public sealed class ToolErrorSessionSurvivesTests(ConformanceFixture fixture)
         // frames travel over the single, ordered browser WebSocket, so by the time this call's
         // round trip token has been received, anything the backend was ever going to send the
         // browser for this call has necessarily already arrived.
-        var strayToolResponse = browser.ReceivedFrames.Snapshot().Any(f =>
+        bool strayToolResponse = browser.ReceivedFrames.Snapshot().Any(f =>
             f.Sequence >= browserWatermark &&
             f.Type == "extension.middle_tier_tool_response" &&
-            f.Json.TryGetProperty("tool_name", out var strayToolNameProp) &&
+            f.Json.TryGetProperty("tool_name", out JsonElement strayToolNameProp) &&
             strayToolNameProp.GetString() == "update_order");
         Assert.False(strayToolResponse,
-            $"Expected no extension.middle_tier_tool_response for update_order (call_id={callId}) " +
+            $"Expected no extension.middle_tier_tool_response for update_order (call_id={CallId}) " +
             "to have reached the browser since the watermark for this deliberately malformed call.");
         Assert.False(OrderScenarioHelpers.LooksLikeOrderSummary(outputText),
-            $"function_call_output for update_order (call_id={callId}) parses as a JSON " +
+            $"function_call_output for update_order (call_id={CallId}) parses as a JSON " +
             "order-summary object, but this call was scripted to raise inside the tool handler -- " +
             "a genuine graceful error is a plain apology string, never an order summary.");
         Assert.Null(browser.CloseStatus);
 
-        var next = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult next = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", "Tots", "medium", 1, 2.79m)],
             nextIndex, ct);
-        var order = JsonDocument.Parse(next.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(next.ToolResultJson!);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
     }, allowedNewBackendErrors: 0);
     // #66 (non-blocking, verified): tools.py::update_order's #36 fix (see the required-argument

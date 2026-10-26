@@ -90,7 +90,7 @@ internal sealed class SearchEndpointConfig
     /// one of "1"/"true"/"yes"/"on" (case-insensitive, trimmed) -> true, anything else -> false.</summary>
     private static bool GetBoolEnv(string name, bool fallback)
     {
-        var value = BackendEnvironment.Get(name);
+        string? value = BackendEnvironment.Get(name);
         if (value is null)
         {
             return fallback;

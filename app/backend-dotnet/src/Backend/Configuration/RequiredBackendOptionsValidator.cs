@@ -6,7 +6,7 @@ internal sealed class RequiredBackendOptionsValidator : IValidateOptions<Require
 {
     public ValidateOptionsResult Validate(string? name, RequiredBackendOptions options)
     {
-        var missing = options.GetMissingEnvironmentVariableNames();
+        IReadOnlyList<string> missing = options.GetMissingEnvironmentVariableNames();
         return missing.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(
@@ -15,7 +15,7 @@ internal sealed class RequiredBackendOptionsValidator : IValidateOptions<Require
 
     public static string GetMissingEnvironmentVariables(OptionsValidationException exception)
     {
-        var failure = exception.Failures.FirstOrDefault();
+        string? failure = exception.Failures.FirstOrDefault();
         if (failure is not null &&
             failure.StartsWith(RequiredBackendOptions.MissingEnvironmentVariablesMessagePrefix, StringComparison.Ordinal))
         {

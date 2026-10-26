@@ -36,7 +36,7 @@ public static class CliRunner
         string? openAiEndpointFlag = null;
         string? embeddingDeploymentFlag = null;
 
-        for (var i = 0; i < args.Length; i++)
+        for (int i = 0; i < args.Length; i++)
         {
             switch (args[i])
             {
@@ -49,6 +49,10 @@ public static class CliRunner
                 case "--help" or "-h":
                     stdout.WriteLine(HelpText);
                     return 0;
+                case "--openai-endpoint" or "--embedding-deployment":
+                    return UsageError(stderr, $"argument {args[i]}: expected one argument");
+                default:
+                    return UsageError(stderr, $"unrecognized arguments: {args[i]}");
             }
         }
 
@@ -56,8 +60,8 @@ public static class CliRunner
         IReadOnlyList<EnabledPersonaDiscovery.DiscoveredPersona> personas;
         try
         {
-            var repoRoot = repoRootOverride ?? RepoRoot.Find(AppContext.BaseDirectory);
-            var azdEnvValues = (loadAzdEnvValues ?? (root => AzdEnvLoader.LoadDefaultEnvValues(root)))(repoRoot);
+            string repoRoot = repoRootOverride ?? RepoRoot.Find(AppContext.BaseDirectory);
+            IReadOnlyDictionary<string, string> azdEnvValues = (loadAzdEnvValues ?? (root => AzdEnvLoader.LoadDefaultEnvValues(root)))(repoRoot);
             settings = OpenAiSettingsResolver.Resolve(openAiEndpointFlag, embeddingDeploymentFlag, getEnvironmentVariable, azdEnvValues);
             personas = EnabledPersonaDiscovery.DiscoverAll(repoRoot);
         }
@@ -78,9 +82,9 @@ public static class CliRunner
             "ever made, so no document's \"embedding\" field is computed (see docs/dotnet_tooling.md).");
 
         var writerOptions = new JsonWriterOptions { Indented = true };
-        foreach (var persona in personas)
+        foreach (EnabledPersonaDiscovery.DiscoveredPersona persona in personas)
         {
-            var plan = SearchIndexRequestPlanner.BuildPlan(persona, settings.OpenAiEndpoint, settings.EmbeddingDeployment);
+            SearchIndexRequestPlanner.PersonaRequestPlan plan = SearchIndexRequestPlanner.BuildPlan(persona, settings.OpenAiEndpoint, settings.EmbeddingDeployment);
             stdout.WriteLine(
                 $"[plan] persona '{plan.PersonaId}': index '{plan.IndexName}', " +
                 $"{plan.DocumentCount} document(s) across {plan.DocumentBatches.Count} upload batch(es) -- " +
@@ -95,5 +99,12 @@ public static class CliRunner
         }
 
         return 0;
+    }
+
+    private static int UsageError(TextWriter stderr, string message)
+    {
+        stderr.WriteLine($"search-index-request-builder: {message}");
+        stderr.WriteLine(HelpText);
+        return 2;
     }
 }

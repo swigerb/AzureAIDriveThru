@@ -21,12 +21,12 @@ public sealed class DotnetBackendBuildGateTests
     [Fact]
     public async Task EnsureBuiltAsync_builds_exactly_once_even_when_the_dll_already_exists_on_disk()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var scratch = CreateScratchRoot(nameof(EnsureBuiltAsync_builds_exactly_once_even_when_the_dll_already_exists_on_disk));
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string scratch = CreateScratchRoot(nameof(EnsureBuiltAsync_builds_exactly_once_even_when_the_dll_already_exists_on_disk));
         try
         {
-            var csprojPath = Path.Combine(scratch, "Backend.csproj");
-            var dllPath = DotnetBackendLauncher.ResolveDllPath(csprojPath);
+            string csprojPath = Path.Combine(scratch, "Backend.csproj");
+            string dllPath = DotnetBackendLauncher.ResolveDllPath(csprojPath);
             Directory.CreateDirectory(Path.GetDirectoryName(dllPath)!);
 
             // This is the exact shape of the original R1 bug: a dll already on disk before the
@@ -36,15 +36,15 @@ public sealed class DotnetBackendBuildGateTests
             // reflecting new source).
             File.WriteAllText(dllPath, "stale dll content from a previous run");
 
-            var buildInvocations = 0;
-            var gate = new DotnetBackendBuildGate((_, _) =>
+            int buildInvocations = 0;
+            using var gate = new DotnetBackendBuildGate((_, _) =>
             {
                 Interlocked.Increment(ref buildInvocations);
                 File.WriteAllText(dllPath, "freshly built dll content");
                 return Task.CompletedTask;
             });
 
-            var resolvedDllPath = await gate.EnsureBuiltAsync(csprojPath, ct);
+            string resolvedDllPath = await gate.EnsureBuiltAsync(csprojPath, ct);
 
             Assert.Equal(1, buildInvocations);
             Assert.Equal(dllPath, resolvedDllPath);
@@ -68,44 +68,43 @@ public sealed class DotnetBackendBuildGateTests
     [Fact]
     public async Task EnsureBuiltAsync_with_eight_concurrent_callers_builds_exactly_once()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var scratch = CreateScratchRoot(nameof(EnsureBuiltAsync_with_eight_concurrent_callers_builds_exactly_once));
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string scratch = CreateScratchRoot(nameof(EnsureBuiltAsync_with_eight_concurrent_callers_builds_exactly_once));
         try
         {
-            const int callerCount = 8;
-            var csprojPath = Path.Combine(scratch, "Backend.csproj");
-            var dllPath = DotnetBackendLauncher.ResolveDllPath(csprojPath);
+            const int CallerCount = 8;
+            string csprojPath = Path.Combine(scratch, "Backend.csproj");
+            string dllPath = DotnetBackendLauncher.ResolveDllPath(csprojPath);
             Directory.CreateDirectory(Path.GetDirectoryName(dllPath)!);
 
-            var buildInvocations = 0;
-            var arrivals = new SemaphoreSlim(0, callerCount);
+            int buildInvocations = 0;
+            var arrivals = new SemaphoreSlim(0, CallerCount);
             var releaseBuild = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            var gate = new DotnetBackendBuildGate(async (_, token) =>
+            using var gate = new DotnetBackendBuildGate(async (_, token) =>
             {
                 Interlocked.Increment(ref buildInvocations);
                 await releaseBuild.Task.WaitAsync(token);
                 File.WriteAllText(dllPath, "freshly built dll content");
             });
 
-            var callers = Enumerable.Range(0, callerCount)
+            Task<string>[] callers = [.. Enumerable.Range(0, CallerCount)
                 .Select(_ => Task.Run(async () =>
                 {
                     arrivals.Release();
                     return await gate.EnsureBuiltAsync(csprojPath, ct);
-                }, ct))
-                .ToArray();
+                }, ct))];
 
             // Event-driven, not a timer: block here until every one of the eight callers has
             // actually entered EnsureBuiltAsync, then (only then) let the held-open fake build
             // complete.
-            for (var i = 0; i < callerCount; i++)
+            for (int i = 0; i < CallerCount; i++)
             {
                 await arrivals.WaitAsync(ct);
             }
 
             releaseBuild.SetResult();
 
-            var results = await Task.WhenAll(callers);
+            string[] results = await Task.WhenAll(callers);
 
             Assert.Equal(1, buildInvocations);
             Assert.All(results, result => Assert.Equal(dllPath, result));
@@ -124,18 +123,18 @@ public sealed class DotnetBackendBuildGateTests
     [Fact]
     public async Task EnsureBuiltAsync_surfaces_a_failed_build_and_the_next_caller_retries()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var scratch = CreateScratchRoot(nameof(EnsureBuiltAsync_surfaces_a_failed_build_and_the_next_caller_retries));
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string scratch = CreateScratchRoot(nameof(EnsureBuiltAsync_surfaces_a_failed_build_and_the_next_caller_retries));
         try
         {
-            var csprojPath = Path.Combine(scratch, "Backend.csproj");
-            var dllPath = DotnetBackendLauncher.ResolveDllPath(csprojPath);
+            string csprojPath = Path.Combine(scratch, "Backend.csproj");
+            string dllPath = DotnetBackendLauncher.ResolveDllPath(csprojPath);
             Directory.CreateDirectory(Path.GetDirectoryName(dllPath)!);
 
-            var buildInvocations = 0;
-            var gate = new DotnetBackendBuildGate((_, _) =>
+            int buildInvocations = 0;
+            using var gate = new DotnetBackendBuildGate((_, _) =>
             {
-                var invocation = Interlocked.Increment(ref buildInvocations);
+                int invocation = Interlocked.Increment(ref buildInvocations);
                 if (invocation == 1)
                 {
                     throw new InvalidOperationException("fake MSBuild failure: CS9999 something didn't compile");
@@ -145,11 +144,11 @@ public sealed class DotnetBackendBuildGateTests
                 return Task.CompletedTask;
             });
 
-            var firstCallEx = await Assert.ThrowsAsync<InvalidOperationException>(
+            InvalidOperationException firstCallEx = await Assert.ThrowsAsync<InvalidOperationException>(
                 () => gate.EnsureBuiltAsync(csprojPath, ct));
             Assert.Contains("fake MSBuild failure: CS9999 something didn't compile", firstCallEx.Message, StringComparison.Ordinal);
 
-            var resolvedDllPath = await gate.EnsureBuiltAsync(csprojPath, ct);
+            string resolvedDllPath = await gate.EnsureBuiltAsync(csprojPath, ct);
 
             Assert.Equal(2, buildInvocations);
             Assert.Equal(dllPath, resolvedDllPath);
@@ -170,18 +169,18 @@ public sealed class DotnetBackendBuildGateTests
     [Fact]
     public async Task EnsureBuiltAsync_a_cancelled_caller_does_not_poison_the_build_for_later_callers()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var scratch = CreateScratchRoot(nameof(EnsureBuiltAsync_a_cancelled_caller_does_not_poison_the_build_for_later_callers));
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string scratch = CreateScratchRoot(nameof(EnsureBuiltAsync_a_cancelled_caller_does_not_poison_the_build_for_later_callers));
         try
         {
-            var csprojPath = Path.Combine(scratch, "Backend.csproj");
-            var dllPath = DotnetBackendLauncher.ResolveDllPath(csprojPath);
+            string csprojPath = Path.Combine(scratch, "Backend.csproj");
+            string dllPath = DotnetBackendLauncher.ResolveDllPath(csprojPath);
             Directory.CreateDirectory(Path.GetDirectoryName(dllPath)!);
 
-            var buildInvocations = 0;
+            int buildInvocations = 0;
             var buildEntered = new SemaphoreSlim(0, 1);
             var releaseBuild = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            var gate = new DotnetBackendBuildGate(async (_, token) =>
+            using var gate = new DotnetBackendBuildGate(async (_, token) =>
             {
                 Interlocked.Increment(ref buildInvocations);
                 buildEntered.Release();
@@ -193,7 +192,7 @@ public sealed class DotnetBackendBuildGateTests
             });
 
             using var callerACts = new CancellationTokenSource();
-            var callerATask = Task.Run(() => gate.EnsureBuiltAsync(csprojPath, callerACts.Token), ct);
+            Task<string> callerATask = Task.Run(() => gate.EnsureBuiltAsync(csprojPath, callerACts.Token), ct);
 
             // Wait until the fake build has actually started before cancelling caller A, so this
             // exercises "cancelled while a build is genuinely in flight", not "cancelled before
@@ -207,7 +206,7 @@ public sealed class DotnetBackendBuildGateTests
             // and must still get the dll path from the SAME build caller A was (unsuccessfully,
             // for itself) waiting on.
             releaseBuild.SetResult();
-            var callerBResult = await gate.EnsureBuiltAsync(csprojPath, ct);
+            string callerBResult = await gate.EnsureBuiltAsync(csprojPath, ct);
 
             Assert.Equal(1, buildInvocations);
             Assert.Equal(dllPath, callerBResult);
@@ -228,18 +227,18 @@ public sealed class DotnetBackendBuildGateTests
     [Fact]
     public async Task EnsureBuiltAsync_retries_after_a_cancelled_build_same_as_a_failed_build()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var scratch = CreateScratchRoot(nameof(EnsureBuiltAsync_retries_after_a_cancelled_build_same_as_a_failed_build));
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string scratch = CreateScratchRoot(nameof(EnsureBuiltAsync_retries_after_a_cancelled_build_same_as_a_failed_build));
         try
         {
-            var csprojPath = Path.Combine(scratch, "Backend.csproj");
-            var dllPath = DotnetBackendLauncher.ResolveDllPath(csprojPath);
+            string csprojPath = Path.Combine(scratch, "Backend.csproj");
+            string dllPath = DotnetBackendLauncher.ResolveDllPath(csprojPath);
             Directory.CreateDirectory(Path.GetDirectoryName(dllPath)!);
 
-            var buildInvocations = 0;
-            var gate = new DotnetBackendBuildGate((_, _) =>
+            int buildInvocations = 0;
+            using var gate = new DotnetBackendBuildGate((_, _) =>
             {
-                var invocation = Interlocked.Increment(ref buildInvocations);
+                int invocation = Interlocked.Increment(ref buildInvocations);
                 if (invocation == 1)
                 {
                     // Simulates the shared build itself ending up Cancelled (for example a build
@@ -256,7 +255,7 @@ public sealed class DotnetBackendBuildGateTests
             await Assert.ThrowsAnyAsync<OperationCanceledException>(
                 () => gate.EnsureBuiltAsync(csprojPath, ct));
 
-            var resolvedDllPath = await gate.EnsureBuiltAsync(csprojPath, ct);
+            string resolvedDllPath = await gate.EnsureBuiltAsync(csprojPath, ct);
 
             Assert.Equal(2, buildInvocations);
             Assert.Equal(dllPath, resolvedDllPath);
@@ -272,7 +271,7 @@ public sealed class DotnetBackendBuildGateTests
         // Kept under this project's own build output (gitignored via obj/) rather than the OS
         // temp directory, per repo convention (see RepoPathsTests.CreateScratchRoot) of not
         // scattering test artifacts outside the tree.
-        var scratch = Path.Combine(AppContext.BaseDirectory, "dotnet-backend-build-gate-test-scratch", $"{testName}-{Guid.NewGuid():N}");
+        string scratch = Path.Combine(AppContext.BaseDirectory, "dotnet-backend-build-gate-test-scratch", $"{testName}-{Guid.NewGuid():N}");
         Directory.CreateDirectory(scratch);
         return scratch;
     }

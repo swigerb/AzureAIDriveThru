@@ -1,3 +1,5 @@
+using System.Text.Json;
+using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 
@@ -23,34 +25,34 @@ namespace Conformance.Tests;
 [Collection(ConformanceCollection.Name)]
 public sealed class VoiceLockTests(ConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Voice_is_omitted_from_session_update_once_assistant_audio_has_been_sent() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        bool noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(s_frameTimeout, ct);
         Assert.True(noneOpen, $"Expected no open upstream connections at test start, but " +
             $"{fixture.Realtime.OpenConnectionCount} are still open — a previous test leaked a connection.");
 
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
         await browser.SendStartSessionAsync(cancellationToken: ct);
 
-        var firstUpdate = await connection!.ReceivedFrames.WaitForAsync(
-            f => f.Sequence > 0 && f.Type == "session.update", FrameTimeout, ct);
+        RecordedFrame? firstUpdate = await connection!.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > 0 && f.Type == "session.update", s_frameTimeout, ct);
         Assert.True(firstUpdate is not null, "The browser's first session.update was never forwarded upstream.");
 
         // Before any assistant audio, voice IS sent, and pinned to the exact default -- confirms
         // the golden "before" state so the "after" assertion below is a genuine delta, not just
         // an update that never carried voice. Safe to pin (not merely assert presence) because
         // this collection's backend process never runs extension.set_voice (see class docs above).
-        var firstAudio = firstUpdate!.Json.GetProperty("session").GetProperty("audio");
-        var voiceBeforeLock = firstAudio.GetProperty("output").GetProperty("voice").GetString();
+        JsonElement firstAudio = firstUpdate!.Json.GetProperty("session").GetProperty("audio");
+        string? voiceBeforeLock = firstAudio.GetProperty("output").GetProperty("voice").GetString();
         Assert.Equal(BackendContract.DefaultVoice, voiceBeforeLock);
 
         // PR #42 review item 8 ("voice-lock sentinel" / "assert audio reached browser"):
@@ -61,25 +63,25 @@ public sealed class VoiceLockTests(ConformanceFixture fixture)
         // is the exact same marker rtmt.py itself uses to flip assistant_audio_seen (see
         // _MARKER_AUDIO_DELTA in from_server_to_client), so this is a true precondition sentinel
         // for the lock, not a proxy for it.
-        var greetingAudio = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "response.audio.delta", FrameTimeout, ct);
+        RecordedFrame? greetingAudio = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "response.audio.delta", s_frameTimeout, ct);
         Assert.True(greetingAudio is not null, "Expected the greeting to send assistant audio to the browser before the voice lock can be exercised.");
 
-        var roundTripToken = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        RecordedFrame? roundTripToken = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token", s_frameTimeout, ct);
         Assert.True(roundTripToken is not null, "extension.round_trip_token never reached the browser (greeting never completed).");
 
         // A second startSession() call (e.g. the guest re-toggles the mic) -- same payload as
         // before, but the voice must now be omitted rather than repeated.
         await browser.SendStartSessionAsync(cancellationToken: ct);
-        var secondUpdate = await connection.ReceivedFrames.WaitForAsync(
-            f => f.Sequence > firstUpdate.Sequence && f.Type == "session.update", FrameTimeout, ct);
+        RecordedFrame? secondUpdate = await connection.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > firstUpdate.Sequence && f.Type == "session.update", s_frameTimeout, ct);
         Assert.True(secondUpdate is not null, "The browser's second session.update was never forwarded upstream.");
 
-        var secondSession = secondUpdate!.Json.GetProperty("session");
-        Assert.True(secondSession.TryGetProperty("audio", out var secondAudio),
+        JsonElement secondSession = secondUpdate!.Json.GetProperty("session");
+        Assert.True(secondSession.TryGetProperty("audio", out JsonElement secondAudio),
             "Expected session.audio.input.* to still be present (turn_detection/transcription) -- only voice should be stripped.");
-        var stillHasVoice = secondAudio.TryGetProperty("output", out var output) && output.TryGetProperty("voice", out _);
+        bool stillHasVoice = secondAudio.TryGetProperty("output", out JsonElement output) && output.TryGetProperty("voice", out _);
         Assert.False(stillHasVoice, "Voice must be omitted from any session.update sent after assistant audio was seen.");
     });
 }

@@ -13,6 +13,10 @@ public static class CliRunner
         "Usage: dotnet run --project tools/dotnet/src/ExtractProductionItems -- " +
         "[--production <*-menu-items.json>] [--menu <menuItems.json>]";
 
+    /// <param name="args">The raw command-line arguments. An unrecognized argument, or a flag
+    /// missing its value, is a usage error (exit code 2) rather than being silently ignored.</param>
+    /// <param name="stdout">Receives the report (or <see cref="HelpText"/> for <c>--help</c>).</param>
+    /// <param name="stderr">Receives the single-line error message for a usage or discovery error.</param>
     /// <param name="repoRootOverride">Normally omitted -- defaults to
     /// <c>RepoRoot.Find(AppContext.BaseDirectory)</c>. Lets tests exercise the
     /// ProductionExportLocator-discovery-fails/clean-error/exit-1 path against a synthetic
@@ -23,7 +27,7 @@ public static class CliRunner
         string? production = null;
         string? menu = null;
 
-        for (var i = 0; i < args.Length; i++)
+        for (int i = 0; i < args.Length; i++)
         {
             switch (args[i])
             {
@@ -36,6 +40,12 @@ public static class CliRunner
                 case "--help" or "-h":
                     stdout.WriteLine(HelpText);
                     return 0;
+                case "--production" or "--menu":
+                    return UsageError(stderr, $"argument {args[i]}: expected one argument");
+                default:
+                    // A typo'd flag must not silently fall back to persona discovery and run
+                    // against the real checked-in files.
+                    return UsageError(stderr, $"unrecognized arguments: {args[i]}");
             }
         }
 
@@ -56,8 +66,8 @@ public static class CliRunner
             }
             else
             {
-                var sourceDir = Path.GetDirectoryName(Path.GetFullPath(production))!; // .../menu/source
-                var menuDir = Directory.GetParent(sourceDir)!.FullName;               // .../menu
+                string sourceDir = Path.GetDirectoryName(Path.GetFullPath(production))!; // .../menu/source
+                string menuDir = Directory.GetParent(sourceDir)!.FullName;               // .../menu
                 menuPath = Path.Combine(menuDir, "menuItems.json");
             }
         }
@@ -66,7 +76,7 @@ public static class CliRunner
             ProductionExportLocator.Discovery discovery;
             try
             {
-                var repoRoot = repoRootOverride ?? RepoRoot.Find(AppContext.BaseDirectory);
+                string repoRoot = repoRootOverride ?? RepoRoot.Find(AppContext.BaseDirectory);
                 discovery = ProductionExportLocator.Locate(repoRoot);
             }
             catch (InvalidOperationException ex)
@@ -81,13 +91,20 @@ public static class CliRunner
             menuPath = menu ?? discovery.MenuFilePath;
         }
 
-        var productionItems = ProductionItemsExtractor.ExtractProductionItems(productionPath);
-        var uiItems = ProductionItemsExtractor.LoadUiItems(menuPath);
-        var report = ProductionItemsExtractor.BuildReport(productionItems, uiItems);
-        foreach (var line in report)
+        IReadOnlyList<ProductionItem> productionItems = ProductionItemsExtractor.ExtractProductionItems(productionPath);
+        IReadOnlyList<UiItem> uiItems = ProductionItemsExtractor.LoadUiItems(menuPath);
+        IReadOnlyList<string> report = ProductionItemsExtractor.BuildReport(productionItems, uiItems);
+        foreach (string line in report)
         {
             stdout.WriteLine(line);
         }
         return 0;
+    }
+
+    private static int UsageError(TextWriter stderr, string message)
+    {
+        stderr.WriteLine($"extract-production-items: {message}");
+        stderr.WriteLine(HelpText);
+        return 2;
     }
 }

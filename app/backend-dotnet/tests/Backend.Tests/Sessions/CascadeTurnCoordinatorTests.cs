@@ -17,7 +17,7 @@ public sealed class CascadeTurnCoordinatorTests
     {
         var browser = new FakeWebSocket([]);
         using var connectionCts = new CancellationTokenSource();
-        var context = NewContext(browser, connectionCts);
+        CascadeSessionContext context = NewContext(browser, connectionCts);
         var coordinator = new CascadeTurnCoordinator(context);
         using var turnCts = new CancellationTokenSource();
         var previousTurn = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -32,7 +32,7 @@ public sealed class CascadeTurnCoordinatorTests
         previousTurn.SetResult();
         await context.State.BargeInTail!.WaitAsync(TestContext.Current.CancellationToken);
 
-        var frame = JsonNode.Parse(Assert.Single(browser.SentMessages).Data)!.AsObject();
+        JsonObject frame = JsonNode.Parse(Assert.Single(browser.SentMessages).Data)!.AsObject();
         Assert.Equal("input_audio_buffer.speech_started", (string?)frame["type"]);
         Assert.False(connectionCts.IsCancellationRequested);
     }
@@ -42,13 +42,13 @@ public sealed class CascadeTurnCoordinatorTests
     {
         var browser = new FakeWebSocket([]);
         using var connectionCts = new CancellationTokenSource();
-        var context = NewContext(browser, connectionCts);
+        CascadeSessionContext context = NewContext(browser, connectionCts);
         var coordinator = new CascadeTurnCoordinator(context);
         var previousTurn = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         context.State.CurrentTurnTask = previousTurn.Task;
 
         coordinator.BargeIn();
-        var firstTail = context.State.BargeInTail;
+        Task? firstTail = context.State.BargeInTail;
         coordinator.BargeIn();
 
         Assert.False(firstTail!.IsCompleted);

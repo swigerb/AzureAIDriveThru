@@ -36,8 +36,8 @@ internal static class PersonaAssetResolver
             return null;
         }
 
-        var segments = requestedPath.Replace('\\', '/').Split('/');
-        foreach (var segment in segments)
+        string[] segments = requestedPath.Replace('\\', '/').Split('/');
+        foreach (string segment in segments)
         {
             if (segment.Length == 0 || segment == "." || segment == ".." || segment.Contains(':'))
             {
@@ -50,19 +50,19 @@ internal static class PersonaAssetResolver
             return null;
         }
 
-        var assetsRoot = ResolveRealPath(Path.GetFullPath(persona.AssetsDir));
+        string? assetsRoot = ResolveRealPath(Path.GetFullPath(persona.AssetsDir));
         if (assetsRoot is null)
         {
             return null;
         }
 
-        var candidate = assetsRoot;
-        foreach (var segment in segments)
+        string candidate = assetsRoot;
+        foreach (string segment in segments)
         {
             candidate = Path.Combine(candidate, segment);
         }
 
-        var resolved = ResolveRealPath(candidate);
+        string? resolved = ResolveRealPath(candidate);
         if (resolved is null || !IsUnderRoot(resolved, assetsRoot))
         {
             return null;
@@ -88,21 +88,21 @@ internal static class PersonaAssetResolver
     {
         try
         {
-            var full = Path.GetFullPath(path);
-            var root = Path.GetPathRoot(full) ?? string.Empty;
-            var relative = full[root.Length..];
-            var parts = relative.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
+            string full = Path.GetFullPath(path);
+            string root = Path.GetPathRoot(full) ?? string.Empty;
+            string relative = full[root.Length..];
+            string[] parts = relative.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
 
-            var current = root.Length > 0 ? root.TrimEnd(Path.DirectorySeparatorChar) : string.Empty;
+            string current = root.Length > 0 ? root.TrimEnd(Path.DirectorySeparatorChar) : string.Empty;
             if (current.Length == 0)
             {
                 current = Path.DirectorySeparatorChar.ToString();
             }
 
-            foreach (var part in parts)
+            foreach (string part in parts)
             {
                 current = Path.Combine(current, part);
-                var linkTarget = TryResolveLinkTarget(current);
+                string? linkTarget = TryResolveLinkTarget(current);
                 if (linkTarget is not null)
                 {
                     current = linkTarget;
@@ -136,7 +136,7 @@ internal static class PersonaAssetResolver
             return null;
         }
 
-        var target = info.ResolveLinkTarget(returnFinalTarget: true);
+        FileSystemInfo? target = info.ResolveLinkTarget(returnFinalTarget: true);
         return target is null ? null : Path.GetFullPath(target.FullName);
     }
 
@@ -146,7 +146,7 @@ internal static class PersonaAssetResolver
         {
             return true;
         }
-        var rootWithSeparator = root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar;
+        string rootWithSeparator = root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar;
         return candidate.StartsWith(rootWithSeparator, StringComparison.Ordinal);
     }
 }

@@ -27,7 +27,7 @@ public sealed class SearchIndexOrchestratorTests
     [Fact]
     public async Task IngestAsync_CreatesIndex_UploadsAllDocuments_DeletesStale_AndVerifiesCount()
     {
-        var plan = MakePlan("alpha", "alpha-index", documentCount: 3);
+        PersonaIngestPlan plan = MakePlan("alpha", "alpha-index", documentCount: 3);
         var log = new StringWriter();
 
         var handler = new FakeHttpMessageHandler(request =>
@@ -38,8 +38,8 @@ public sealed class SearchIndexOrchestratorTests
             }
             if (request.Uri.Contains("search.index"))
             {
-                var value = JsonNode.Parse(request.Body!)!["value"]!.AsArray();
-                var results = value.Select(d => new JsonObject { ["key"] = d!["id"]!.DeepClone(), ["status"] = true });
+                JsonArray value = JsonNode.Parse(request.Body!)!["value"]!.AsArray();
+                IEnumerable<JsonObject> results = value.Select(d => new JsonObject { ["key"] = d!["id"]!.DeepClone(), ["status"] = true });
                 return FakeHttpMessageHandler.Json(HttpStatusCode.OK, new JsonObject { ["value"] = new JsonArray(results.ToArray()) }.ToJsonString());
             }
             if (request.Uri.Contains("search.post.search"))
@@ -75,7 +75,7 @@ public sealed class SearchIndexOrchestratorTests
         public Task<IReadOnlyList<IReadOnlyList<double>>> GenerateEmbeddingsAsync(
             IReadOnlyList<string> texts, string deployment, CancellationToken cancellationToken)
         {
-            IReadOnlyList<IReadOnlyList<double>> result = texts.Select(_ => (IReadOnlyList<double>)new[] { 1.0, -1.0, 0.0, 2.5 }).ToList();
+            IReadOnlyList<IReadOnlyList<double>> result = [.. texts.Select(_ => (IReadOnlyList<double>)[1.0, -1.0, 0.0, 2.5])];
             return Task.FromResult(result);
         }
     }
@@ -89,7 +89,7 @@ public sealed class SearchIndexOrchestratorTests
         // was expected, exactly reproducing the divergence PythonParityTests.cs's real-Python-twin
         // comparison first caught. Reverted back to the fix afterwards; both this test and
         // PythonParityTests.cs pass again.
-        var plan = MakePlan("alpha", "alpha-index", documentCount: 1);
+        PersonaIngestPlan plan = MakePlan("alpha", "alpha-index", documentCount: 1);
         string? uploadedBody = null;
         var handler = new FakeHttpMessageHandler(request =>
         {
@@ -100,8 +100,8 @@ public sealed class SearchIndexOrchestratorTests
             if (request.Uri.Contains("search.index"))
             {
                 uploadedBody = request.Body;
-                var value = JsonNode.Parse(request.Body!)!["value"]!.AsArray();
-                var results = value.Select(d => new JsonObject { ["key"] = d!["id"]!.DeepClone(), ["status"] = true });
+                JsonArray value = JsonNode.Parse(request.Body!)!["value"]!.AsArray();
+                IEnumerable<JsonObject> results = value.Select(d => new JsonObject { ["key"] = d!["id"]!.DeepClone(), ["status"] = true });
                 return FakeHttpMessageHandler.Json(HttpStatusCode.OK, new JsonObject { ["value"] = new JsonArray(results.ToArray()) }.ToJsonString());
             }
             if (request.Uri.Contains("search.post.search"))
@@ -122,14 +122,14 @@ public sealed class SearchIndexOrchestratorTests
         await orchestrator.IngestAsync(plan, CancellationToken.None);
 
         Assert.NotNull(uploadedBody);
-        var embedding = JsonNode.Parse(uploadedBody!)!["value"]![0]!["embedding"]!.AsArray();
+        JsonArray embedding = JsonNode.Parse(uploadedBody!)!["value"]![0]!["embedding"]!.AsArray();
         Assert.Equal(["1.0", "-1.0", "0.0", "2.5"], embedding.Select(v => v!.ToJsonString()));
     }
 
     [Fact]
     public async Task IngestAsync_UploadsInBatchesOf100_ForMoreThan100Documents()
     {
-        var plan = MakePlan("alpha", "alpha-index", documentCount: 150);
+        PersonaIngestPlan plan = MakePlan("alpha", "alpha-index", documentCount: 150);
         var uploadBatchSizes = new List<int>();
 
         var handler = new FakeHttpMessageHandler(request =>
@@ -140,9 +140,9 @@ public sealed class SearchIndexOrchestratorTests
             }
             if (request.Uri.Contains("search.index"))
             {
-                var value = JsonNode.Parse(request.Body!)!["value"]!.AsArray();
+                JsonArray value = JsonNode.Parse(request.Body!)!["value"]!.AsArray();
                 uploadBatchSizes.Add(value.Count);
-                var results = value.Select(d => new JsonObject { ["key"] = d!["id"]!.DeepClone(), ["status"] = true });
+                IEnumerable<JsonObject> results = value.Select(d => new JsonObject { ["key"] = d!["id"]!.DeepClone(), ["status"] = true });
                 return FakeHttpMessageHandler.Json(HttpStatusCode.OK, new JsonObject { ["value"] = new JsonArray(results.ToArray()) }.ToJsonString());
             }
             if (request.Uri.Contains("search.post.search"))
@@ -163,7 +163,7 @@ public sealed class SearchIndexOrchestratorTests
     [Fact]
     public async Task IngestAsync_DeletesDocumentsNoLongerInThePlan()
     {
-        var plan = MakePlan("alpha", "alpha-index", documentCount: 2); // ids doc-0, doc-1
+        PersonaIngestPlan plan = MakePlan("alpha", "alpha-index", documentCount: 2); // ids doc-0, doc-1
         var deletedIds = new List<string>();
 
         var handler = new FakeHttpMessageHandler(request =>
@@ -179,13 +179,13 @@ public sealed class SearchIndexOrchestratorTests
             }
             if (request.Uri.Contains("search.index"))
             {
-                var value = JsonNode.Parse(request.Body!)!["value"]!.AsArray();
+                JsonArray value = JsonNode.Parse(request.Body!)!["value"]!.AsArray();
                 if (value[0]!["@search.action"]!.GetValue<string>() == "delete")
                 {
                     deletedIds.AddRange(value.Select(d => d!["id"]!.GetValue<string>()));
                     return FakeHttpMessageHandler.Json(HttpStatusCode.OK, """{"value":[]}""");
                 }
-                var results = value.Select(d => new JsonObject { ["key"] = d!["id"]!.DeepClone(), ["status"] = true });
+                IEnumerable<JsonObject> results = value.Select(d => new JsonObject { ["key"] = d!["id"]!.DeepClone(), ["status"] = true });
                 return FakeHttpMessageHandler.Json(HttpStatusCode.OK, new JsonObject { ["value"] = new JsonArray(results.ToArray()) }.ToJsonString());
             }
             return FakeHttpMessageHandler.PlainText(HttpStatusCode.OK, "2");
@@ -204,9 +204,9 @@ public sealed class SearchIndexOrchestratorTests
     [Fact]
     public async Task IngestAsync_RetriesCountVerification_ThenSucceeds_WhenCountCatchesUpLate()
     {
-        var plan = MakePlan("alpha", "alpha-index", documentCount: 1);
-        var countCallCount = 0;
-        var delayCalls = 0;
+        PersonaIngestPlan plan = MakePlan("alpha", "alpha-index", documentCount: 1);
+        int countCallCount = 0;
+        int delayCalls = 0;
 
         var handler = new FakeHttpMessageHandler(request =>
         {
@@ -220,8 +220,8 @@ public sealed class SearchIndexOrchestratorTests
             }
             if (request.Uri.Contains("search.index"))
             {
-                var value = JsonNode.Parse(request.Body!)!["value"]!.AsArray();
-                var results = value.Select(d => new JsonObject { ["key"] = d!["id"]!.DeepClone(), ["status"] = true });
+                JsonArray value = JsonNode.Parse(request.Body!)!["value"]!.AsArray();
+                IEnumerable<JsonObject> results = value.Select(d => new JsonObject { ["key"] = d!["id"]!.DeepClone(), ["status"] = true });
                 return FakeHttpMessageHandler.Json(HttpStatusCode.OK, new JsonObject { ["value"] = new JsonArray(results.ToArray()) }.ToJsonString());
             }
             countCallCount++;
@@ -242,7 +242,7 @@ public sealed class SearchIndexOrchestratorTests
     [Fact]
     public async Task IngestAsync_Throws_WhenCountNeverMatches_AfterAllAttempts()
     {
-        var plan = MakePlan("alpha", "alpha-index", documentCount: 5);
+        PersonaIngestPlan plan = MakePlan("alpha", "alpha-index", documentCount: 5);
 
         var handler = new FakeHttpMessageHandler(request =>
         {
@@ -256,8 +256,8 @@ public sealed class SearchIndexOrchestratorTests
             }
             if (request.Uri.Contains("search.index"))
             {
-                var value = JsonNode.Parse(request.Body!)!["value"]!.AsArray();
-                var results = value.Select(d => new JsonObject { ["key"] = d!["id"]!.DeepClone(), ["status"] = true });
+                JsonArray value = JsonNode.Parse(request.Body!)!["value"]!.AsArray();
+                IEnumerable<JsonObject> results = value.Select(d => new JsonObject { ["key"] = d!["id"]!.DeepClone(), ["status"] = true });
                 return FakeHttpMessageHandler.Json(HttpStatusCode.OK, new JsonObject { ["value"] = new JsonArray(results.ToArray()) }.ToJsonString());
             }
             return FakeHttpMessageHandler.PlainText(HttpStatusCode.OK, "0"); // never catches up to 5
@@ -268,7 +268,7 @@ public sealed class SearchIndexOrchestratorTests
             searchClient, new FixtureEmbeddingClient(), "https://fake.openai.azure.com", "fake-deployment", TextWriter.Null,
             delay: (_, _) => Task.CompletedTask);
 
-        var ex = await Assert.ThrowsAsync<Exception>(() => orchestrator.IngestAsync(plan, CancellationToken.None));
+        DocumentCountMismatchException ex = await Assert.ThrowsAsync<DocumentCountMismatchException>(() => orchestrator.IngestAsync(plan, CancellationToken.None));
         Assert.Contains("holds 0 document(s)", ex.Message);
         Assert.Contains("the plan has 5", ex.Message);
     }
@@ -282,7 +282,7 @@ public sealed class SearchIndexOrchestratorTests
             IReadOnlyList<string> texts, string deployment, CancellationToken cancellationToken)
         {
             IReadOnlyList<IReadOnlyList<double>> result =
-                Enumerable.Range(0, count).Select(i => (IReadOnlyList<double>)FixtureEmbeddingClient.For($"fixed-{i}")).ToList();
+                [.. Enumerable.Range(0, count).Select(i => FixtureEmbeddingClient.For($"fixed-{i}"))];
             return Task.FromResult(result);
         }
     }
@@ -294,7 +294,7 @@ public sealed class SearchIndexOrchestratorTests
         // the shorter sequence here instead of failing (ingest_plan, line 435) -- this port
         // deliberately diverges by raising a clean, catchable error instead of letting the
         // embedding-attachment loop below throw an unhandled index-out-of-range exception.
-        var plan = MakePlan("alpha", "alpha-index", documentCount: 3);
+        PersonaIngestPlan plan = MakePlan("alpha", "alpha-index", documentCount: 3);
         var handler = new FakeHttpMessageHandler(request =>
             request.Method == HttpMethod.Put
                 ? FakeHttpMessageHandler.Json(HttpStatusCode.OK, request.Body!)
@@ -303,7 +303,7 @@ public sealed class SearchIndexOrchestratorTests
         var orchestrator = new SearchIndexOrchestrator(
             searchClient, new FixedCountEmbeddingClient(count: 2), "https://fake.openai.azure.com", "fake-deployment", TextWriter.Null);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => orchestrator.IngestAsync(plan, CancellationToken.None));
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() => orchestrator.IngestAsync(plan, CancellationToken.None));
 
         Assert.Contains("returned 2 embedding(s)", ex.Message);
         Assert.Contains("for 3 document(s)", ex.Message);

@@ -1,9 +1,9 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net.WebSockets;
 using System.Text.Json.Nodes;
 using Backend.Cascade;
 using Backend.Prompts;
 using Backend.Realtime;
-using Backend.Shared;
 
 namespace Backend.Sessions;
 
@@ -12,6 +12,8 @@ namespace Backend.Sessions;
 /// </summary>
 internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
 {
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Turn-cancel boundary: whatever the cancelled turn faulted with is logged; teardown and barge-in must proceed regardless.")]
     public async Task CancelCurrentTurnAsync(string reason)
     {
         Task? task;
@@ -50,6 +52,8 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         cts?.Dispose();
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Fire-and-forget barge-in tail: a failed speech_started send is logged and must never fault the background task.")]
     public void BargeIn()
     {
         Task? task;
@@ -61,9 +65,9 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
             context.State.CurrentTurnTask = null;
             context.State.CurrentTurnCts = null;
         }
-        var wasInFlight = task is { IsCompleted: false };
+        bool wasInFlight = task is { IsCompleted: false };
         cts?.Cancel();
-        var previousTail = context.State.BargeInTail;
+        Task? previousTail = context.State.BargeInTail;
         context.State.BargeInTail = Task.Run(async () =>
         {
             await AwaitQuietlyAsync(previousTail).ConfigureAwait(false);
@@ -89,6 +93,8 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         });
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Awaits an already-cancelled turn purely to drain it; any fault it ends with is logged, never rethrown.")]
     public async Task AwaitQuietlyAsync(Task? task)
     {
         if (task is null)
@@ -108,6 +114,8 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         }
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Fire-and-forget turn boundary: a faulted background turn is logged and must never surface as an unobserved task exception.")]
     public (CancellationTokenSource Cts, Task Task) Spawn(
         Func<CancellationToken, Task> body,
         string label)
@@ -132,7 +140,7 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
 
     public void ScheduleNudge()
     {
-        var (cts, task) = Spawn(async nudgeCt =>
+        (CancellationTokenSource? cts, Task? task) = Spawn(async nudgeCt =>
         {
             await Task.Delay(
                     TimeSpan.FromSeconds(context.SessionManager!.Config.NudgeAfterSeconds),
@@ -146,7 +154,7 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
                 {
                     return;
                 }
-                var inFlight = context.State.CurrentTurnTask;
+                Task? inFlight = context.State.CurrentTurnTask;
                 skipped = (inFlight is not null && !inFlight.IsCompleted)
                     || context.State.BargeInTail is { IsCompleted: false };
                 if (!skipped)
@@ -191,9 +199,11 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         cts?.Dispose();
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Turn boundary: any chat-completion failure is logged and closed out with a failed response.done so the browser never waits on a dead turn.")]
     public async Task RunTurnAndSpeakAsync(CancellationToken turnCt, string? greetingInstructions = null)
     {
-        var responseId = MiddleTierItemIds.NewId();
+        string responseId = MiddleTierItemIds.NewId();
         if (context.Diagnostic is { } diagnostic)
         {
             diagnostic.ResponseId = responseId;
@@ -212,7 +222,9 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
                 ? await context.ToolCallDispatcher.RunChatToolLoopAsync(turnCt).ConfigureAwait(false)
                 : await context.ToolCallDispatcher.RunGreetingAsync(greetingInstructions, turnCt).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(finalText))
+            {
                 throw new InvalidOperationException("Chat tool loop returned no spoken answer; the ticket may have changed.");
+            }
         }
         catch (CascadeRateLimitExhaustedException)
         {
@@ -264,6 +276,8 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
             context.CancellationToken).ConfigureAwait(false);
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Turn boundary: any text-to-speech failure is logged and closed out with a failed response.done so the browser never waits on a dead turn.")]
     private async Task<bool> SendFinalTextAsync(string responseId, string finalText, CancellationToken turnCt)
     {
         await CascadeProcessor.SendTextAsync(context.BrowserSocket, new JsonObject
@@ -303,6 +317,14 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
     /// line from <c>output[].content[].transcript</c>, exactly as it does for realtime turns.</summary>
     private async Task SendResponseDoneAsync(string responseId, string? finalText, CancellationToken turnCt)
     {
+        JsonArray output = string.IsNullOrEmpty(finalText)
+            ? []
+            : [new JsonObject
+            {
+                ["type"] = "message",
+                ["role"] = "assistant",
+                ["content"] = new JsonArray(new JsonObject { ["type"] = "audio", ["transcript"] = finalText }),
+            }];
         await CascadeProcessor.SendTextAsync(context.BrowserSocket, new JsonObject
         {
             ["type"] = "response.done",
@@ -310,14 +332,7 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
             {
                 ["id"] = responseId,
                 ["status"] = "completed",
-                ["output"] = string.IsNullOrEmpty(finalText)
-                    ? new JsonArray()
-                    : new JsonArray(new JsonObject
-                    {
-                        ["type"] = "message",
-                        ["role"] = "assistant",
-                        ["content"] = new JsonArray(new JsonObject { ["type"] = "audio", ["transcript"] = finalText }),
-                    }),
+                ["output"] = output,
             },
         }.ToJsonString(), turnCt, context.CancellationToken).ConfigureAwait(false);
         context.Diagnostic?.Emission("response.done");
@@ -334,6 +349,8 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         }
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Turn boundary: any transcription failure is logged and releases the carried audio instead of faulting the turn.")]
     public async Task ProcessTurnAsync(byte[] turnAudio, CancellationToken turnCt)
     {
         if (turnAudio.Length == 0)
@@ -388,6 +405,8 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
         await RunTurnAndSpeakAsync(turnCt).ConfigureAwait(false);
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Malformed persona greeting config can fail as a cast, null, or JSON type error; any failure is logged and skips the greeting.")]
     public async Task SendGreetingAsync(CancellationToken turnCt)
     {
         if (context.PromptLoader is null)
@@ -416,7 +435,10 @@ internal sealed class CascadeTurnCoordinator(CascadeSessionContext context)
             return;
         }
         if (!scoped)
+        {
             context.State.Messages.Add(CascadeChatMessage.User(text));
+        }
+
         context.SessionManager?.MarkConversationStarted(context.SessionId);
         await RunTurnAndSpeakAsync(turnCt, scoped ? text : null).ConfigureAwait(false);
     }

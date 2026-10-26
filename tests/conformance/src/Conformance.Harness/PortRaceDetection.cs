@@ -47,7 +47,7 @@ public static class PortRaceDetection
             "only one usage of each socket address",
         ];
 
-        foreach (var signature in signatures)
+        foreach (string signature in signatures)
         {
             if (capturedOutput.Contains(signature, StringComparison.OrdinalIgnoreCase))
             {

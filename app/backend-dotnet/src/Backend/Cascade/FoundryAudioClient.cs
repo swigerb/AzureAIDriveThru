@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Http.Headers;
 using System.Text.Json.Nodes;
 using Backend.Realtime;
@@ -32,8 +33,12 @@ internal sealed class FoundryAudioClient(HttpClient httpClient, string endpoint,
     /// text (empty string if the response has none). Port of cascade_processor.py's `_transcribe`.</summary>
     public async Task<string> TranscribeAsync(byte[] pcm16Bytes, string deployment, int sampleRate, CancellationToken ct)
     {
-        var wavBytes = WavEncoder.PcmToWav(pcm16Bytes, sampleRate);
+        byte[] wavBytes = WavEncoder.PcmToWav(pcm16Bytes, sampleRate);
 
+        // CA2000: each part is handed to the multipart content right after it is built (setting a
+        // constant Content-Type cannot throw); from then on MultipartFormDataContent owns it and
+        // disposes it with itself (the `using` below).
+#pragma warning disable CA2000
         using var content = new MultipartFormDataContent
         {
             { new StringContent(deployment), "model" },
@@ -41,17 +46,18 @@ internal sealed class FoundryAudioClient(HttpClient httpClient, string endpoint,
         var fileContent = new ByteArrayContent(wavBytes);
         fileContent.Headers.ContentType = new MediaTypeHeaderValue("audio/wav");
         content.Add(fileContent, "file", "turn.wav");
+#pragma warning restore CA2000
 
         using var request = new HttpRequestMessage(HttpMethod.Post, TranscriptionUrl(_endpoint, deployment))
         {
             Content = content,
         };
-        var token = await credential.GetTokenAsync(ct).ConfigureAwait(false);
+        string token = await credential.GetTokenAsync(ct).ConfigureAwait(false);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, ct)
+        using HttpResponseMessage response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, ct)
             .ConfigureAwait(false);
-        var responseText = await ReadBodySafelyAsync(response, ct).ConfigureAwait(false);
+        string responseText = await ReadBodySafelyAsync(response, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             throw BuildHttpException(response, responseText);
@@ -79,19 +85,21 @@ internal sealed class FoundryAudioClient(HttpClient httpClient, string endpoint,
         {
             Content = new StringContent(body.ToJsonString(), System.Text.Encoding.UTF8, "application/json"),
         };
-        var token = await credential.GetTokenAsync(ct).ConfigureAwait(false);
+        string token = await credential.GetTokenAsync(ct).ConfigureAwait(false);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-        using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, ct)
+        using HttpResponseMessage response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead, ct)
             .ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            var errorText = await ReadBodySafelyAsync(response, ct).ConfigureAwait(false);
+            string errorText = await ReadBodySafelyAsync(response, ct).ConfigureAwait(false);
             throw BuildHttpException(response, errorText);
         }
         return await response.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Best-effort error-body read: any failure falls back to a status-code-only message.")]
     private static async Task<string> ReadBodySafelyAsync(HttpResponseMessage response, CancellationToken ct)
     {
         try
@@ -108,7 +116,7 @@ internal sealed class FoundryAudioClient(HttpClient httpClient, string endpoint,
     private static FoundryHttpException BuildHttpException(HttpResponseMessage response, string body)
     {
         double? retryAfter = response.Headers.RetryAfter?.Delta?.TotalSeconds;
-        var message = string.IsNullOrEmpty(body) ? $"HTTP {(int)response.StatusCode}" : body;
+        string message = string.IsNullOrEmpty(body) ? $"HTTP {(int)response.StatusCode}" : body;
         return new FoundryHttpException((int)response.StatusCode, retryAfter, message);
     }
 }
@@ -122,10 +130,10 @@ internal static class WavEncoder
 {
     public static byte[] PcmToWav(byte[] pcm16Bytes, int sampleRate, int channels = 1, int bitsPerSample = 16)
     {
-        var blockAlign = channels * (bitsPerSample / 8);
-        var byteRate = sampleRate * blockAlign;
-        var dataSize = pcm16Bytes.Length;
-        var riffSize = 36 + dataSize;
+        int blockAlign = channels * (bitsPerSample / 8);
+        int byteRate = sampleRate * blockAlign;
+        int dataSize = pcm16Bytes.Length;
+        int riffSize = 36 + dataSize;
 
         using var stream = new MemoryStream(44 + dataSize);
         using (var writer = new BinaryWriter(stream, System.Text.Encoding.ASCII, leaveOpen: true))

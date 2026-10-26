@@ -28,30 +28,30 @@ namespace Conformance.Tests;
 [Collection(ConformanceCollection.Name)]
 public sealed class GreetingWithoutAudioUnmutesTests(ConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
     private const string MicAfterSilentGreeting = "bWljLWFmdGVyLXNpbGVudC1ncmVldGluZw==";
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Mic_audio_is_forwarded_after_an_audio_free_greeting_with_no_barge_in() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        bool noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(s_frameTimeout, ct);
         Assert.True(noneOpen, $"Expected no open upstream connections at test start, but " +
             $"{fixture.Realtime.OpenConnectionCount} are still open — a previous test leaked a connection.");
 
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
         // The greeting produces no audio at all and completes immediately (no Pace) -- exactly
         // the #48 bug's trigger: echo.on_audio_done() is never called for it.
         connection!.Script.Enqueue(new ResponseScript([new DoneEvent()]));
 
         await browser.SendStartSessionAsync(cancellationToken: ct);
-        var greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        RecordedFrame? greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token", s_frameTimeout, ct);
         Assert.True(greetingRoundTrip is not null, "Greeting round trip never completed.");
 
         // No response.cancel anywhere in this test -- unlike EchoSuppressionBargeInTests, the mic
@@ -59,9 +59,9 @@ public sealed class GreetingWithoutAudioUnmutesTests(ConformanceFixture fixture)
         // interrupt at all. Before the #48 fix, this send would simply never reach upstream and
         // the WaitForAsync below would time out.
         await browser.SendInputAudioAppendAsync(MicAfterSilentGreeting, ct);
-        var forwarded = await connection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? forwarded = await connection.ReceivedFrames.WaitForAsync(
             f => f.Type == "input_audio_buffer.append" && f.Json.GetProperty("audio").GetString() == MicAfterSilentGreeting,
-            FrameTimeout, ct);
+            s_frameTimeout, ct);
         Assert.True(forwarded is not null,
             "Expected mic audio to be forwarded upstream after an audio-free greeting completed, " +
             "with no browser response.cancel at all — #48: response.done alone must end greeting " +

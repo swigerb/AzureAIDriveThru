@@ -1,4 +1,3 @@
-using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 

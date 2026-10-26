@@ -31,7 +31,7 @@ internal sealed class PersonaCatalog
     public bool Contains(string id) => _personas.ContainsKey(id);
 
     public Persona Get(string id) =>
-        _personas.TryGetValue(id, out var persona)
+        _personas.TryGetValue(id, out Persona? persona)
             ? persona
             : throw new KeyNotFoundException($"Unknown persona '{id}'. Enabled personas: {string.Join(", ", Ids)}.");
 
@@ -48,7 +48,7 @@ internal sealed class PersonaCatalog
         string? personasEnv = null,
         string? defaultPersonaEnv = null)
     {
-        var baseDir = personasDir
+        string baseDir = personasDir
             ?? BackendEnvironment.Get(BackendEnvironment.PersonasDir)
             ?? Path.Combine(RepoRootLocator.Find(), "personas");
 
@@ -57,22 +57,21 @@ internal sealed class PersonaCatalog
             throw new PersonaValidationException($"PERSONAS_DIR '{baseDir}' does not exist or is not a directory.");
         }
 
-        var personaSchema = LoadJsonSchema(Path.Combine(baseDir, "persona.schema.json"));
-        var menuSchema = LoadJsonSchema(Path.Combine(baseDir, "menu.schema.json"));
+        JsonSchema personaSchema = LoadJsonSchema(Path.Combine(baseDir, "persona.schema.json"));
+        JsonSchema menuSchema = LoadJsonSchema(Path.Combine(baseDir, "menu.schema.json"));
 
         var discovered = Directory.EnumerateDirectories(baseDir)
-            .Select(d => Path.GetFileName(d)!)
+            .Select(d => Path.GetFileName(d))
             .Where(name => File.Exists(Path.Combine(baseDir, name, "persona.json")))
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToList();
 
-        var personasCsv = personasEnv ?? BackendEnvironment.Get(BackendEnvironment.Personas);
-        var enabledIds = string.IsNullOrWhiteSpace(personasCsv)
+        string? personasCsv = personasEnv ?? BackendEnvironment.Get(BackendEnvironment.Personas);
+        List<string> enabledIds = string.IsNullOrWhiteSpace(personasCsv)
             ? discovered
-            : personasCsv.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            : [.. personasCsv.Split(',', StringSplitOptions.RemoveEmptyEntries)
                 .Select(id => id.Trim())
-                .Where(id => id.Length > 0)
-                .ToList();
+                .Where(id => id.Length > 0)];
 
         if (enabledIds.Count == 0)
         {
@@ -82,7 +81,7 @@ internal sealed class PersonaCatalog
         }
 
         var personas = new Dictionary<string, Persona>(StringComparer.Ordinal);
-        foreach (var id in enabledIds)
+        foreach (string? id in enabledIds)
         {
             if (!discovered.Contains(id))
             {
@@ -94,7 +93,7 @@ internal sealed class PersonaCatalog
             personas[id] = LoadOnePersona(baseDir, id, personaSchema, menuSchema);
         }
 
-        var defaultId = defaultPersonaEnv ?? BackendEnvironment.Get(BackendEnvironment.DefaultPersona);
+        string? defaultId = defaultPersonaEnv ?? BackendEnvironment.Get(BackendEnvironment.DefaultPersona);
         if (defaultId is not null)
         {
             if (!personas.ContainsKey(defaultId))
@@ -136,8 +135,8 @@ internal sealed class PersonaCatalog
     private static Persona LoadOnePersona(
         string baseDir, string personaId, JsonSchema personaSchema, JsonSchema menuSchema)
     {
-        var packDir = Path.Combine(baseDir, personaId);
-        var manifestPath = Path.Combine(packDir, "persona.json");
+        string packDir = Path.Combine(baseDir, personaId);
+        string manifestPath = Path.Combine(packDir, "persona.json");
 
         if (!File.Exists(manifestPath))
         {
@@ -145,7 +144,7 @@ internal sealed class PersonaCatalog
                 $"Persona '{personaId}' is enabled but {manifestPath} does not exist.");
         }
 
-        var manifestNode = LoadJsonFile(manifestPath, personaId);
+        JsonNode manifestNode = LoadJsonFile(manifestPath, personaId);
 
         // Layer 1: validate against the shared JSON Schema (the same contract Python and CI
         // validate against -- design doc section 4.4).
@@ -182,13 +181,13 @@ internal sealed class PersonaCatalog
 
         // Validate the pack's menu file too, so a broken menu also fails startup rather than
         // surfacing later as a runtime lookup failure.
-        var menuPath = Path.Combine(packDir, "menu", "menuItems.json");
+        string menuPath = Path.Combine(packDir, "menu", "menuItems.json");
         if (!File.Exists(menuPath))
         {
             throw new PersonaValidationException($"Persona '{personaId}': menu file not found at {menuPath}.");
         }
 
-        var menuNode = LoadJsonFile(menuPath, personaId);
+        JsonNode menuNode = LoadJsonFile(menuPath, personaId);
         PersonaSchemaValidator.Validate(menuSchema, menuNode, personaId, "menu/menuItems.json");
 
         PersonaMenu menu;
@@ -210,7 +209,7 @@ internal sealed class PersonaCatalog
         // (design doc section 6) -- see MenuKeyValidator's own doc comment.
         MenuKeyValidator.ValidateNoCollisions(menu, personaId, menuPath);
 
-        var promptsDir = Path.Combine(packDir, "prompts");
+        string promptsDir = Path.Combine(packDir, "prompts");
         if (!Directory.Exists(promptsDir))
         {
             throw new PersonaValidationException(

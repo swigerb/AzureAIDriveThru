@@ -1,8 +1,6 @@
 using System.Globalization;
-using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 
@@ -36,7 +34,7 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// because just ONE of its two fixture personas has a non-null window) is not safe here -- this
 /// file instead launches one dedicated <see cref="RealPackHappyHourFixture"/> backend PER pack PER
 /// instant, at an instant computed fresh from THAT pack's own window/timezone
-/// (<see cref="LocalWallClockInstant"/>), "just outside" always being exactly one second before
+/// (<see cref="RealPackHappyHourConformanceTests.LocalWallClockInstant"/>), "just outside" always being exactly one second before
 /// the pack's own opening instant (so it is correct regardless of which timezone or which hour a
 /// future pack's own window starts at, DST included).
 ///
@@ -80,22 +78,22 @@ internal static class PersonaHappyHourConfig
 
     public static PersonaPricing Read(string personasDir, string personaId)
     {
-        var personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
-        using var stream = File.OpenRead(personaJsonPath);
+        string personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
+        using FileStream stream = File.OpenRead(personaJsonPath);
         using var document = JsonDocument.Parse(stream);
-        var root = document.RootElement;
+        JsonElement root = document.RootElement;
 
-        var timeZoneId = root.GetProperty("store").GetProperty("timezone").GetString();
+        string? timeZoneId = root.GetProperty("store").GetProperty("timezone").GetString();
         if (string.IsNullOrEmpty(timeZoneId))
         {
             throw new InvalidOperationException(
                 $"persona.json for '{personaId}' under '{personasDir}' has no store.timezone.");
         }
 
-        var pricing = root.GetProperty("pricing");
-        var taxRate = decimal.Parse(pricing.GetProperty("taxRate").GetString()!, CultureInfo.InvariantCulture);
+        JsonElement pricing = root.GetProperty("pricing");
+        decimal taxRate = decimal.Parse(pricing.GetProperty("taxRate").GetString()!, CultureInfo.InvariantCulture);
 
-        var happyHourElement = pricing.GetProperty("happyHour");
+        JsonElement happyHourElement = pricing.GetProperty("happyHour");
         if (happyHourElement.ValueKind == JsonValueKind.Null)
         {
             return new PersonaPricing(taxRate, timeZoneId, null);
@@ -128,7 +126,7 @@ internal static class PersonaHappyHourSmokeExpectations
         string IneligibleSize,
         decimal IneligibleMenuPrice);
 
-    private static readonly JsonSerializerOptions Options = new()
+    private static readonly JsonSerializerOptions s_options = new()
     {
         PropertyNameCaseInsensitive = true,
         NumberHandling = JsonNumberHandling.AllowReadingFromString,
@@ -144,14 +142,14 @@ internal static class PersonaHappyHourSmokeExpectations
     /// </summary>
     public static Expectation? For(string personaId, bool isEnabled)
     {
-        var path = RepoPaths.PersonaSmokeDataPath(RepoPaths.FindRepoRoot(), personaId);
+        string path = RepoPaths.PersonaSmokeDataPath(RepoPaths.FindRepoRoot(), personaId);
         Assert.True(File.Exists(path),
             $"RealPackHappyHourConformanceTests.cs's PersonaHappyHourSmokeExpectations.For('{personaId}') " +
             $"found no smoke.json at '{path}' at all -- see PersonaSmokeExpectations.For's own " +
             "message in PersonaSmokeTests.cs for the base file this pack is missing entirely.");
 
         using var document = JsonDocument.Parse(File.ReadAllText(path));
-        var hasBlock = document.RootElement.TryGetProperty("happyHour", out var happyHourElement)
+        bool hasBlock = document.RootElement.TryGetProperty("happyHour", out JsonElement happyHourElement)
             && happyHourElement.ValueKind != JsonValueKind.Null;
 
         if (!isEnabled)
@@ -180,7 +178,7 @@ internal static class PersonaHappyHourSmokeExpectations
             "  }\n" +
             "}");
 
-        var expectation = happyHourElement.Deserialize<Expectation>(Options);
+        Expectation? expectation = happyHourElement.Deserialize<Expectation>(s_options);
         Assert.True(expectation is not null, $"'{path}''s happyHour block deserialized to null.");
         return expectation;
     }
@@ -211,8 +209,8 @@ file static class RealPackHappyHourTestSupport
     public static async Task<ToolCallResult> AddItemAndReadResultAsync(
         ConformanceFixture fixture, string persona, string itemName, string size, decimal price, CancellationToken ct)
     {
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, persona: persona);
-        await using var _ = browser;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, persona: persona);
+        await using RealtimeBrowserClient _ = browser;
 
         return await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
@@ -229,15 +227,15 @@ file static class RealPackHappyHourTestSupport
     public static async Task<(ToolCallResult AddResult, ToolCallResult GetOrderResult)> AddItemAndGetOrderAsync(
         ConformanceFixture fixture, string persona, string itemName, string size, decimal price, CancellationToken ct)
     {
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, persona: persona);
-        await using var _ = browser;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, persona: persona);
+        await using RealtimeBrowserClient _ = browser;
 
-        var added = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult added = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", itemName, size, 1, price)],
             roundTripIndex, ct);
 
-        var getOrder = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult getOrder = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "get_order", "{}", "call_happy_hour_get_order", added.RoundTripIndex, ct);
 
         return (added, getOrder);
@@ -256,7 +254,7 @@ public sealed class RealPackHappyHourConformanceTests
     public static TheoryData<string> DiscoveredPersonaIds()
     {
         var data = new TheoryData<string>();
-        foreach (var id in ConformancePersonas.DiscoverFromDisk())
+        foreach (string id in ConformancePersonas.DiscoverFromDisk())
         {
             data.Add(id);
         }
@@ -269,9 +267,9 @@ public sealed class RealPackHappyHourConformanceTests
     [MemberData(nameof(DiscoveredPersonaIds))]
     public async Task Discovered_pack_honors_its_own_happy_hour_configuration(string personaId)
     {
-        var ct = TestContext.Current.CancellationToken;
-        var personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
-        var pricing = PersonaHappyHourConfig.Read(personasDir, personaId);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
+        PersonaHappyHourConfig.PersonaPricing pricing = PersonaHappyHourConfig.Read(personasDir, personaId);
 
         if (pricing.HappyHour is null)
         {
@@ -303,40 +301,40 @@ public sealed class RealPackHappyHourConformanceTests
     {
         var timeZone = TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
         var localDateTime = new DateTime(2026, 7, 4, localHour, 0, 0, DateTimeKind.Unspecified);
-        var offset = timeZone.GetUtcOffset(localDateTime);
+        TimeSpan offset = timeZone.GetUtcOffset(localDateTime);
         return new DateTimeOffset(localDateTime, offset);
     }
 
     private static async Task RunEnabledPackProofAsync(
         string personaId, string personasDir, decimal taxRate, string timeZoneId, PersonaHappyHourConfig.HappyHourWindow window, CancellationToken ct)
     {
-        var expectation = PersonaHappyHourSmokeExpectations.For(personaId, isEnabled: true)!;
+        PersonaHappyHourSmokeExpectations.Expectation expectation = PersonaHappyHourSmokeExpectations.For(personaId, isEnabled: true)!;
 
         // Rick's PR #108 second review pattern (PersonaMenuPrice/PersonaSmokeTests): re-read the
         // pack's own menu fresh, independent of smoke.json, so a stale/wrong smoke.json price
         // literal can't silently pass.
-        var realEligiblePrice = PersonaMenuPrice.Read(personasDir, personaId, expectation.EligibleItem, expectation.Size);
+        decimal realEligiblePrice = PersonaMenuPrice.Read(personasDir, personaId, expectation.EligibleItem, expectation.Size);
         Assert.Equal(realEligiblePrice, expectation.MenuPrice);
-        var realIneligiblePrice = PersonaMenuPrice.Read(personasDir, personaId, expectation.IneligibleItem, expectation.IneligibleSize);
+        decimal realIneligiblePrice = PersonaMenuPrice.Read(personasDir, personaId, expectation.IneligibleItem, expectation.IneligibleSize);
         Assert.Equal(realIneligiblePrice, expectation.IneligibleMenuPrice);
 
-        var insideInstant = LocalWallClockInstant(timeZoneId, window.StartHour);
-        var outsideInstant = insideInstant.AddSeconds(-1);
+        DateTimeOffset insideInstant = LocalWallClockInstant(timeZoneId, window.StartHour);
+        DateTimeOffset outsideInstant = insideInstant.AddSeconds(-1);
 
         // Refs #127 nit (Rick's PR #133 review): pins the CLOSING boundary the same way the
         // opening boundary already is above -- one second before this pack's own window closes
         // (still inside) vs the closing hour itself (first second outside) -- so a `<` vs `<=`
         // slip in order_state.py's own window-membership check fails here regardless of which
         // boundary it slips on.
-        var insideClosingInstant = LocalWallClockInstant(timeZoneId, window.EndHour).AddSeconds(-1);
-        var outsideClosingInstant = LocalWallClockInstant(timeZoneId, window.EndHour);
+        DateTimeOffset insideClosingInstant = LocalWallClockInstant(timeZoneId, window.EndHour).AddSeconds(-1);
+        DateTimeOffset outsideClosingInstant = LocalWallClockInstant(timeZoneId, window.EndHour);
 
         // Refs #127 nit (Rick's PR #133 review): #115 already proves the banner echoes through
         // get_order for the fixture packs; this adds ONE get_order round trip for one real pack
         // -- the first discovered on disk, read from data so this file still carries no brand
         // literal of its own -- so a real pack's banner is proven to reach get_order's own
         // response text too, not just update_order's.
-        var isGetOrderBannerCheckPack = personaId == ConformancePersonas.DiscoverFromDisk()[0];
+        bool isGetOrderBannerCheckPack = personaId == ConformancePersonas.DiscoverFromDisk()[0];
 
         ToolCallResult insideEligibleResult = null!;
         ToolCallResult insideIneligibleResult = null!;
@@ -358,7 +356,7 @@ public sealed class RealPackHappyHourConformanceTests
             {
                 await insideFixture.RunAsync(async () =>
                 {
-                    var (_, getOrderResult) = await RealPackHappyHourTestSupport.AddItemAndGetOrderAsync(
+                    (ToolCallResult _, ToolCallResult? getOrderResult) = await RealPackHappyHourTestSupport.AddItemAndGetOrderAsync(
                         insideFixture, personaId, expectation.EligibleItem, expectation.Size, expectation.MenuPrice, ct);
                     insideEligibleGetOrderResult = getOrderResult;
                 });
@@ -490,16 +488,16 @@ public sealed class RealPackHappyHourConformanceTests
         IReadOnlyList<EnabledPackSnapshot> enabledPacks,
         CancellationToken ct)
     {
-        var expectation = PersonaHappyHourSmokeExpectations.For(personaId, isEnabled: false);
+        PersonaHappyHourSmokeExpectations.Expectation? expectation = PersonaHappyHourSmokeExpectations.For(personaId, isEnabled: false);
         Assert.Null(expectation);
-        var smoke = PersonaSmokeExpectations.For(personaId);
+        PersonaSmokeExpectations.Expectation smoke = PersonaSmokeExpectations.For(personaId);
 
         var pinnedInstants = new List<DateTimeOffset>
         {
             DateTimeOffset.Parse("2026-07-04T14:00:00Z", CultureInfo.InvariantCulture),
             DateTimeOffset.Parse("2026-01-15T02:00:00Z", CultureInfo.InvariantCulture),
         };
-        foreach (var enabledPack in enabledPacks)
+        foreach (EnabledPackSnapshot enabledPack in enabledPacks)
         {
             // (a) the real, global moment this enabled pack's own window opens.
             pinnedInstants.Add(LocalWallClockInstant(enabledPack.TimeZoneId, enabledPack.Window.StartHour));
@@ -510,7 +508,7 @@ public sealed class RealPackHappyHourConformanceTests
             pinnedInstants.Add(LocalWallClockInstant(pricing.TimeZoneId, enabledPack.Window.StartHour));
         }
 
-        foreach (var instant in pinnedInstants.Distinct())
+        foreach (DateTimeOffset instant in pinnedInstants.Distinct())
         {
             ToolCallResult result = null!;
             await using var fixture = new RealPackHappyHourFixture(personaId, instant);
@@ -530,7 +528,7 @@ public sealed class RealPackHappyHourConformanceTests
 
             // Refs #127 item 1: a disabled pack must never surface ANY other pack's own banner
             // text either -- not just the generic "HAPPY HOUR" substring above.
-            foreach (var enabledPack in enabledPacks)
+            foreach (EnabledPackSnapshot enabledPack in enabledPacks)
             {
                 Assert.DoesNotContain(enabledPack.Window.Banner, result.FunctionCallOutputText);
             }

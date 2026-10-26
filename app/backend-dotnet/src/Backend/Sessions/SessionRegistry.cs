@@ -18,7 +18,7 @@ internal sealed class SessionRegistry
 
     public async ValueTask<bool> RemoveAsync(string sessionId)
     {
-        if (!_sessions.TryRemove(sessionId, out var actor))
+        if (!_sessions.TryRemove(sessionId, out SessionActor? actor))
         {
             return false;
         }

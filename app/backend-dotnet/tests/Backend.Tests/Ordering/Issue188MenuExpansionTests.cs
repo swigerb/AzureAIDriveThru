@@ -39,9 +39,9 @@ public sealed class Issue188MenuExpansionTests : IDisposable
 
     private static (OrderToolExecutor Executor, OrderState Order, MenuCatalog Menu) NewExecutor()
     {
-        var persona = Pack();
-        var menu = PersonaOrderFactory.GetMenuCatalog(persona);
-        var order = PersonaOrderFactory.CreateOrderState(persona);
+        Persona persona = Pack();
+        MenuCatalog menu = PersonaOrderFactory.GetMenuCatalog(persona);
+        OrderState order = PersonaOrderFactory.CreateOrderState(persona);
         return (new OrderToolExecutor(order, menu, promptLoader: null, MaxItemQuantity, MaxOrderItems), order, menu);
     }
 
@@ -55,11 +55,11 @@ public sealed class Issue188MenuExpansionTests : IDisposable
     public async Task LargeHotRegularCoffee_FreeModsAndPaidSwirl_ArePricedFromMenu()
     {
         FreezeAt("2026-10-02T21:30:00Z");
-        var (executor, order, _) = NewExecutor();
+        (OrderToolExecutor? executor, OrderState? order, MenuCatalog _) = NewExecutor();
 
-        var coffee = await executor.ExecuteAsync(
+        ToolResult coffee = await executor.ExecuteAsync(
             "update_order", Args("add", "Original Blend Coffee (Cream, Sugar)", "large", 1, 0.01m), TestContext.Current.CancellationToken);
-        var swirl = await executor.ExecuteAsync(
+        ToolResult swirl = await executor.ExecuteAsync(
             "update_order", Args("add", "Flavor Swirl Add-On", "standard", 1, 0.01m), TestContext.Current.CancellationToken);
 
         Assert.Equal(ToolResultDirection.ToBoth, coffee.Destination);
@@ -73,7 +73,7 @@ public sealed class Issue188MenuExpansionTests : IDisposable
     public void MediumIcedBlackCoffee_IsHappyHourDiscounted()
     {
         FreezeAt("2026-10-02T18:30:00Z");
-        var order = PersonaOrderFactory.CreateOrderState(Pack());
+        OrderState order = PersonaOrderFactory.CreateOrderState(Pack());
 
         order.HandleOrderUpdate("add", "Original Blend Iced Coffee (Black)", "medium", 1, 0.01m);
 
@@ -86,11 +86,11 @@ public sealed class Issue188MenuExpansionTests : IDisposable
     public async Task MunchkinsFlavorCounts_AreDistinctOrderableItemsAndSizes()
     {
         FreezeAt("2026-10-02T21:30:00Z");
-        var (executor, order, _) = NewExecutor();
+        (OrderToolExecutor? executor, OrderState? order, MenuCatalog _) = NewExecutor();
 
-        var glazed = await executor.ExecuteAsync(
+        ToolResult glazed = await executor.ExecuteAsync(
             "update_order", Args("add", "Glazed MUNCHKINS® Donut Hole Treats", "10 count", 2, 0.01m), TestContext.Current.CancellationToken);
-        var chocolate = await executor.ExecuteAsync(
+        ToolResult chocolate = await executor.ExecuteAsync(
             "update_order", Args("add", "Chocolate Glazed MUNCHKINS® Donut Hole Treats", "25 count", 1, 0.01m), TestContext.Current.CancellationToken);
 
         Assert.Equal(2, order.Items.Count);
@@ -102,12 +102,10 @@ public sealed class Issue188MenuExpansionTests : IDisposable
         Assert.Contains("Munch-kins Donut Hole Treats", chocolate.ToText());
         Assert.Contains("MUNCHKINS®", order.Items[0].Item);
         using var ticketJson = JsonDocument.Parse(chocolate.ToClientText());
-        var ticketItems = ticketJson.RootElement.GetProperty("items").EnumerateArray()
-            .Select(item => item.GetProperty("item").GetString())
-            .ToArray();
+        string?[] ticketItems = [.. ticketJson.RootElement.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("item").GetString())];
         Assert.Contains(ticketItems, item => item == "Glazed MUNCHKINS® Donut Hole Treats");
         Assert.Contains(ticketItems, item => item == "Chocolate Glazed MUNCHKINS® Donut Hole Treats");
-        var readback = order.GetGroupedOrderForReadback();
+        string readback = order.GetGroupedOrderForReadback();
         Assert.Contains("Glazed Munch-kins Donut Hole Treats", readback);
         Assert.DoesNotContain("MUNCHKINS", readback);
         Assert.DoesNotContain("®", readback);
@@ -116,9 +114,9 @@ public sealed class Issue188MenuExpansionTests : IDisposable
     [Fact]
     public void MunchkinsSpokenSubstitution_RespectsBoundariesAndTrademark()
     {
-        var menu = PersonaOrderFactory.GetMenuCatalog(Pack());
+        MenuCatalog menu = PersonaOrderFactory.GetMenuCatalog(Pack());
 
-        var spoken = menu.Spoken("MUNCHKINSHIP PREMUNCHKINS MUNCHKINSON MUNCHKINS® MUNCHKINS");
+        string spoken = menu.Spoken("MUNCHKINSHIP PREMUNCHKINS MUNCHKINSON MUNCHKINS® MUNCHKINS");
 
         Assert.Equal("MUNCHKINSHIP PREMUNCHKINS MUNCHKINSON Munchkins Munchkins", spoken);
     }
@@ -126,7 +124,7 @@ public sealed class Issue188MenuExpansionTests : IDisposable
     [Fact]
     public void HappyHourFlagsMatchPackBanner()
     {
-        var menu = PersonaOrderFactory.GetMenuCatalog(Pack());
+        MenuCatalog menu = PersonaOrderFactory.GetMenuCatalog(Pack());
 
         Assert.False(menu.IsHappyHourDiscounted("Original Blend Coffee"));
         Assert.True(menu.IsHappyHourDiscounted("Original Blend Iced Coffee"));
@@ -140,11 +138,11 @@ public sealed class Issue188MenuExpansionTests : IDisposable
     [Fact]
     public void MunchkinsSizeAliasesResolveToCountSizes()
     {
-        var menu = PersonaOrderFactory.GetMenuCatalog(Pack());
-        var item = menu.ResolveMenuItem("Glazed Munchkins");
+        MenuCatalog menu = PersonaOrderFactory.GetMenuCatalog(Pack());
+        ResolvedMenuItem? item = menu.ResolveMenuItem("Glazed Munchkins");
 
         Assert.NotNull(item);
-        Assert.Equal(["10 count", "25 count", "50 count"], item!.Sizes);
+        Assert.Equal(["10 count", "25 count", "50 count"], item.Sizes);
         Assert.Equal("10 count", menu.CanonicalSizeKey("10-count"));
         Assert.Equal("25 count", menu.CanonicalSizeKey("25 ct"));
         Assert.Equal("50 count", menu.CanonicalSizeKey("50"));

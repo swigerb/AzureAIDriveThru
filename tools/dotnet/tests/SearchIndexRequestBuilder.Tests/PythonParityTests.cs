@@ -38,42 +38,42 @@ public sealed class PythonParityTests
     [Fact]
     public async Task DotnetPort_MatchesRealPythonTwin_ForEveryEnabledPersona()
     {
-        var repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
-        var harnessScript = Path.Combine(
+        string repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
+        string harnessScript = Path.Combine(
             repoRoot, "tools", "dotnet", "tests", "SearchIndexRequestBuilder.Tests", "Fixtures",
             "capture_search_index_requests.py");
         Assert.True(File.Exists(harnessScript), $"Capture harness not found: {harnessScript}");
 
-        var interpreter = await PythonInterop.RequireInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
+        string? interpreter = await PythonInterop.RequireInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
         if (interpreter is null)
         {
             return;
         }
 
-        var (exitCode, stdout, stderr) = await PythonInterop.RunAsync(
+        (int exitCode, string? stdout, string? stderr) = await PythonInterop.RunAsync(
             interpreter, [harnessScript], TestContext.Current.CancellationToken);
         Assert.True(exitCode == 0, $"Capture harness exited {exitCode}.\nstdout:\n{stdout}\nstderr:\n{stderr}");
 
         using var captured = JsonDocument.Parse(stdout);
-        var capturedPersonas = captured.RootElement.GetProperty("personas");
+        JsonElement capturedPersonas = captured.RootElement.GetProperty("personas");
 
         // The harness discovers personas the exact same way (every personas/*/persona.json,
         // sorted) as EnabledPersonaDiscovery itself -- this just confirms neither side silently
         // skipped a persona the other one found, before comparing their actual request bodies.
-        var dotnetPersonas = EnabledPersonaDiscovery.DiscoverAll(repoRoot);
+        IReadOnlyList<EnabledPersonaDiscovery.DiscoveredPersona> dotnetPersonas = EnabledPersonaDiscovery.DiscoverAll(repoRoot);
         var capturedPersonaIds = capturedPersonas.EnumerateObject().Select(p => p.Name).OrderBy(id => id, StringComparer.Ordinal).ToList();
         var dotnetPersonaIds = dotnetPersonas.Select(p => p.PersonaId).OrderBy(id => id, StringComparer.Ordinal).ToList();
         Assert.Equal(capturedPersonaIds, dotnetPersonaIds);
         Assert.True(dotnetPersonaIds.Count > 0, "Expected at least one enabled persona in the real repo.");
 
-        foreach (var persona in dotnetPersonas)
+        foreach (EnabledPersonaDiscovery.DiscoveredPersona persona in dotnetPersonas)
         {
-            var plan = SearchIndexRequestPlanner.BuildPlan(
+            SearchIndexRequestPlanner.PersonaRequestPlan plan = SearchIndexRequestPlanner.BuildPlan(
                 persona,
                 TestFixtureValues.FakeOpenAiEndpoint,
                 TestFixtureValues.FakeEmbeddingDeployment,
                 FixtureEmbedding.For);
-            var capturedPersona = capturedPersonas.GetProperty(persona.PersonaId);
+            JsonElement capturedPersona = capturedPersonas.GetProperty(persona.PersonaId);
 
             Assert.Equal(capturedPersona.GetProperty("index_name").GetString(), plan.IndexName);
             Assert.Equal(capturedPersona.GetProperty("document_count").GetInt32(), plan.DocumentCount);
@@ -82,12 +82,12 @@ public sealed class PythonParityTests
             JsonStructuralAssert.Equal(
                 capturedIndexDefinition, plan.IndexDefinition, $"personas.{persona.PersonaId}.index_definition");
 
-            var capturedBatches = capturedPersona.GetProperty("document_batches");
+            JsonElement capturedBatches = capturedPersona.GetProperty("document_batches");
             Assert.Equal(capturedBatches.GetArrayLength(), plan.DocumentBatches.Count);
-            for (var i = 0; i < plan.DocumentBatches.Count; i++)
+            for (int i = 0; i < plan.DocumentBatches.Count; i++)
             {
                 var capturedBatchValue = JsonNode.Parse(capturedBatches[i].GetRawText());
-                var dotnetBatchValue = plan.DocumentBatches[i]["value"];
+                JsonNode? dotnetBatchValue = plan.DocumentBatches[i]["value"];
                 JsonStructuralAssert.Equal(
                     capturedBatchValue, dotnetBatchValue, $"personas.{persona.PersonaId}.document_batches[{i}]");
             }

@@ -16,34 +16,40 @@ internal sealed class CascadeDiagnosticGate(IConfiguration configuration, TimePr
         bool entraMode, bool authenticated, string? oid, string marker, string persona,
         string pipeline, string sessionId, ILogger logger)
     {
-        var settings = configuration.GetSection(section);
-        var expectedOid = settings["OperatorObjectId"];
-        var expectedMarker = settings["RunMarker"];
-        var now = clock.GetUtcNow();
+        IConfigurationSection settings = configuration.GetSection(section);
+        string? expectedOid = settings["OperatorObjectId"];
+        string? expectedMarker = settings["RunMarker"];
+        DateTimeOffset now = clock.GetUtcNow();
         if (string.IsNullOrEmpty(settings["Enabled"]) || settings["Enabled"] == "false")
+        {
             return null;
+        }
+
         if (settings["Enabled"] != "true"
-            || !Guid.TryParse(expectedOid, out var configuredOid) || configuredOid == Guid.Empty
-            || !Guid.TryParseExact(expectedMarker, "N", out var runId) || runId == Guid.Empty
+            || !Guid.TryParse(expectedOid, out Guid configuredOid) || configuredOid == Guid.Empty
+            || !Guid.TryParseExact(expectedMarker, "N", out Guid runId) || runId == Guid.Empty
             || !DateTimeOffset.TryParse(settings["ExpiresUtc"], CultureInfo.InvariantCulture,
-                DateTimeStyles.AssumeUniversal, out var expires)
+                DateTimeStyles.AssumeUniversal, out DateTimeOffset expires)
             || expires <= now || expires - now > TimeSpan.FromMinutes(15))
         {
-            logger.LogWarning("Synthetic cascade diagnostics disabled: invalid or expired configuration.");
+            logger.CascadeDiagnosticsInvalidConfiguration();
             return null;
         }
         if (!entraMode || !authenticated
-            || !Guid.TryParse(oid, out var actualOid) || configuredOid != actualOid
+            || !Guid.TryParse(oid, out Guid actualOid) || configuredOid != actualOid
             || !string.Equals(marker, expectedMarker, StringComparison.Ordinal)
             || persona != "tacobell" || pipeline != expectedPipeline)
         {
             if (!string.IsNullOrEmpty(marker))
-                logger.LogWarning("Synthetic cascade diagnostic request rejected: scope mismatch.");
+            {
+                logger.CascadeDiagnosticScopeMismatch();
+            }
+
             return null;
         }
         if (Interlocked.CompareExchange(ref _claimed, 1, 0) != 0)
         {
-            logger.LogWarning("Synthetic cascade diagnostic request rejected: process claim already used.");
+            logger.CascadeDiagnosticClaimAlreadyUsed();
             return null;
         }
         var capture = new CascadeDiagnosticCapture(sessionId, expires, clock, logger);
@@ -52,7 +58,7 @@ internal sealed class CascadeDiagnosticGate(IConfiguration configuration, TimePr
     }
 }
 
-internal sealed class CascadeDiagnosticCapture(
+internal sealed partial class CascadeDiagnosticCapture(
     string sessionId, DateTimeOffset expires, TimeProvider clock, ILogger logger,
     Func<string, string>? sanitize = null)
 {
@@ -67,10 +73,10 @@ internal sealed class CascadeDiagnosticCapture(
     private void RequestCore(IReadOnlyList<JsonObject> messages)
     {
         var snapshot = new JsonArray();
-        foreach (var message in messages.TakeLast(64))
+        foreach (JsonObject? message in messages.TakeLast(64))
         {
-            var role = message["role"]?.GetValue<string>();
-            var content = message["content"]?.GetValue<string>() ?? "";
+            string? role = message["role"]?.GetValue<string>();
+            string content = message["content"]?.GetValue<string>() ?? "";
             var entry = new JsonObject
             {
                 ["role"] = role,
@@ -78,15 +84,27 @@ internal sealed class CascadeDiagnosticCapture(
             };
             // User/system/tool text may contain codes or retrieved data. Never copy it.
             if (role == "assistant")
+            {
                 entry["content"] = SanitizeContent(content);
+            }
+
             if (message["tool_call_id"] is JsonValue toolId)
+            {
                 entry["toolCallIdHash"] = Hash(toolId.GetValue<string>());
+            }
+
             if (message["tool_calls"] is JsonArray calls)
+            {
                 entry["toolCalls"] = ToolCalls(calls);
+            }
+
             snapshot.Add(entry);
         }
         while (snapshot.Count > 1 && snapshot.ToJsonString().Length > 12000)
+        {
             snapshot.RemoveAt(0);
+        }
+
         Write("request", new JsonObject
         {
             ["messages"] = snapshot,
@@ -102,14 +120,16 @@ internal sealed class CascadeDiagnosticCapture(
         ["finishReason"] = SanitizeContent(finishReason ?? ""),
     }));
 
-    public void Emission(string stage) => Write(stage, new JsonObject());
+    public void Emission(string stage) => Write(stage, []);
 
     public void Stop() => Interlocked.Exchange(ref _stopped, 1);
 
     public void StopForFrameLimit()
     {
         if (Interlocked.Exchange(ref _stopped, 1) == 0)
-            logger.LogWarning("Synthetic cascade diagnostic capture stopped: text frame limit reached.");
+        {
+            logger.CascadeDiagnosticStoppedFrameLimit();
+        }
     }
 
     public void Binding(string model, string deployment) => Capture(() => Write("binding", new JsonObject
@@ -121,21 +141,25 @@ internal sealed class CascadeDiagnosticCapture(
 
     public void RealtimeFrame(JsonObject frame, bool outbound) => Capture(() =>
     {
-        var type = frame["type"]?.GetValue<string>() ?? "";
-        var config = type == "session.update" ? frame["session"] as JsonObject
+        string type = frame["type"]?.GetValue<string>() ?? "";
+        JsonObject? config = type == "session.update" ? frame["session"] as JsonObject
             : type == "response.create" ? frame["response"] as JsonObject : null;
         if (outbound)
         {
             if (type is not ("session.update" or "response.create" or "conversation.item.create" or "response.cancel"))
+            {
                 return;
+            }
+
             var payload = new JsonObject
             {
-                ["direction"] = "outbound", ["frameType"] = type,
+                ["direction"] = "outbound",
+                ["frameType"] = type,
                 ["eventIdHash"] = Hash(frame["event_id"]?.GetValue<string>() ?? ""),
             };
             if (config is not null)
             {
-                var instructions = config["instructions"]?.GetValue<string>() ?? "";
+                string instructions = config["instructions"]?.GetValue<string>() ?? "";
                 payload["instructionsHash"] = Hash(instructions);
                 payload["instructionsLength"] = instructions.Length;
                 payload["toolChoice"] = SanitizeContent(config["tool_choice"]?.ToJsonString() ?? "");
@@ -157,11 +181,14 @@ internal sealed class CascadeDiagnosticCapture(
         }
         if (type is not ("session.updated" or "response.created" or "response.output_item.done" or "response.done"
             or "response.output_audio_transcript.done" or "response.audio_transcript.done"))
+        {
             return;
+        }
+
         var incoming = new JsonObject { ["direction"] = "inbound", ["frameType"] = type };
         if (type == "session.updated" && frame["session"] is JsonObject accepted)
         {
-            var instructions = accepted["instructions"]?.GetValue<string>() ?? "";
+            string instructions = accepted["instructions"]?.GetValue<string>() ?? "";
             incoming["instructionsHash"] = Hash(instructions);
             incoming["instructionsLength"] = instructions.Length;
             incoming["tools"] = ToolShapes(accepted["tools"] as JsonArray);
@@ -174,9 +201,15 @@ internal sealed class CascadeDiagnosticCapture(
             ?? response?["id"]?.GetValue<string>() ?? "");
         incoming["status"] = SanitizeContent(response?["status"]?.GetValue<string>() ?? "");
         if (frame["item"] is JsonObject outputItem)
+        {
             incoming["item"] = OutputItem(outputItem);
+        }
+
         if (response?["output"] is JsonArray output)
+        {
             incoming["output"] = new JsonArray(output.Take(16).OfType<JsonObject>().Select(OutputItem).Cast<JsonNode>().ToArray());
+        }
+
         if (type is "response.output_audio_transcript.done" or "response.audio_transcript.done")
         {
             incoming["transcript"] = SanitizeContent(frame["transcript"]?.GetValue<string>() ?? "");
@@ -197,55 +230,71 @@ internal sealed class CascadeDiagnosticCapture(
             ["name"] = SanitizeContent(item["name"]?.GetValue<string>() ?? ""),
         };
         if (item["role"]?.GetValue<string>() == "assistant" && item["content"] is JsonArray content)
+        {
             result["content"] = new JsonArray(content.Take(8).OfType<JsonObject>().Select(part => (JsonNode)new JsonObject
             {
                 ["type"] = SanitizeContent(part["type"]?.GetValue<string>() ?? ""),
                 ["text"] = SanitizeContent(part["text"]?.GetValue<string>() ?? part["transcript"]?.GetValue<string>() ?? ""),
                 ["contentLength"] = (part["text"]?.GetValue<string>() ?? part["transcript"]?.GetValue<string>() ?? "").Length,
             }).ToArray());
+        }
+
         return result;
     }
 
-    private JsonArray ToolShapes(JsonArray? tools) => new((tools ?? []).Take(32).OfType<JsonObject>()
-        .Select(tool => (JsonNode)new JsonObject
+    private JsonArray ToolShapes(JsonArray? tools) => [.. (tools ?? []).Take(32).OfType<JsonObject>()
+        .Select(tool => new JsonObject
         {
             ["name"] = SanitizeContent(tool["name"]?.GetValue<string>() ?? ""),
             ["schemaHash"] = Hash(tool.ToJsonString()),
-        }).ToArray());
+        })];
 
     private void Write(string stage, JsonObject payload)
     {
         if (Volatile.Read(ref _stopped) != 0)
+        {
             return;
-        var sequence = Interlocked.Increment(ref _events);
+        }
+
+        int sequence = Interlocked.Increment(ref _events);
         if (clock.GetUtcNow() >= expires || sequence > 160)
         {
             if (Interlocked.Exchange(ref _stopped, 1) == 0)
-                logger.LogWarning("Synthetic cascade diagnostic capture stopped: expiry or event limit reached.");
+            {
+                logger.CascadeDiagnosticStoppedExpiryOrEventLimit();
+            }
+
             return;
         }
         payload["sessionId"] = SessionId;
         payload["responseId"] = ResponseId;
         payload["sequence"] = sequence;
         payload["stage"] = stage;
-        if (payload.ToJsonString().Length > 16000)
+        string diagnostic = payload.ToJsonString();
+        if (diagnostic.Length > 16000)
         {
             if (Interlocked.Exchange(ref _stopped, 1) == 0)
-                logger.LogWarning("Synthetic cascade diagnostic capture stopped: payload limit reached.");
+            {
+                logger.CascadeDiagnosticStoppedPayloadLimit();
+            }
+
             return;
         }
-        logger.LogInformation("Synthetic cascade diagnostic {Diagnostic}", payload.ToJsonString());
+        logger.CascadeDiagnosticCaptured(diagnostic);
     }
 
     private JsonArray ToolCalls(JsonArray? calls)
     {
         var result = new JsonArray();
-        foreach (var call in calls?.Take(16) ?? [])
+        foreach (JsonNode? call in calls?.Take(16) ?? [])
+        {
             result.Add(new JsonObject
             {
                 ["idHash"] = Hash(call?["id"]?.GetValue<string>() ?? ""),
                 ["name"] = SanitizeContent(call?["function"]?["name"]?.GetValue<string>() ?? ""),
             });
+        }
+
         return result;
     }
 
@@ -257,7 +306,10 @@ internal sealed class CascadeDiagnosticCapture(
     private void Capture(Action action)
     {
         if (Volatile.Read(ref _stopped) != 0)
+        {
             return;
+        }
+
         try
         {
             action();
@@ -265,7 +317,9 @@ internal sealed class CascadeDiagnosticCapture(
         catch (RegexMatchTimeoutException)
         {
             if (Interlocked.Exchange(ref _stopped, 1) == 0)
-                logger.LogWarning("Synthetic cascade diagnostic capture stopped: sanitization timed out.");
+            {
+                logger.CascadeDiagnosticStoppedSanitizationTimeout();
+            }
         }
     }
 
@@ -273,12 +327,18 @@ internal sealed class CascadeDiagnosticCapture(
     {
         // Do not retain arbitrary opaque values, URLs, addresses, codes or credentials echoed
         // into synthetic assistant speech. Arguments and non-assistant text never enter here.
-        var value = text[..Math.Min(text.Length, 1200)];
-        value = Regex.Replace(value,
-            @"(?i)(?:https?://|www\.)\S+|\b[\w.+-]+@[\w.-]+\b|\bDEMO-[\w-]+\b|(?:\+?\d[\d ().-]{6,}\d)|\b(?=[A-Za-z0-9-]*\d)[A-Za-z0-9-]{4,}\b|\b[A-Za-z0-9_+/=-]{20,}\b",
-            "[redacted]", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
-        return Regex.Replace(value,
-            @"(?i)\b(?:code|token|password|secret|key|authorization)(?:\s*[:=]\s*|\s+)\S+",
-            "[redacted]", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+        string value = text[..Math.Min(text.Length, 1200)];
+        value = OpaqueValueRegex().Replace(value, "[redacted]");
+        return CredentialRegex().Replace(value, "[redacted]");
     }
+
+    [GeneratedRegex(
+        @"(?i)(?:https?://|www\.)\S+|\b[\w.+-]+@[\w.-]+\b|\bDEMO-[\w-]+\b|(?:\+?\d[\d ().-]{6,}\d)|\b(?=[A-Za-z0-9-]*\d)[A-Za-z0-9-]{4,}\b|\b[A-Za-z0-9_+/=-]{20,}\b",
+        RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
+    private static partial Regex OpaqueValueRegex();
+
+    [GeneratedRegex(
+        @"(?i)\b(?:code|token|password|secret|key|authorization)(?:\s*[:=]\s*|\s+)\S+",
+        RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
+    private static partial Regex CredentialRegex();
 }

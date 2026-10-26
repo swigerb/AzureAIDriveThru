@@ -17,7 +17,7 @@ public static class BrowserChannelPolicy
     // resolves against — checked directly (rather than by attempting a launch) so a genuinely
     // browser-less developer machine gets a clear, fast, pre-flight skip instead of an opaque
     // Playwright launch exception after already having started the backend-under-test.
-    private static readonly (string Channel, string[] WindowsPaths)[] WindowsCandidates =
+    private static readonly (string Channel, string[] WindowsPaths)[] s_windowsCandidates =
     [
         ("msedge", [
             @"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
@@ -32,7 +32,7 @@ public static class BrowserChannelPolicy
     // Linux (GitHub-hosted ubuntu-latest runners) ship Google Chrome stable at this path;
     // self-hosted/other Linux images are covered by the macOS/Linux Playwright-channel-resolution
     // fallback below when neither well-known path exists.
-    private static readonly (string Channel, string[] LinuxPaths)[] LinuxCandidates =
+    private static readonly (string Channel, string[] LinuxPaths)[] s_linuxCandidates =
     [
         ("chrome", ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable"]),
         ("msedge", ["/usr/bin/microsoft-edge", "/usr/bin/microsoft-edge-stable"]),
@@ -47,10 +47,10 @@ public static class BrowserChannelPolicy
     /// </summary>
     public static string? DetectInstalledChannel()
     {
-        var candidates = OperatingSystem.IsWindows()
-            ? WindowsCandidates.Select(c => (c.Channel, Paths: c.WindowsPaths))
-            : LinuxCandidates.Select(c => (c.Channel, Paths: c.LinuxPaths));
-        foreach (var (channel, paths) in candidates)
+        IEnumerable<(string Channel, string[] Paths)> candidates = OperatingSystem.IsWindows()
+            ? s_windowsCandidates.Select(c => (c.Channel, Paths: c.WindowsPaths))
+            : s_linuxCandidates.Select(c => (c.Channel, Paths: c.LinuxPaths));
+        foreach ((string? channel, string[]? paths) in candidates)
         {
             if (paths.Any(File.Exists))
             {

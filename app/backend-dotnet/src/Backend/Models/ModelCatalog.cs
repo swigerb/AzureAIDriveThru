@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Backend.Configuration;
@@ -32,32 +33,35 @@ namespace Backend.Models;
 /// </summary>
 internal sealed class ModelCatalog
 {
-    private static readonly HashSet<string> Pipelines = ["realtime", "cascade"];
-    private static readonly HashSet<string> RequiredEntryFields = ["id", "pipeline", "label"];
-    private static readonly HashSet<string> KnownEntryFields =
-        ["id", "pipeline", "label", "reasoning", "toolCalling"];
+    private static readonly FrozenSet<string> s_pipelines =
+        FrozenSet.Create(StringComparer.Ordinal, "realtime", "cascade");
+    private static readonly FrozenSet<string> s_requiredEntryFields =
+        FrozenSet.Create(StringComparer.Ordinal, "id", "pipeline", "label");
+    private static readonly FrozenSet<string> s_knownEntryFields =
+        FrozenSet.Create(StringComparer.Ordinal, "id", "pipeline", "label", "reasoning", "toolCalling");
+    private static readonly FrozenSet<string> s_cascadeAudioFields =
+        FrozenSet.Create(StringComparer.Ordinal, "transcription", "tts");
 
     private const string DeploymentsEnvVar = "AZURE_AI_MODEL_DEPLOYMENTS";
 
     private readonly IReadOnlyDictionary<string, ModelEntry> _entries;
     private readonly IReadOnlyDictionary<string, string> _deployments;
-    private readonly CascadeAudioConfig? _cascadeAudio;
 
     private ModelCatalog(IReadOnlyDictionary<string, ModelEntry> entries, IReadOnlyDictionary<string, string> deployments,
         CascadeAudioConfig? cascadeAudio = null)
     {
         _entries = entries;
         _deployments = deployments;
-        _cascadeAudio = cascadeAudio;
+        CascadeAudio = cascadeAudio;
     }
 
     /// <summary>Every catalogued model id, ordinal sorted (mirrors Python's `sorted(self._entries)`).</summary>
-    public IReadOnlyList<string> Ids => _entries.Keys.OrderBy(id => id, StringComparer.Ordinal).ToList();
+    public IReadOnlyList<string> Ids => [.. _entries.Keys.OrderBy(id => id, StringComparer.Ordinal)];
 
     public bool Contains(string modelId) => _entries.ContainsKey(modelId);
 
     public ModelEntry Get(string modelId) =>
-        _entries.TryGetValue(modelId, out var entry)
+        _entries.TryGetValue(modelId, out ModelEntry? entry)
             ? entry
             : throw new KeyNotFoundException(
                 $"Model '{modelId}' is not in the catalog. Known models: {DescribeIds()}.");
@@ -73,7 +77,7 @@ internal sealed class ModelCatalog
     /// exactly <paramref name="pipeline"/> (the processor-seam guard). Deliberately does NOT check
     /// deployment -- see <see cref="IsSelectable"/> for the full catalog ∩ deployment check.</summary>
     public bool IsCataloguedFor(string modelId, string pipeline) =>
-        _entries.TryGetValue(modelId, out var entry) && entry.Pipeline == pipeline;
+        _entries.TryGetValue(modelId, out ModelEntry? entry) && entry.Pipeline == pipeline;
 
     /// <summary>True iff catalogued for exactly <paramref name="pipeline"/> AND has a deployment
     /// mapped (design doc section 7.3's catalog ∩ deployment). Persona-allowed is the caller's own
@@ -88,7 +92,7 @@ internal sealed class ModelCatalog
     /// unregistered, or a test fixture catalog that doesn't need it. <see cref="Sessions.CascadeProcessor"/>
     /// resolves each id's actual deployment name via <see cref="DeploymentFor"/>, same as any chat
     /// model.</summary>
-    public CascadeAudioConfig? CascadeAudio => _cascadeAudio;
+    public CascadeAudioConfig? CascadeAudio { get; }
 
 
     /// <summary>
@@ -102,10 +106,10 @@ internal sealed class ModelCatalog
     /// catalogued for that pipeline.</exception>
     public void ValidatePersonaDefaults(PersonaCatalog personaCatalog, ILogger<ModelCatalog> logger)
     {
-        foreach (var personaId in personaCatalog.Ids)
+        foreach (string personaId in personaCatalog.Ids)
         {
-            var persona = personaCatalog.Get(personaId);
-            foreach (var (pipelineName, pipelineCfg) in PersonaPipelines(persona))
+            Persona persona = personaCatalog.Get(personaId);
+            foreach ((string? pipelineName, PersonaModelPipeline? pipelineCfg) in PersonaPipelines(persona))
             {
                 if (pipelineCfg is null)
                 {
@@ -119,7 +123,7 @@ internal sealed class ModelCatalog
                         $"config.yaml's models.catalog for pipeline '{pipelineName}'. Known models: {DescribeIds()}.");
                 }
 
-                foreach (var allowedId in pipelineCfg.Allowed)
+                foreach (string allowedId in pipelineCfg.Allowed)
                 {
                     if (allowedId == pipelineCfg.Default)
                     {
@@ -127,11 +131,7 @@ internal sealed class ModelCatalog
                     }
                     if (!IsCataloguedFor(allowedId, pipelineName))
                     {
-                        logger.LogWarning(
-                            "Persona {PersonaId}'s {Pipeline} allowed model {AllowedId} is not in config.yaml's " +
-                            "models.catalog for pipeline {Pipeline} -- it will 404 if a guest ever requests it " +
-                            "explicitly by id.",
-                            personaId, pipelineName, allowedId, pipelineName);
+                        logger.AllowedModelNotCatalogued(personaId, pipelineName, allowedId);
                     }
                 }
             }
@@ -157,21 +157,21 @@ internal sealed class ModelCatalog
     /// AZURE_AI_MODEL_DEPLOYMENTS.</exception>
     public static ModelCatalog FromConfig(AppConfig config, IReadOnlyDictionary<string, string>? environment = null)
     {
-        var modelsSection = config.TryGetSection("models");
+        IDictionary<object, object>? modelsSection = config.TryGetSection("models");
         var rawCatalog = new List<object>();
-        if (modelsSection is not null && modelsSection.TryGetValue("catalog", out var catalogRaw) && catalogRaw is not null)
+        if (modelsSection is not null && modelsSection.TryGetValue("catalog", out object? catalogRaw) && catalogRaw is not null)
         {
             if (catalogRaw is not IEnumerable<object> list)
             {
                 throw new ModelValidationException($"config.yaml models.catalog must be a list, got {DescribeType(catalogRaw)}.");
             }
-            rawCatalog = list.ToList();
+            rawCatalog = [.. list];
         }
 
         var entries = new Dictionary<string, ModelEntry>(StringComparer.Ordinal);
-        for (var index = 0; index < rawCatalog.Count; index++)
+        for (int index = 0; index < rawCatalog.Count; index++)
         {
-            var entry = ParseEntry(rawCatalog[index], index);
+            ModelEntry entry = ParseEntry(rawCatalog[index], index);
             if (!entries.TryAdd(entry.Id, entry))
             {
                 throw new ModelValidationException(
@@ -189,10 +189,10 @@ internal sealed class ModelCatalog
             deploymentsRaw = BackendEnvironment.Get(DeploymentsEnvVar);
         }
 
-        var deployments = ParseDeploymentMap(deploymentsRaw);
+        Dictionary<string, string> deployments = ParseDeploymentMap(deploymentsRaw);
         object? cascadeRaw = null;
         modelsSection?.TryGetValue("cascade", out cascadeRaw);
-        var cascadeAudio = ParseCascadeAudioConfig(cascadeRaw);
+        CascadeAudioConfig? cascadeAudio = ParseCascadeAudioConfig(cascadeRaw);
         return new ModelCatalog(entries, deployments, cascadeAudio);
     }
 
@@ -215,15 +215,14 @@ internal sealed class ModelCatalog
         }
 
         var dict = map.ToDictionary(kv => kv.Key.ToString()!, kv => kv.Value);
-        var known = new HashSet<string> { "transcription", "tts" };
 
-        var unknown = dict.Keys.Where(k => !known.Contains(k)).OrderBy(k => k, StringComparer.Ordinal).ToList();
+        var unknown = dict.Keys.Where(k => !s_cascadeAudioFields.Contains(k)).OrderBy(k => k, StringComparer.Ordinal).ToList();
         if (unknown.Count > 0)
         {
             throw new ModelValidationException($"config.yaml models.cascade has unknown field(s): {FormatList(unknown)}.");
         }
 
-        var missing = known.Where(f => !dict.ContainsKey(f)).OrderBy(f => f, StringComparer.Ordinal).ToList();
+        var missing = s_cascadeAudioFields.Where(f => !dict.ContainsKey(f)).OrderBy(f => f, StringComparer.Ordinal).ToList();
         if (missing.Count > 0)
         {
             throw new ModelValidationException($"config.yaml models.cascade is missing required field(s): {FormatList(missing)}.");
@@ -251,14 +250,14 @@ internal sealed class ModelCatalog
 
         var dict = map.ToDictionary(kv => kv.Key.ToString()!, kv => kv.Value);
 
-        var unknown = dict.Keys.Where(k => !KnownEntryFields.Contains(k)).OrderBy(k => k, StringComparer.Ordinal).ToList();
+        var unknown = dict.Keys.Where(k => !s_knownEntryFields.Contains(k)).OrderBy(k => k, StringComparer.Ordinal).ToList();
         if (unknown.Count > 0)
         {
             throw new ModelValidationException(
                 $"config.yaml models.catalog[{index}] has unknown field(s): {FormatList(unknown)}.");
         }
 
-        var missing = RequiredEntryFields.Where(f => !dict.ContainsKey(f)).OrderBy(f => f, StringComparer.Ordinal).ToList();
+        var missing = s_requiredEntryFields.Where(f => !dict.ContainsKey(f)).OrderBy(f => f, StringComparer.Ordinal).ToList();
         if (missing.Count > 0)
         {
             throw new ModelValidationException(
@@ -270,12 +269,12 @@ internal sealed class ModelCatalog
             throw new ModelValidationException($"config.yaml models.catalog[{index}]'s 'id' must be a non-empty string.");
         }
 
-        var pipeline = dict["pipeline"]?.ToString();
-        if (pipeline is null || !Pipelines.Contains(pipeline))
+        string? pipeline = dict["pipeline"]?.ToString();
+        if (pipeline is null || !s_pipelines.Contains(pipeline))
         {
             throw new ModelValidationException(
                 $"config.yaml models.catalog[{index}] ('{id}') has unknown pipeline '{pipeline}'; " +
-                $"expected one of {FormatList(Pipelines.OrderBy(p => p, StringComparer.Ordinal))}.");
+                $"expected one of {FormatList(s_pipelines.OrderBy(p => p, StringComparer.Ordinal))}.");
         }
 
         if (dict["label"] is not string label || string.IsNullOrWhiteSpace(label))
@@ -283,10 +282,10 @@ internal sealed class ModelCatalog
             throw new ModelValidationException($"config.yaml models.catalog[{index}] ('{id}')'s 'label' must be a non-empty string.");
         }
 
-        var reasoning = false;
-        if (dict.TryGetValue("reasoning", out var reasoningRaw) && reasoningRaw is not null)
+        bool reasoning = false;
+        if (dict.TryGetValue("reasoning", out object? reasoningRaw) && reasoningRaw is not null)
         {
-            if (!TryParseBool(reasoningRaw, out var reasoningBool))
+            if (!TryParseBool(reasoningRaw, out bool reasoningBool))
             {
                 throw new ModelValidationException($"config.yaml models.catalog[{index}] ('{id}')'s 'reasoning' must be a bool.");
             }
@@ -294,9 +293,9 @@ internal sealed class ModelCatalog
         }
 
         bool? toolCalling = null;
-        if (dict.TryGetValue("toolCalling", out var toolCallingRaw) && toolCallingRaw is not null)
+        if (dict.TryGetValue("toolCalling", out object? toolCallingRaw) && toolCallingRaw is not null)
         {
-            if (!TryParseBool(toolCallingRaw, out var toolCallingBool))
+            if (!TryParseBool(toolCallingRaw, out bool toolCallingBool))
             {
                 throw new ModelValidationException($"config.yaml models.catalog[{index}] ('{id}')'s 'toolCalling' must be a bool.");
             }
@@ -319,7 +318,7 @@ internal sealed class ModelCatalog
             case bool b:
                 result = b;
                 return true;
-            case string s when bool.TryParse(s, out var parsed):
+            case string s when bool.TryParse(s, out bool parsed):
                 result = parsed;
                 return true;
             default:
@@ -328,11 +327,11 @@ internal sealed class ModelCatalog
         }
     }
 
-    private static IReadOnlyDictionary<string, string> ParseDeploymentMap(string? raw)
+    private static Dictionary<string, string> ParseDeploymentMap(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw))
         {
-            return new Dictionary<string, string>(StringComparer.Ordinal);
+            return [with(StringComparer.Ordinal)];
         }
 
         JsonNode? parsed;
@@ -352,9 +351,9 @@ internal sealed class ModelCatalog
         }
 
         var map = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var (key, value) in obj)
+        foreach ((string? key, JsonNode? value) in obj)
         {
-            if (value is not JsonValue jsonValue || !jsonValue.TryGetValue<string>(out var strValue) || string.IsNullOrWhiteSpace(strValue))
+            if (value is not JsonValue jsonValue || !jsonValue.TryGetValue<string>(out string? strValue) || string.IsNullOrWhiteSpace(strValue))
             {
                 throw new ModelValidationException(
                     $"{DeploymentsEnvVar} entry '{key}' must map a string catalog id to a non-empty string deployment name.");

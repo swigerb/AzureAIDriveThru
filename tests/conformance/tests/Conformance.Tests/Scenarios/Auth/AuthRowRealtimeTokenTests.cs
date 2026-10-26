@@ -17,7 +17,7 @@ public sealed class AuthRowRealtimeTokenTests(ConformanceFixture fixture)
     public static TheoryData<int> CaseIndexes()
     {
         var data = new TheoryData<int>();
-        for (var i = 0; i < AuthRowTokenCase.All.Length; i++)
+        for (int i = 0; i < AuthRowTokenCase.All.Length; i++)
         {
             data.Add(i);
         }
@@ -29,9 +29,9 @@ public sealed class AuthRowRealtimeTokenTests(ConformanceFixture fixture)
     [MemberData(nameof(CaseIndexes))]
     public Task Row_asserts_on_realtime(int caseIndex) => fixture.RunAuthRowAsync(async () =>
     {
-        var row = AuthRowTokenCase.All[caseIndex];
-        var token = row.MintToken(fixture.EntraIssuer!);
-        var ct = TestContext.Current.CancellationToken;
+        AuthRowTokenCase row = AuthRowTokenCase.All[caseIndex];
+        string? token = row.MintToken(fixture.EntraIssuer!);
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
         await AuthRowRealtimeAssertions.AssertOutcomeAsync(
             fixture.Backend!.BaseUri,

@@ -42,29 +42,29 @@ public sealed class PythonJsonDumpsTests
     {
         // café (é = U+00E9, a single UTF-16 code unit) + 🎉 (U+1F389, an astral character encoded
         // as a UTF-16 surrogate pair) + NBSP (U+00A0).
-        const string json = """{"label":"café\u00a0🎉"}""";
-        await AssertMatchesPythonJsonDumpsAsync(json);
+        const string Json = """{"label":"café\u00a0🎉"}""";
+        await AssertMatchesPythonJsonDumpsAsync(Json);
     }
 
     private static async Task AssertMatchesPythonJsonDumpsAsync(string json)
     {
-        var repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
-        var interpreter = await PythonInterop.RequireInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
+        string repoRoot = RepoRoot.Find(AppContext.BaseDirectory);
+        string? interpreter = await PythonInterop.RequireInterpreterAsync(repoRoot, TestContext.Current.CancellationToken);
         if (interpreter is null)
         {
             return;
         }
 
-        const string probe = "import json, sys\nprint(json.dumps(json.loads(sys.argv[1])))\n";
-        var (exitCode, pythonOutput, stderr) = await PythonInterop.RunAsync(
-            interpreter, ["-c", probe, json], TestContext.Current.CancellationToken);
+        const string Probe = "import json, sys\nprint(json.dumps(json.loads(sys.argv[1])))\n";
+        (int exitCode, string? pythonOutput, string? stderr) = await PythonInterop.RunAsync(
+            interpreter, ["-c", Probe, json], TestContext.Current.CancellationToken);
         Assert.True(exitCode == 0, $"Python oracle exited {exitCode}.\nstderr:\n{stderr}");
 
         // Python's print() appends a trailing newline this harness must strip before comparing.
-        var expected = pythonOutput.TrimEnd('\r', '\n');
+        string expected = pythonOutput.TrimEnd('\r', '\n');
 
         var node = JsonNode.Parse(json);
-        var actual = PythonJsonDumps.Serialize(node);
+        string actual = PythonJsonDumps.Serialize(node);
 
         Assert.Equal(expected, actual);
     }

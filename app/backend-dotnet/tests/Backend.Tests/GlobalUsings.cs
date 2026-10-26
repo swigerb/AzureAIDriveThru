@@ -5,5 +5,5 @@
 // site (`new RateLimitSettings(...)`, `new CascadeRateLimitSettings(...)`,
 // `CascadeRateLimitSettings.FromAppConfig(...)`) keeps compiling unchanged against the single
 // shared Backend.Shared.RateLimitSettings record.
-global using RateLimitSettings = Backend.Shared.RateLimitSettings;
 global using CascadeRateLimitSettings = Backend.Shared.RateLimitSettings;
+global using RateLimitSettings = Backend.Shared.RateLimitSettings;

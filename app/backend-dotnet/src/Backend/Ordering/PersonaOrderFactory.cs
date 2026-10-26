@@ -14,30 +14,30 @@ namespace Backend.Ordering;
 /// </summary>
 internal static class PersonaOrderFactory
 {
-    private static readonly ConcurrentDictionary<string, MenuCatalog> MenuCatalogCache = new();
+    private static readonly ConcurrentDictionary<string, MenuCatalog> s_menuCatalogCache = new();
 
     /// <summary>This persona's own <see cref="MenuCatalog"/>, built once and cached by persona id.</summary>
     public static MenuCatalog GetMenuCatalog(Persona persona) =>
-        MenuCatalogCache.GetOrAdd(persona.Id, _ => MenuCatalog.FromPersona(persona));
+        s_menuCatalogCache.GetOrAdd(persona.Id, _ => MenuCatalog.FromPersona(persona));
 
     /// <summary>A brand-new <see cref="OrderState"/> for one session bound to <paramref name="persona"/>
     /// -- never shared/cached across sessions (unlike <see cref="GetMenuCatalog"/>), since each
     /// session's order lines are its own.</summary>
     public static OrderState CreateOrderState(Persona persona)
     {
-        var menu = GetMenuCatalog(persona);
+        MenuCatalog menu = GetMenuCatalog(persona);
         var timeZone = TimeZoneInfo.FindSystemTimeZoneById(persona.Store.Timezone);
-        var taxRate = decimal.Parse(persona.Pricing.TaxRate, CultureInfo.InvariantCulture);
+        decimal taxRate = decimal.Parse(persona.Pricing.TaxRate, CultureInfo.InvariantCulture);
 
-        var happyHour = persona.Pricing.HappyHour;
+        PersonaHappyHour? happyHour = persona.Pricing.HappyHour;
         (int StartHour, int EndHour)? window = happyHour is not null
             ? (happyHour.StartHour, happyHour.EndHour)
             : null;
-        var discount = happyHour is not null
+        decimal discount = happyHour is not null
             ? decimal.Parse(happyHour.PriceMultiplier, CultureInfo.InvariantCulture)
             : 1m;
-        var announce = happyHour?.Announce ?? false;
-        var banner = happyHour?.Banner ?? "";
+        bool announce = happyHour?.Announce ?? false;
+        string banner = happyHour?.Banner ?? "";
 
         return new OrderState(menu, timeZone, taxRate, window, discount, announce, banner, persona.RewardsDemo);
     }

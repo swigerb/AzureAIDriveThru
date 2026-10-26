@@ -48,18 +48,18 @@ public sealed class GoldenMenuCategoryHappyHourTests(HappyHourAtOpenFixture fixt
     public Task Golden_happy_hour_discounted_flag_determines_the_happy_hour_discount(string item, string size, decimal unitPrice) =>
         fixture.RunAsync(async () =>
         {
-            var ct = TestContext.Current.CancellationToken;
-            var repoRoot = RepoPaths.FindRepoRoot();
+            CancellationToken ct = TestContext.Current.CancellationToken;
+            string repoRoot = RepoPaths.FindRepoRoot();
             var golden = GoldenMenuCategoryData.Load(repoRoot);
-            var categoryCase = golden.Items.Single(c => c.Item == item);
-            var currentlyDownMachines = GoldenMenuCategoryData.LoadCurrentlyDownMachines(repoRoot);
+            MenuCategoryCase categoryCase = golden.Items.Single(c => c.Item == item);
+            IReadOnlySet<string> currentlyDownMachines = GoldenMenuCategoryData.LoadCurrentlyDownMachines(repoRoot);
 
-            var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-            await using var _ = browser;
+            (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+            await using RealtimeBrowserClient _ = browser;
 
             if (RequiresACurrentlyDownMachine(categoryCase, currentlyDownMachines))
             {
-                var rejected = await OrderScenarioHelpers.CallToolAsync(
+                ToolCallResult rejected = await OrderScenarioHelpers.CallToolAsync(
                     connection, browser, "update_order",
                     JsonSerializer.Serialize(new { action = "add", item_name = item, size, quantity = 1, price = unitPrice }),
                     "call_reject", roundTripIndex, ct, toClient: false);
@@ -68,14 +68,14 @@ public sealed class GoldenMenuCategoryHappyHourTests(HappyHourAtOpenFixture fixt
                 return;
             }
 
-            var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+            ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
                 connection, browser,
                 [("add", item, size, 1, unitPrice)],
                 roundTripIndex, ct);
 
-            var finalTotal = OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!);
-            var rules = GoldenOrderPricingData.Load(repoRoot).BusinessRules;
-            var expectedTotal = categoryCase.HappyHourDiscounted
+            decimal finalTotal = OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!);
+            BusinessRules rules = GoldenOrderPricingData.Load(repoRoot).BusinessRules;
+            decimal expectedTotal = categoryCase.HappyHourDiscounted
                 ? unitPrice * rules.HappyHourDiscount * (1 + rules.TaxRate)
                 : unitPrice * (1 + rules.TaxRate);
 

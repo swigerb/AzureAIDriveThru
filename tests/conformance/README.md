@@ -11,7 +11,7 @@ HTTP and WebSocket; never imports backend source.
 
 ## Local validation
 
-Run from the repository root with the .NET 11 RC2 SDK in `global.json`, Node.js 24 LTS,
+Run from the repository root with the .NET 11 RC3 SDK in `global.json`, Node.js 24 LTS,
 and a root `.venv` containing the backend dependencies. The Python launcher does not use
 `app/backend/.venv` or a globally installed interpreter. Bootstrap with
 `pwsh ./scripts/load_python_env.ps1` (Windows) or `sh ./scripts/load_python_env.sh` (Unix).

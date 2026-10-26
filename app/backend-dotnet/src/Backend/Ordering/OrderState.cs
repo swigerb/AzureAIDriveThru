@@ -1,3 +1,4 @@
+using System.Globalization;
 using Backend.Personas;
 
 namespace Backend.Ordering;
@@ -76,11 +77,10 @@ internal sealed class OrderState
     private readonly decimal _happyHourDiscount;
     private readonly decimal _taxRate;
     private readonly bool _happyHourAnnounce;
-    private readonly string _happyHourBanner;
-    private readonly Dictionary<string, string> _machineOverrides = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _machineOverrides = [with(StringComparer.Ordinal)];
     private string _happyHourMode = "auto";
     private readonly RewardsDemo? _rewardsDemo;
-    private readonly object _mutationLock = new();
+    private readonly Lock _mutationLock = new();
     public bool RewardsCompleted => _rewardsDemo?.Completed == true;
 
     public OrderSummary Summary { get; private set; } = OrderSummary.Empty();
@@ -101,6 +101,8 @@ internal sealed class OrderState
     /// independent of whether happy hour is currently active.</param>
     /// <param name="happyHourBanner">This session's own bound persona's own
     /// <c>pricing.happyHour.banner</c> text (#113) -- never hardcoded here.</param>
+    /// <param name="rewardsDemo">This session's own bound persona's optional fictional
+    /// rewards-demo configuration, or <c>null</c> when the persona has no rewards demo.</param>
     public OrderState(
         MenuCatalog menu,
         TimeZoneInfo timeZone,
@@ -117,7 +119,7 @@ internal sealed class OrderState
         _happyHourWindow = happyHourWindow;
         _happyHourDiscount = happyHourDiscount;
         _happyHourAnnounce = happyHourAnnounce;
-        _happyHourBanner = happyHourBanner;
+        HappyHourBanner = happyHourBanner;
         _rewardsDemo = rewardsDemo is null ? null : new RewardsDemo(rewardsDemo);
         UpdateSummary();
     }
@@ -145,7 +147,7 @@ internal sealed class OrderState
         {
             return false;
         }
-        var now = ConformanceHooks.Now(_timeZone);
+        DateTimeOffset now = ConformanceHooks.Now(_timeZone);
         return window.StartHour <= now.Hour && now.Hour < window.EndHour;
     }
 
@@ -166,7 +168,7 @@ internal sealed class OrderState
     /// override if present, else the persona pack's own static machine status, else null for an
     /// unknown machine key.</summary>
     public string? EffectiveMachineStatus(string machine) =>
-        _machineOverrides.TryGetValue(machine, out var overrideStatus)
+        _machineOverrides.TryGetValue(machine, out string? overrideStatus)
             ? overrideStatus
             : _menu.MachineStatusOrNull(machine);
 
@@ -210,13 +212,13 @@ internal sealed class OrderState
                 return "";
             }
 
-            var discountedLines = HappyHourDiscountedLineDisplays();
+            List<string> discountedLines = HappyHourDiscountedLineDisplays();
             if (discountedLines.Count == 0)
             {
                 return "";
             }
 
-            return $" {_happyHourBanner} [HAPPY HOUR DISCOUNT APPLIED TO: {string.Join(", ", discountedLines)}]";
+            return $" {field} [HAPPY HOUR DISCOUNT APPLIED TO: {string.Join(", ", discountedLines)}]";
         }
     }
 
@@ -228,15 +230,17 @@ internal sealed class OrderState
         }
 
         var discounted = new List<string>();
-        foreach (var item in _items)
+        foreach (OrderItem item in _items)
         {
             if (!_menu.IsHappyHourDiscounted(item.Item))
             {
                 continue;
             }
 
-            var display = item.Display.Length > 0 ? item.Display : item.Item;
-            discounted.Add(item.Quantity > 1 ? $"{item.Quantity} x {display}" : display);
+            string display = item.Display.Length > 0 ? item.Display : item.Item;
+            discounted.Add(item.Quantity > 1
+                ? string.Create(CultureInfo.InvariantCulture, $"{item.Quantity} x {display}")
+                : display);
         }
 
         return discounted;
@@ -253,7 +257,11 @@ internal sealed class OrderState
     {
         lock (_mutationLock)
         {
-            if (RewardsCompleted) throw new InvalidOperationException("Reset the completed demo order before changing it.");
+            if (RewardsCompleted)
+            {
+                throw new InvalidOperationException("Reset the completed demo order before changing it.");
+            }
+
             return HandleOrderUpdateCore(action, itemName, size, quantity, callerPrice);
         }
     }
@@ -266,9 +274,9 @@ internal sealed class OrderState
         // #40: canonicalize the size to a single alias-resolved key BEFORE any matching/merging so
         // different spellings of the same physical size collapse onto one order line.
         size = _menu.CanonicalSizeKey(size);
-        var resolved = _menu.NormalizeSize(size);
-        var formattedSize = resolved.Length > 0 ? $"{resolved} " : "";
-        var display = $"{formattedSize}{itemName}".Trim();
+        string resolved = _menu.NormalizeSize(size);
+        string formattedSize = resolved.Length > 0 ? $"{resolved} " : "";
+        string display = $"{formattedSize}{itemName}".Trim();
 
         decimal price = callerPrice ?? 0m;
         if (action is "add" or "modify")
@@ -278,7 +286,7 @@ internal sealed class OrderState
             // comparison, or (when the menu genuinely has no price on file) as a last-resort
             // fallback so an on-menu item somehow reached here without a price. See
             // docs/persona-architecture.md section 6.
-            var menuPrice = _menu.PriceFor(itemName, size);
+            decimal? menuPrice = _menu.PriceFor(itemName, size);
             price = menuPrice ?? price;
         }
 
@@ -306,28 +314,28 @@ internal sealed class OrderState
         // #77 (shared bundle engine): whether this item's own name carries one of this persona's
         // bundle.nameMarkers -- name-based, used ONLY for the combo-conversion (auto-removing a
         // matching standalone entree) below.
-        var nameMarkers = _menu.BundleNameMarkers;
-        var lowerName = itemName.ToLowerInvariant();
-        var isCombo = _menu.BundleConvertStandalone && nameMarkers.Any(marker => lowerName.Contains(marker));
+        IReadOnlyList<string> nameMarkers = _menu.BundleNameMarkers;
+        string lowerName = itemName.ToLowerInvariant();
+        bool isCombo = _menu.BundleConvertStandalone && nameMarkers.Any(marker => lowerName.Contains(marker));
 
         // The item's OWN bundle slots (data-driven, not name-based) -- everything about how many
         // slots a bundle item actually absorbs goes through this, never "is_combo" above.
-        var ownBundleSlots = _menu.BundleSlots(itemName);
-        var isBundle = ownBundleSlots.Count > 0;
+        IReadOnlyList<string> ownBundleSlots = _menu.BundleSlots(itemName);
+        bool isBundle = ownBundleSlots.Count > 0;
 
         // ── Combo conversion: auto-remove matching standalone entree ──
         if (isCombo)
         {
-            var comboBase = MenuKeyValidator.MenuKey(itemName);
-            foreach (var marker in nameMarkers)
+            string comboBase = MenuKeyValidator.MenuKey(itemName);
+            foreach (string marker in nameMarkers)
             {
                 comboBase = comboBase.Replace($" {marker}", "");
             }
             comboBase = comboBase.Trim();
 
-            for (var i = 0; i < _items.Count; i++)
+            for (int i = 0; i < _items.Count; i++)
             {
-                var existing = _items[i];
+                OrderItem existing = _items[i];
                 if (_menu.BundleSlots(existing.Item).Count > 0)
                 {
                     continue; // skip other bundle items, not just other "combo"-named ones
@@ -338,7 +346,7 @@ internal sealed class OrderState
                 }
                 if (existing.Item.Contains('('))
                 {
-                    var mods = existing.Item[existing.Item.IndexOf('(')..];
+                    string mods = existing.Item[existing.Item.IndexOf('(')..];
                     itemName = $"{itemName} {mods}";
                     display = $"{formattedSize}{itemName}".Trim();
                     result.ModsCarried = mods;
@@ -359,7 +367,7 @@ internal sealed class OrderState
         // ── Post-bundle absorption: side/drink fills an incomplete bundle's slot(s) ──
         if (!isBundle)
         {
-            var component = _menu.InferComboComponent(itemName);
+            string component = _menu.InferComboComponent(itemName);
             if (component is "sides" or "drinks")
             {
                 // PR #184 round 2 (Rick's review, item 2): repeatedly ask FindBundleSlot for the
@@ -367,19 +375,19 @@ internal sealed class OrderState
                 // until either *quantity* is exhausted or no vacant slot remains -- no
                 // capacity-minus-filled arithmetic left to drift out of sync across two combos
                 // or a quantity-N line.
-                var absorbedCount = 0;
-                var anyResize = false;
+                int absorbedCount = 0;
+                bool anyResize = false;
                 OrderItem? lastComboItem = null;
-                var remaining = quantity;
+                int remaining = quantity;
                 while (remaining > 0)
                 {
-                    var found = FindBundleSlot(component);
+                    (OrderItem Item, int Index)? found = FindBundleSlot(component);
                     if (found is not { } slotFound)
                     {
                         break;
                     }
-                    var (comboItem, idx) = slotFound;
-                    var (accepted, isResize, filledComboItem) = FillBundleComponent(comboItem, idx, component, itemName, size, display);
+                    (OrderItem? comboItem, int idx) = slotFound;
+                    (bool accepted, bool isResize, OrderItem? filledComboItem) = FillBundleComponent(comboItem, idx, component, itemName, size, display);
                     if (!accepted)
                     {
                         // Rejected (item D/M4): this pack has no whole-meal price at *size* --
@@ -421,17 +429,17 @@ internal sealed class OrderState
                     // and creating a silent duplicate standalone line. Only ONE unit of
                     // *quantity* is ever a resize (there is only one matching slot); any
                     // remainder still becomes a genuine standalone add.
-                    var found = FindBundleSlot(component, itemName, targetSize: size);
+                    (OrderItem Item, int Index)? found = FindBundleSlot(component, itemName, targetSize: size);
                     if (found is { } slotFound)
                     {
-                        var (comboItem, idx) = slotFound;
-                        var slot = SyncBundleSlotList(comboItem, component)[idx];
-                        var currentSize = slot.Size;
-                        var currentItem = slot.Item;
+                        (OrderItem? comboItem, int idx) = slotFound;
+                        BundleSlot slot = SyncBundleSlotList(comboItem, component)[idx];
+                        string currentSize = slot.Size;
+                        string currentItem = slot.Item;
                         if (currentSize.Length > 0 && currentSize != size && currentItem.Length > 0 &&
                             MenuKeyValidator.MenuKey(currentItem) == MenuKeyValidator.MenuKey(itemName))
                         {
-                            var (accepted, _, filledComboItem) = FillBundleComponent(comboItem, idx, component, itemName, size, display);
+                            (bool accepted, bool _, OrderItem? filledComboItem) = FillBundleComponent(comboItem, idx, component, itemName, size, display);
                             if (accepted)
                             {
                                 comboItem = filledComboItem;
@@ -454,7 +462,7 @@ internal sealed class OrderState
         }
 
         // ── Regular add / bundle-instance creation ──
-        var existingIndex = _items.FindIndex(oi => oi.Item == itemName && oi.Size == size);
+        int existingIndex = _items.FindIndex(oi => oi.Item == itemName && oi.Size == size);
         OrderItem bundleItemRef;
         int newUnits;
         if (existingIndex != -1)
@@ -478,30 +486,30 @@ internal sealed class OrderState
         // PR #184 round 2 (Rick's review, item 2 -- "quantity-2 combos handled correctly"): grow
         // each own component's slot list to the new quantity (fresh empty records for the newly
         // added units) before the pivot/autofill below fills them.
-        foreach (var component in ownBundleSlots)
+        foreach (string component in ownBundleSlots)
         {
             SyncBundleSlotList(bundleItemRef, component);
         }
 
         // ── Bundle pivot: absorb standalone sides/drinks into the NEWLY ADDED unit(s) ──
-        for (var unit = 0; unit < newUnits; unit++)
+        for (int unit = 0; unit < newUnits; unit++)
         {
-            var absorbedSide = false;
-            var absorbedDrink = false;
+            bool absorbedSide = false;
+            bool absorbedDrink = false;
             var itemsToRemove = new List<int>();
-            for (var i = 0; i < _items.Count; i++)
+            for (int i = 0; i < _items.Count; i++)
             {
-                var existing = _items[i];
+                OrderItem existing = _items[i];
                 if (ReferenceEquals(existing, bundleItemRef))
                 {
                     continue; // skip the bundle itself
                 }
-                var component = _menu.InferComboComponent(existing.Item);
+                string component = _menu.InferComboComponent(existing.Item);
                 // Only absorb a component this bundle's OWN slots actually include -- e.g. a
                 // drinks-only combo must never free-absorb a pre-existing standalone side.
                 if (component == "sides" && ownBundleSlots.Contains("sides") && !absorbedSide)
                 {
-                    var slotIdx = FirstVacantSlotIndex(bundleItemRef, "sides");
+                    int? slotIdx = FirstVacantSlotIndex(bundleItemRef, "sides");
                     if (slotIdx is { } vacantIdx)
                     {
                         bundleItemRef.Components.Add(existing.Display);
@@ -519,7 +527,7 @@ internal sealed class OrderState
                 }
                 else if (component == "drinks" && ownBundleSlots.Contains("drinks") && !absorbedDrink)
                 {
-                    var slotIdx = FirstVacantSlotIndex(bundleItemRef, "drinks");
+                    int? slotIdx = FirstVacantSlotIndex(bundleItemRef, "drinks");
                     if (slotIdx is { } vacantIdx)
                     {
                         bundleItemRef.Components.Add(existing.Display);
@@ -536,7 +544,7 @@ internal sealed class OrderState
                     }
                 }
             }
-            foreach (var idx in itemsToRemove.OrderByDescending(i => i))
+            foreach (int idx in itemsToRemove.OrderByDescending(i => i))
             {
                 _items.RemoveAt(idx);
             }
@@ -544,19 +552,19 @@ internal sealed class OrderState
             // ── #77: bundle-slot auto-fill -- a slot this item's OWN pack opts into filling by
             // default that WASN'T just absorbed above from a pre-existing standalone item gets
             // its default filler the instant the bundle is added.
-            var sizeLabel = _menu.NormalizeSize(size);
-            var autofill = _menu.BundleAutoFill(itemName, sizeLabel);
+            string sizeLabel = _menu.NormalizeSize(size);
+            IReadOnlyDictionary<string, string> autofill = _menu.BundleAutoFill(itemName, sizeLabel);
             // PR #184 round 3 (Rick's review, item E): the slot's Item must be the BASE,
             // on-menu item name, not the size-baked-in template text autofill itself holds --
             // see BundleAutoFillNames and ApplyWholeBundleResize's own autofill re-derivation
             // for the same fix.
-            var autofillBase = _menu.BundleAutoFillNames(itemName);
-            if (autofill.TryGetValue("sides", out var sideFillerDisplay) && !absorbedSide)
+            IReadOnlyDictionary<string, string> autofillBase = _menu.BundleAutoFillNames(itemName);
+            if (autofill.TryGetValue("sides", out string? sideFillerDisplay) && !absorbedSide)
             {
-                var slotIdx = FirstVacantSlotIndex(bundleItemRef, "sides");
+                int? slotIdx = FirstVacantSlotIndex(bundleItemRef, "sides");
                 if (slotIdx is { } vacantIdx)
                 {
-                    var sideFillerItem = autofillBase.TryGetValue("sides", out var sb) ? sb : sideFillerDisplay;
+                    string sideFillerItem = autofillBase.TryGetValue("sides", out string? sb) ? sb : sideFillerDisplay;
                     bundleItemRef.Components.Add(sideFillerDisplay);
                     // PR #184 round 3 (Rick's review, item D): pass the RAW size -- the same
                     // literal value comboItem.Size holds (never the resolved/canonical
@@ -569,12 +577,12 @@ internal sealed class OrderState
                     result.Autofilled.Add(sideFillerDisplay);
                 }
             }
-            if (autofill.TryGetValue("drinks", out var drinkFillerDisplay) && !absorbedDrink)
+            if (autofill.TryGetValue("drinks", out string? drinkFillerDisplay) && !absorbedDrink)
             {
-                var slotIdx = FirstVacantSlotIndex(bundleItemRef, "drinks");
+                int? slotIdx = FirstVacantSlotIndex(bundleItemRef, "drinks");
                 if (slotIdx is { } vacantIdx)
                 {
-                    var drinkFillerItem = autofillBase.TryGetValue("drinks", out var db) ? db : drinkFillerDisplay;
+                    string drinkFillerItem = autofillBase.TryGetValue("drinks", out string? db) ? db : drinkFillerDisplay;
                     bundleItemRef.Components.Add(drinkFillerDisplay);
                     // Same reasoning as the "sides" branch above: raw size, not sizeLabel.
                     FillBundleComponent(bundleItemRef, vacantIdx, "drinks", drinkFillerItem, size, drinkFillerDisplay, autofill: true);
@@ -591,8 +599,8 @@ internal sealed class OrderState
     /// resize/vacate target).</summary>
     private static int? FirstVacantSlotIndex(OrderItem comboItem, string component)
     {
-        var slots = SyncBundleSlotList(comboItem, component);
-        for (var i = 0; i < slots.Count; i++)
+        List<BundleSlot> slots = SyncBundleSlotList(comboItem, component);
+        for (int i = 0; i < slots.Count; i++)
         {
             if (slots[i].Item.Length == 0)
             {
@@ -608,11 +616,11 @@ internal sealed class OrderState
         // itemName at ANY size (the guest doesn't repeat the old size out loud), re-prices it at
         // the new size from the menu (never the caller's own price), and re-prefixes its display.
         // Its own already-absorbed Components carry over unchanged.
-        var existingIndex = _items.FindIndex(oi => oi.Item == itemName);
+        int existingIndex = _items.FindIndex(oi => oi.Item == itemName);
         if (existingIndex != -1)
         {
-            var target = _items[existingIndex];
-            var oldSize = target.Size;
+            OrderItem target = _items[existingIndex];
+            string oldSize = target.Size;
 
             // PR #184 round 2 (Rick's review, item 1 -- e.g. "make it a large meal"): directly
             // modifying a bundle's OWN line on a "wholeBundleSize" pack resizes the WHOLE bundle
@@ -655,21 +663,21 @@ internal sealed class OrderState
         // that is genuinely neither a raw line nor an absorbed component is checked by the
         // CALLER -- Tools.OrderToolExecutor, via IsAbsorbedComponent -- BEFORE this method is
         // ever invoked.)
-        foreach (var component in new[] { "sides", "drinks" })
+        foreach (string? component in new[] { "sides", "drinks" })
         {
-            var found = FindBundleSlot(component, itemName, targetSize: size);
+            (OrderItem Item, int Index)? found = FindBundleSlot(component, itemName, targetSize: size);
             if (found is not { } slotFound)
             {
                 continue;
             }
-            var (comboItem, idx) = slotFound;
-            var slot = SyncBundleSlotList(comboItem, component)[idx];
+            (OrderItem? comboItem, int idx) = slotFound;
+            BundleSlot slot = SyncBundleSlotList(comboItem, component)[idx];
             if (slot.Item.Length == 0 || MenuKeyValidator.MenuKey(slot.Item) != MenuKeyValidator.MenuKey(itemName))
             {
                 continue;
             }
-            var oldComponentSize = slot.Size;
-            var (accepted, _, filledComboItem) = FillBundleComponent(comboItem, idx, component, itemName, size, display);
+            string oldComponentSize = slot.Size;
+            (bool accepted, bool _, OrderItem? filledComboItem) = FillBundleComponent(comboItem, idx, component, itemName, size, display);
             if (!accepted)
             {
                 // Item D/M4: this "wholeBundleSize" pack has no whole-meal price at *size* --
@@ -694,28 +702,39 @@ internal sealed class OrderState
 
     private void HandleRemove(string itemName, string size, int quantity, OrderUpdateResult result)
     {
-        var remaining = quantity;
-        var matched = false;
+        int remaining = quantity;
+        bool matched = false;
         // Component-upcharge pricing can split identical meals into per-unit lines.
-        for (var index = 0; index < _items.Count;)
+        for (int index = 0; index < _items.Count;)
         {
-            var item = _items[index];
+            OrderItem item = _items[index];
             if (item.Item != itemName || item.Size != size)
             {
                 index++;
                 continue;
             }
             matched = true;
-            var removed = Math.Min(remaining, item.Quantity);
+            int removed = Math.Min(remaining, item.Quantity);
             item.Quantity -= removed;
             remaining -= removed;
             if (item.Quantity == 0)
+            {
                 _items.RemoveAt(index);
+            }
             else
+            {
                 index++;
-            if (remaining <= 0) break;
+            }
+
+            if (remaining <= 0)
+            {
+                break;
+            }
         }
-        if (matched) return;
+        if (matched)
+        {
+            return;
+        }
 
         // #179/PR #184 round 2: itemName may be the exact size (the raw-line lookup just failed
         // above) -- or, like the live bug report, currently filling a combo's side/drink slot via
@@ -724,9 +743,9 @@ internal sealed class OrderState
         // combos vacate independently) instead of silently no-op'ing, so that combo goes back to
         // incomplete and a follow-up add refills it (reprising as a resize -- see
         // FillBundleComponent) rather than creating a duplicate standalone line.
-        foreach (var component in new[] { "sides", "drinks" })
+        foreach (string? component in new[] { "sides", "drinks" })
         {
-            var vacateInfo = VacateBundleComponent(component, itemName);
+            (string Component, string VacatedDisplay, string ComboDisplay)? vacateInfo = VacateBundleComponent(component, itemName);
             if (vacateInfo is { } info)
             {
                 result.VacatedComboComponent = info.Component;
@@ -753,7 +772,7 @@ internal sealed class OrderState
     /// <c>_sync_bundle_slot_list</c>.</summary>
     private static List<BundleSlot> SyncBundleSlotList(OrderItem comboItem, string component)
     {
-        if (!comboItem.BundleSlots.TryGetValue(component, out var slots))
+        if (!comboItem.BundleSlots.TryGetValue(component, out List<BundleSlot>? slots))
         {
             slots = [];
             comboItem.BundleSlots[component] = slots;
@@ -775,19 +794,19 @@ internal sealed class OrderState
         {
             return 0m;
         }
-        var actualPrice = _menu.PriceFor(itemName, size);
-        var includedPrice = _menu.PriceFor(itemName, _menu.BundleIncludedSize);
+        decimal? actualPrice = _menu.PriceFor(itemName, size);
+        decimal? includedPrice = _menu.PriceFor(itemName, _menu.BundleIncludedSize);
         if (actualPrice is not { } actual || includedPrice is not { } included)
         {
             return 0m;
         }
-        var delta = actual - included;
+        decimal delta = actual - included;
         return delta > 0m ? delta : 0m;
     }
 
     private void SetComponentUpchargeResult(OrderUpdateResult result, string itemName, string size)
     {
-        var upcharge = ComponentUpcharge(itemName, size);
+        decimal upcharge = ComponentUpcharge(itemName, size);
         if (upcharge > 0m)
         {
             result.ComboComponentUpcharge = upcharge;
@@ -802,13 +821,13 @@ internal sealed class OrderState
 
     private decimal BundleUnitUpcharge(OrderItem comboItem, int unitIndex, (string Component, string Item, string Size)? replacement = null)
     {
-        var total = 0m;
-        foreach (var component in _menu.BundleSlots(comboItem.Item))
+        decimal total = 0m;
+        foreach (string component in _menu.BundleSlots(comboItem.Item))
         {
-            var slots = SyncBundleSlotList(comboItem, component);
-            var slot = unitIndex < slots.Count ? slots[unitIndex] : EmptyBundleSlot();
-            var item = slot.Item;
-            var size = slot.Size;
+            List<BundleSlot> slots = SyncBundleSlotList(comboItem, component);
+            BundleSlot slot = unitIndex < slots.Count ? slots[unitIndex] : EmptyBundleSlot();
+            string item = slot.Item;
+            string size = slot.Size;
             if (replacement is { } repl && repl.Component == component)
             {
                 item = repl.Item;
@@ -821,7 +840,7 @@ internal sealed class OrderState
 
     private void RepriceBundleFromComponents(OrderItem comboItem)
     {
-        var ownPrice = _menu.PriceFor(comboItem.Item, comboItem.Size);
+        decimal? ownPrice = _menu.PriceFor(comboItem.Item, comboItem.Size);
         if (ownPrice is not { } price)
         {
             return;
@@ -865,16 +884,16 @@ internal sealed class OrderState
         }
         if (itemName is not null)
         {
-            var key = MenuKeyValidator.MenuKey(itemName);
+            string key = MenuKeyValidator.MenuKey(itemName);
             if (targetSize is not null)
             {
-                for (var i = candidates.Count - 1; i >= 0; i--)
+                for (int i = candidates.Count - 1; i >= 0; i--)
                 {
-                    var comboItem = candidates[i];
-                    var slots = SyncBundleSlotList(comboItem, component);
-                    for (var idx = 0; idx < slots.Count; idx++)
+                    OrderItem comboItem = candidates[i];
+                    List<BundleSlot> slots = SyncBundleSlotList(comboItem, component);
+                    for (int idx = 0; idx < slots.Count; idx++)
                     {
-                        var slot = slots[idx];
+                        BundleSlot slot = slots[idx];
                         if (slot.Item.Length > 0 && MenuKeyValidator.MenuKey(slot.Item) == key && slot.Size != targetSize)
                         {
                             return (comboItem, idx);
@@ -882,13 +901,13 @@ internal sealed class OrderState
                     }
                 }
             }
-            for (var i = candidates.Count - 1; i >= 0; i--)
+            for (int i = candidates.Count - 1; i >= 0; i--)
             {
-                var comboItem = candidates[i];
-                var slots = SyncBundleSlotList(comboItem, component);
-                for (var idx = 0; idx < slots.Count; idx++)
+                OrderItem comboItem = candidates[i];
+                List<BundleSlot> slots = SyncBundleSlotList(comboItem, component);
+                for (int idx = 0; idx < slots.Count; idx++)
                 {
-                    var slot = slots[idx];
+                    BundleSlot slot = slots[idx];
                     if (slot.Item.Length > 0 && MenuKeyValidator.MenuKey(slot.Item) == key)
                     {
                         return (comboItem, idx);
@@ -896,11 +915,11 @@ internal sealed class OrderState
                 }
             }
         }
-        for (var i = candidates.Count - 1; i >= 0; i--)
+        for (int i = candidates.Count - 1; i >= 0; i--)
         {
-            var comboItem = candidates[i];
-            var slots = SyncBundleSlotList(comboItem, component);
-            for (var idx = 0; idx < slots.Count; idx++)
+            OrderItem comboItem = candidates[i];
+            List<BundleSlot> slots = SyncBundleSlotList(comboItem, component);
+            for (int idx = 0; idx < slots.Count; idx++)
             {
                 if (slots[idx].Item.Length == 0)
                 {
@@ -926,14 +945,14 @@ internal sealed class OrderState
         var displayComponents = new List<string>();
         var wireComponents = new List<string>();
         var wireUpcharges = new List<decimal>();
-        foreach (var component in new[] { "sides", "drinks" })
+        foreach (string? component in new[] { "sides", "drinks" })
         {
-            if (!comboItem.BundleSlots.TryGetValue(component, out var slots))
+            if (!comboItem.BundleSlots.TryGetValue(component, out List<BundleSlot>? slots))
             {
                 continue;
             }
             var filled = new List<string>();
-            foreach (var slot in slots.Where(s => s.Display.Length > 0))
+            foreach (BundleSlot? slot in slots.Where(s => s.Display.Length > 0))
             {
                 slot.Upcharge = ComponentUpcharge(slot.Item, slot.Size);
                 filled.Add(slot.Display);
@@ -950,8 +969,8 @@ internal sealed class OrderState
 
         string baseName;
         string mods;
-        var rawName = comboItem.Item;
-        var parenIndex = rawName.IndexOf('(');
+        string rawName = comboItem.Item;
+        int parenIndex = rawName.IndexOf('(');
         if (parenIndex >= 0)
         {
             baseName = rawName[..parenIndex].Trim();
@@ -989,18 +1008,18 @@ internal sealed class OrderState
         {
             return false;
         }
-        var newPrice = _menu.PriceFor(comboItem.Item, newSize);
+        decimal? newPrice = _menu.PriceFor(comboItem.Item, newSize);
         if (newPrice is not { } price)
         {
             return false;
         }
         comboItem.Size = newSize;
         comboItem.Price = price;
-        var resolved = _menu.NormalizeSize(newSize);
-        var sizePrefix = resolved.Length > 0 ? $"{resolved} " : "";
-        foreach (var (component, slots) in comboItem.BundleSlots)
+        string resolved = _menu.NormalizeSize(newSize);
+        string sizePrefix = resolved.Length > 0 ? $"{resolved} " : "";
+        foreach ((string? component, List<BundleSlot>? slots) in comboItem.BundleSlots)
         {
-            foreach (var slot in slots)
+            foreach (BundleSlot slot in slots)
             {
                 if (slot.Item.Length == 0)
                 {
@@ -1008,8 +1027,8 @@ internal sealed class OrderState
                 }
                 if (slot.Autofill)
                 {
-                    var fresh = _menu.BundleAutoFill(comboItem.Item, resolved);
-                    if (fresh.TryGetValue(component, out var fillerDisplay) && fillerDisplay.Length > 0)
+                    IReadOnlyDictionary<string, string> fresh = _menu.BundleAutoFill(comboItem.Item, resolved);
+                    if (fresh.TryGetValue(component, out string? fillerDisplay) && fillerDisplay.Length > 0)
                     {
                         // PR #184 round 3 (Rick's review, item E): slot.Item must stay the BASE,
                         // on-menu item name (e.g. "World Famous Fries®"), never the size-baked-in
@@ -1019,8 +1038,8 @@ internal sealed class OrderState
                         // actually says, and what OrderToolExecutor resolves against the menu)
                         // can never match this slot via MenuKeyValidator.MenuKey and is wrongly
                         // rejected as not_in_order.
-                        var freshBase = _menu.BundleAutoFillNames(comboItem.Item);
-                        var fillerItem = freshBase.TryGetValue(component, out var baseName) ? baseName : fillerDisplay;
+                        IReadOnlyDictionary<string, string> freshBase = _menu.BundleAutoFillNames(comboItem.Item);
+                        string fillerItem = freshBase.TryGetValue(component, out string? baseName) ? baseName : fillerDisplay;
                         slot.Item = fillerItem;
                         slot.Display = fillerDisplay;
                         slot.LastItem = fillerItem;
@@ -1069,9 +1088,9 @@ internal sealed class OrderState
             Components = [.. comboItem.Components],
             ComponentUpcharges = [.. comboItem.ComponentUpcharges],
         };
-        foreach (var component in _menu.BundleSlots(comboItem.Item))
+        foreach (string component in _menu.BundleSlots(comboItem.Item))
         {
-            var slots = SyncBundleSlotList(comboItem, component);
+            List<BundleSlot> slots = SyncBundleSlotList(comboItem, component);
             BundleSlot taken;
             if (unitIndex < slots.Count)
             {
@@ -1085,7 +1104,7 @@ internal sealed class OrderState
             splitItem.BundleSlots[component] = [taken];
         }
         comboItem.Quantity--;
-        var insertAt = _items.FindIndex(oi => ReferenceEquals(oi, comboItem)) + 1;
+        int insertAt = _items.FindIndex(oi => ReferenceEquals(oi, comboItem)) + 1;
         _items.Insert(insertAt, splitItem);
         RepriceBundleFromComponents(comboItem);
         RepriceBundleFromComponents(splitItem);
@@ -1143,9 +1162,9 @@ internal sealed class OrderState
         OrderItem comboItem, int slotIndex, string component, string itemName, string size, string display,
         bool autofill = false)
     {
-        var slots = SyncBundleSlotList(comboItem, component);
-        var slot = slots[slotIndex];
-        var isResize = slot.LastItem.Length > 0 && MenuKeyValidator.MenuKey(slot.LastItem) == MenuKeyValidator.MenuKey(itemName);
+        List<BundleSlot> slots = SyncBundleSlotList(comboItem, component);
+        BundleSlot slot = slots[slotIndex];
+        bool isResize = slot.LastItem.Length > 0 && MenuKeyValidator.MenuKey(slot.LastItem) == MenuKeyValidator.MenuKey(itemName);
 
         // PR #184 round 4 (Rick's review, items 1/2): the "wholeBundleSize" cascade/rejection
         // below must only ever fire for a genuine RESIZE of an item that's already filling this
@@ -1192,8 +1211,8 @@ internal sealed class OrderState
             // #205: component upcharges are per physical meal. If this fill/resize would make the
             // targeted unit's upcharge differ from its siblings, split it first so OrderItem.Price
             // remains a per-unit price, never an averaged line total.
-            var prospective = BundleUnitUpcharge(comboItem, slotIndex, (component, itemName, size));
-            var differs = Enumerable.Range(0, comboItem.Quantity)
+            decimal prospective = BundleUnitUpcharge(comboItem, slotIndex, (component, itemName, size));
+            bool differs = Enumerable.Range(0, comboItem.Quantity)
                 .Where(i => i != slotIndex)
                 .Any(i => BundleUnitUpcharge(comboItem, i) != prospective);
             if (differs)
@@ -1241,14 +1260,14 @@ internal sealed class OrderState
     /// <c>_vacate_bundle_component</c>.</summary>
     private (string Component, string VacatedDisplay, string ComboDisplay)? VacateBundleComponent(string component, string itemName)
     {
-        var found = FindBundleSlot(component, itemName);
+        (OrderItem Item, int Index)? found = FindBundleSlot(component, itemName);
         if (found is not { } slotFound)
         {
             return null;
         }
-        var (comboItem, idx) = slotFound;
-        var slots = SyncBundleSlotList(comboItem, component);
-        var slot = slots[idx];
+        (OrderItem? comboItem, int idx) = slotFound;
+        List<BundleSlot> slots = SyncBundleSlotList(comboItem, component);
+        BundleSlot slot = slots[idx];
         // Guard against FindBundleSlot's vacant-search branch handing back a slot that does NOT
         // actually hold itemName right now (e.g. this component is filled elsewhere by a
         // different item) -- only a genuine holder match may be vacated.
@@ -1256,7 +1275,7 @@ internal sealed class OrderState
         {
             return null;
         }
-        var vacatedDisplay = slot.Display;
+        string vacatedDisplay = slot.Display;
         slot.Item = "";
         slot.Size = "";
         slot.Display = "";
@@ -1276,12 +1295,12 @@ internal sealed class OrderState
     /// Mirrors order_state.py's <c>is_absorbed_component</c>.</summary>
     public bool IsAbsorbedComponent(string itemName)
     {
-        var key = MenuKeyValidator.MenuKey(itemName);
-        foreach (var comboItem in _items)
+        string key = MenuKeyValidator.MenuKey(itemName);
+        foreach (OrderItem comboItem in _items)
         {
-            foreach (var component in new[] { "sides", "drinks" })
+            foreach (string? component in new[] { "sides", "drinks" })
             {
-                if (!comboItem.BundleSlots.TryGetValue(component, out var slots))
+                if (!comboItem.BundleSlots.TryGetValue(component, out List<BundleSlot>? slots))
                 {
                     continue;
                 }
@@ -1300,23 +1319,24 @@ internal sealed class OrderState
     /// string, at the very end.</summary>
     private void UpdateSummary()
     {
-        var happyHour = IsHappyHour();
-        var total = 0m;
-        foreach (var item in _items)
+        bool happyHour = IsHappyHour();
+        decimal total = 0m;
+        foreach (OrderItem item in _items)
         {
-            var itemTotal = item.Price * item.Quantity;
+            decimal itemTotal = item.Price * item.Quantity;
             if (happyHour && _menu.IsHappyHourDiscounted(item.Item))
             {
                 itemTotal *= _happyHourDiscount;
             }
             total += itemTotal;
         }
-        var discount = _rewardsDemo?.Discount(_items) ?? 0m;
+        decimal discount = _rewardsDemo?.Discount(_items) ?? 0m;
         total -= discount;
-        var tax = total * _taxRate;
-        var finalTotal = total + tax;
-        Summary = OrderSummary.Build(_items.ToList(), total, tax, finalTotal, ComposeSpokenReadBack(_items, finalTotal))
-            with { RewardsDemo = _rewardsDemo?.Snapshot(_items, total, discount) };
+        decimal tax = total * _taxRate;
+        decimal finalTotal = total + tax;
+        Summary = OrderSummary.Build([.. _items], total, tax, finalTotal, ComposeSpokenReadBack(_items, finalTotal))
+            with
+        { RewardsDemo = _rewardsDemo?.Snapshot(_items, total, discount) };
     }
 
     /// <summary>Ports order_state.py's <c>get_combo_requirements</c>: scans the order for bundles
@@ -1332,11 +1352,11 @@ internal sealed class OrderState
     public ComboRequirements GetComboRequirements()
     {
         var missingComponents = new HashSet<string>();
-        foreach (var item in _items)
+        foreach (OrderItem item in _items)
         {
-            foreach (var component in _menu.BundleSlots(item.Item))
+            foreach (string component in _menu.BundleSlots(item.Item))
             {
-                var slots = SyncBundleSlotList(item, component);
+                List<BundleSlot> slots = SyncBundleSlotList(item, component);
                 if (slots.Any(slot => slot.Item.Length == 0))
                 {
                     missingComponents.Add(component);
@@ -1354,7 +1374,7 @@ internal sealed class OrderState
             missing.Add(_menu.BundleMissingPartText.GetValueOrDefault("drinks", "a drink"));
         }
 
-        var promptHint = missing.Count > 0 ? $"Ask the guest for {string.Join(", and ", missing)} to finish their combo." : "";
+        string promptHint = missing.Count > 0 ? $"Ask the guest for {string.Join(", and ", missing)} to finish their combo." : "";
         return new ComboRequirements(missing.Count == 0, missing, promptHint);
     }
 
@@ -1365,7 +1385,7 @@ internal sealed class OrderState
     /// name="finalTotal"/> -- never re-derived here. Cached once per <see cref="UpdateSummary"/>
     /// call onto <see cref="OrderSummary.SpokenReadBack"/> so it can never drift from the tool
     /// response that serializes the same <see cref="OrderSummary"/>.</summary>
-    private string ComposeSpokenReadBack(IReadOnlyList<OrderItem> items, decimal finalTotal)
+    private string ComposeSpokenReadBack(List<OrderItem> items, decimal finalTotal)
     {
         if (items.Count == 0)
         {
@@ -1374,9 +1394,9 @@ internal sealed class OrderState
 
         var counts = new Dictionary<string, int>();
         var order = new List<string>();
-        foreach (var item in items)
+        foreach (OrderItem item in items)
         {
-            var cleanName = _menu.Spoken(item.Display);
+            string cleanName = _menu.Spoken(item.Display);
             if (cleanName.Contains('(') && cleanName.Contains(')'))
             {
                 cleanName = cleanName.Replace("(", "with ").Replace(")", "");
@@ -1384,7 +1404,7 @@ internal sealed class OrderState
             var positiveUpcharges = item.ComponentUpcharges.Where(upcharge => upcharge > 0m).ToList();
             if (positiveUpcharges.Count > 0)
             {
-                var upchargeTotal = positiveUpcharges.Sum();
+                decimal upchargeTotal = positiveUpcharges.Sum();
                 cleanName = positiveUpcharges.Count == 1
                     ? $"{cleanName} with a {Money.FormatMoneySpoken(upchargeTotal)} upcharge"
                     : $"{cleanName} with {Money.FormatMoneySpoken(upchargeTotal)} in component upcharges";
@@ -1400,7 +1420,7 @@ internal sealed class OrderState
         // (e.g. "3 10 Count Glazed Munch-kins Donut Hole Treats") is ambiguous -- spelling the
         // quantity out as a word removes it.
         var parts = order.Select(display => $"{Money.NumberToWords(counts[display])} {display}").ToList();
-        var summaryStr = parts.Count > 1
+        string summaryStr = parts.Count > 1
             ? string.Join(", ", parts[..^1]) + $", and {parts[^1]}"
             : parts[0];
 
@@ -1433,8 +1453,15 @@ internal sealed class OrderState
     {
         lock (_mutationLock)
         {
-            if (_rewardsDemo is null) return false;
-            if (action == "reset") ResetOrder();
+            if (_rewardsDemo is null)
+            {
+                return false;
+            }
+
+            if (action == "reset")
+            {
+                ResetOrder();
+            }
             else
             {
                 _rewardsDemo.Act(action, code, _items, Summary.Total);
