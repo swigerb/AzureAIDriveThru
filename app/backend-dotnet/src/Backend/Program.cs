@@ -530,7 +530,10 @@ app.MapGet("/realtime", async (HttpContext context) =>
     }
 
     string sessionId = Guid.NewGuid().ToString("n");
-    using WebSocket socket = await context.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
+    using WebSocket acceptedSocket = await context.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
+    // Everything below uses the wrapper, never acceptedSocket: it keeps the Close frame the last
+    // frame written to the browser (see OrderedCloseWebSocket).
+    using WebSocket socket = new OrderedCloseWebSocket(acceptedSocket);
     var metadata = new SessionMetadata(persona.Id, resolvedModel.Id, pipelineName);
     SessionActor actor = sessionRegistry.GetOrAdd(sessionId, id => new SessionActor(id, processor, metadata));
     try
