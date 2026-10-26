@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Azure.Core;
@@ -84,6 +85,8 @@ public sealed class SearchIndexHttpClient : IDisposable
     /// <summary>Factored out of <see cref="CreateForProduction"/> so tests can assert on the
     /// configured timeout/retry-handler shape directly, without constructing a real
     /// <c>DefaultAzureCredential</c> (see <see cref="CreateForProduction"/>'s own remarks).</summary>
+    [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope",
+        Justification = "Ownership of each handler transfers to the next via its constructor; the returned HttpClient disposes the whole DelegatingHandler chain.")]
     internal static HttpClient CreateProductionHttpClient(TokenCredential credential)
     {
         var socketsHandler = new SocketsHttpHandler { ConnectTimeout = ProductionTimeout };

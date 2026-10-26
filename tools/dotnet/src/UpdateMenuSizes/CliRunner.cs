@@ -15,6 +15,10 @@ public static class CliRunner
         "[--production <*-menu-items.json>] [--menu <menuItems.json>] " +
         "[--product-search-map <product_search_map.json>]";
 
+    /// <param name="args">The raw command-line arguments. An unrecognized argument, or a flag
+    /// missing its value, is a usage error (exit code 2) rather than being silently ignored.</param>
+    /// <param name="stdout">Receives the update log (or <see cref="HelpText"/> for <c>--help</c>).</param>
+    /// <param name="stderr">Receives the single-line error message for a usage or discovery error.</param>
     /// <param name="repoRootOverride">Normally omitted -- defaults to
     /// <c>RepoRoot.Find(AppContext.BaseDirectory)</c>. Lets tests exercise the
     /// PersonaMenuLocator-discovery-fails/clean-error/exit-1 path (CliRunnerTests) against a
@@ -42,6 +46,12 @@ public static class CliRunner
                 case "--help" or "-h":
                     stdout.WriteLine(HelpText);
                     return 0;
+                case "--production" or "--menu" or "--product-search-map":
+                    return UsageError(stderr, $"argument {args[i]}: expected one argument");
+                default:
+                    // This tool rewrites menuItems.json in place, so a typo'd flag must not
+                    // silently fall back to persona discovery and mutate the real checked-in file.
+                    return UsageError(stderr, $"unrecognized arguments: {args[i]}");
             }
         }
 
@@ -101,5 +111,12 @@ public static class CliRunner
             stdout.WriteLine(line);
         }
         return 0;
+    }
+
+    private static int UsageError(TextWriter stderr, string message)
+    {
+        stderr.WriteLine($"update-menu-sizes: {message}");
+        stderr.WriteLine(HelpText);
+        return 2;
     }
 }

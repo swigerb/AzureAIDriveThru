@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Text;
 using System.Text.Json;
 
@@ -53,7 +54,7 @@ namespace SearchIndexRequestBuilder;
 internal static class AzdEnvLoader
 {
     private static readonly IReadOnlyDictionary<string, string> s_emptyValues =
-        new Dictionary<string, string>();
+        ReadOnlyDictionary<string, string>.Empty;
 
     /// <param name="repoRoot">The repo root to look for a <c>.azure/</c> folder under.</param>
     /// <param name="fileExists">Normally omitted -- defaults to <see cref="File.Exists(string)"/>.
@@ -98,16 +99,17 @@ internal static class AzdEnvLoader
 
             return ParseDotEnvFile(readText(envFilePath));
         }
-        catch
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException
+            or ArgumentException or NotSupportedException or System.Security.SecurityException)
         {
-            // Any unexpected failure here (malformed JSON, an I/O error, ...) is treated exactly
-            // like "no azd env configured" -- never a crash, and never a special-cased error
-            // message; see this class's own doc comment above.
+            // Any expected read/parse failure here (malformed JSON, an I/O or permission error,
+            // ...) is treated exactly like "no azd env configured" -- never a crash, and never a
+            // special-cased error message; see this class's own doc comment above.
             return s_emptyValues;
         }
     }
 
-    private static IReadOnlyDictionary<string, string> ParseDotEnvFile(string contents)
+    private static Dictionary<string, string> ParseDotEnvFile(string contents)
     {
         var values = new Dictionary<string, string>();
         foreach (string rawLine in contents.Split('\n'))

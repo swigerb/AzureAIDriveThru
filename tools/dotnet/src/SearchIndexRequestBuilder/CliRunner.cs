@@ -49,6 +49,10 @@ public static class CliRunner
                 case "--help" or "-h":
                     stdout.WriteLine(HelpText);
                     return 0;
+                case "--openai-endpoint" or "--embedding-deployment":
+                    return UsageError(stderr, $"argument {args[i]}: expected one argument");
+                default:
+                    return UsageError(stderr, $"unrecognized arguments: {args[i]}");
             }
         }
 
@@ -95,5 +99,12 @@ public static class CliRunner
         }
 
         return 0;
+    }
+
+    private static int UsageError(TextWriter stderr, string message)
+    {
+        stderr.WriteLine($"search-index-request-builder: {message}");
+        stderr.WriteLine(HelpText);
+        return 2;
     }
 }

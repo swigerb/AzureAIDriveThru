@@ -112,7 +112,7 @@ internal static class PythonJsonDumps
     private static void WriteNumber(JsonElement element, StringBuilder builder)
     {
         string raw = element.GetRawText();
-        if (raw.IndexOfAny(['.', 'e', 'E']) >= 0)
+        if (raw.AsSpan().IndexOfAny('.', 'e', 'E') >= 0)
         {
             builder.Append(PythonFloatRepr(double.Parse(raw, CultureInfo.InvariantCulture)));
         }
@@ -161,7 +161,7 @@ internal static class PythonJsonDumps
                         // ensure_ascii=True: every other code unit (C0 controls not handled above,
                         // and anything outside printable ASCII) becomes \uXXXX -- including each
                         // half of an astral character's surrogate pair individually.
-                        builder.Append("\\u").Append(((int)c).ToString("x4", CultureInfo.InvariantCulture));
+                        builder.Append(CultureInfo.InvariantCulture, $"\\u{(int)c:x4}");
                     }
                     break;
             }
@@ -177,6 +177,6 @@ internal static class PythonJsonDumps
     internal static string PythonFloatRepr(double value)
     {
         string text = value.ToString(CultureInfo.InvariantCulture);
-        return text.IndexOfAny(['.', 'e', 'E']) < 0 ? text + ".0" : text;
+        return text.AsSpan().IndexOfAny('.', 'e', 'E') < 0 ? text + ".0" : text;
     }
 }

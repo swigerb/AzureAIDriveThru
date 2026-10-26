@@ -14,7 +14,7 @@ namespace SearchIndexRequestBuilder;
 /// <c>load_azd_env()</c> -- <c>load_dotenv(path, override=True)</c> -- BEFORE <c>run()</c> reads
 /// <c>os.environ</c>, so an azd-managed value always wins over a pre-existing process environment
 /// variable of the same name. This port's precedence is therefore CLI flag (Python has none) &gt;
-/// azd default-environment value (<paramref name="azdEnvValues"/>, see
+/// azd default-environment value (<c>azdEnvValues</c>, see
 /// <see cref="AzdEnvLoader"/>) &gt; process environment variable &gt; (deployment only) the
 /// built-in default. (PR #250 review R5.)
 /// </summary>

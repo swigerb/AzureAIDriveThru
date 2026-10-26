@@ -1,5 +1,7 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using SearchIndexRequestBuilder;
 
 namespace SearchIndexIngestor.Tests;
@@ -51,7 +53,7 @@ namespace SearchIndexIngestor.Tests;
 ///   delete-stale assertion actually exercises IngestAsync's delete path rather than vacuously
 ///   passing; restored afterwards.
 /// </summary>
-public sealed class PythonParityTests
+public sealed partial class PythonParityTests
 {
     [Fact]
     public async Task DotnetPort_MatchesRealPythonTwin_ForIndexCreateOrUpdate_AndUploadBatchLoop()
@@ -125,7 +127,7 @@ public sealed class PythonParityTests
                     return FakeHttpMessageHandler.Json(
                         System.Net.HttpStatusCode.OK, new JsonObject { ["value"] = new JsonArray(ids.ToArray()) }.ToJsonString());
                 }
-                return FakeHttpMessageHandler.PlainText(System.Net.HttpStatusCode.OK, plan.DocumentCount.ToString());
+                return FakeHttpMessageHandler.PlainText(System.Net.HttpStatusCode.OK, plan.DocumentCount.ToString(CultureInfo.InvariantCulture));
             });
             using var searchClient = new SearchIndexHttpClient(new HttpClient(handler), TestFixtureValues.FakeSearchEndpoint);
             var orchestrator = new SearchIndexOrchestrator(
@@ -193,8 +195,8 @@ public sealed class PythonParityTests
 
     private static string Normalize(string? value) => (value ?? "").Replace(" ", "");
 
-    private static readonly System.Text.RegularExpressions.Regex s_dryRunLine = new(
-        @"\[dry-run\] persona '([^']+)': index '([^']+)', (\d+) document\(s\) planned");
+    [GeneratedRegex(@"\[dry-run\] persona '([^']+)': index '([^']+)', (\d+) document\(s\) planned")]
+    private static partial Regex DryRunLineRegex { get; }
 
     /// <summary>
     /// Content-level stdout/exit-code parity for <c>--dry-run</c>: the real, unmodified
@@ -333,7 +335,7 @@ public sealed class PythonParityTests
     /// <summary>
     /// Content-level stdout/exit-code parity for the unknown-<c>--persona</c> error case: Python's
     /// <c>resolve_target_personas</c> raises <c>SystemExit(message)</c> (lines 384-388), which exits
-    /// 1 with <paramref name="message" /> on stderr; CliRunner.cs's own remarks document the
+    /// 1 with <c>message</c> on stderr; CliRunner.cs's own remarks document the
     /// equivalent InvalidOperationException-catch-and-exit-1 path. Compared on exit code and on
     /// both sides' stderr mentioning the offending id -- not on identical wording, since Python's
     /// message embeds a Python list repr and C#'s doesn't.
@@ -531,7 +533,7 @@ public sealed class PythonParityTests
     }
 
     private static List<(string Persona, string Index, string Count)> ExtractDryRunTriples(string stdout) =>
-        [.. s_dryRunLine.Matches(stdout)
+        [.. DryRunLineRegex.Matches(stdout)
             .Select(m => (m.Groups[1].Value, m.Groups[2].Value, m.Groups[3].Value))
             .OrderBy(t => t.Item1, StringComparer.Ordinal)];
 }

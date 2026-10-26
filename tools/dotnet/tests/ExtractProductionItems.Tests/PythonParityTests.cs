@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -46,7 +47,7 @@ namespace ExtractProductionItems.Tests;
 /// synthetic second-persona layout) copies files, into a per-test temp directory, matching this
 /// repo's existing C# test convention (see UpdateMenuSizes.Tests/PythonParityTests.cs).
 /// </summary>
-public sealed class PythonParityTests : IDisposable
+public sealed partial class PythonParityTests : IDisposable
 {
     private readonly string _tempRoot =
         Path.Combine(Path.GetTempPath(), "squanchy-extract-production-items-parity-" + Guid.NewGuid().ToString("n"));
@@ -216,10 +217,13 @@ public sealed class PythonParityTests : IDisposable
 
     private static int ParseTotalProductionItems(string stdout)
     {
-        Match match = Regex.Match(stdout, @"Total production items: (\d+)");
+        Match match = TotalProductionItemsRegex.Match(stdout);
         Assert.True(match.Success, $"Could not find a 'Total production items: N' line in:\n{stdout}");
-        return int.Parse(match.Groups[1].Value);
+        return int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
     }
+
+    [GeneratedRegex(@"Total production items: (\d+)")]
+    private static partial Regex TotalProductionItemsRegex { get; }
 
     /// <summary>
     /// Resolves a working Python interpreter via <see cref="FindWorkingPythonInterpreterAsync"/>,

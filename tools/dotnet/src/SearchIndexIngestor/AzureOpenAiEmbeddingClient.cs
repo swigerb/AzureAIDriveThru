@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Nodes;
 using Azure.Core;
 
@@ -58,6 +59,8 @@ public sealed class AzureOpenAiEmbeddingClient : IEmbeddingClient, IDisposable
     /// closest .NET equivalent to the SDK's combined read/write/pool timeout; .NET has no separate
     /// read-vs-write-vs-pool split the way <c>httpx</c>'s own transport does, so all three are
     /// represented by the one 600 s knob here deliberately).</summary>
+    [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope",
+        Justification = "Ownership of each handler transfers to the next via its constructor; the returned HttpClient disposes the whole DelegatingHandler chain.")]
     internal static HttpClient CreateProductionHttpClient(TokenCredential credential)
     {
         var socketsHandler = new SocketsHttpHandler { ConnectTimeout = ProductionConnectTimeout };

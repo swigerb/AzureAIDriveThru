@@ -13,7 +13,7 @@ namespace SearchIndexRequestBuilder;
 internal static class MenuDocumentBuilder
 {
     /// <summary>One prepared document's field values (not yet given an "embedding" field --
-    /// <see cref="FixtureEmbedding"/> attaches that afterwards, mirroring how the real
+    /// the test project's <c>FixtureEmbedding</c> attaches that afterwards, mirroring how the real
     /// <c>ingest_plan</c> only attaches real embeddings after <c>generate_embeddings</c> returns)
     /// plus the text that embedding would be generated from.</summary>
     public sealed record PreparedDocument(JsonObject Fields, string CombinedTextForEmbedding);

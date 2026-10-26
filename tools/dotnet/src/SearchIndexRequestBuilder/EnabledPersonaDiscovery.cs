@@ -39,7 +39,7 @@ public static class EnabledPersonaDiscovery
     /// <param name="enabledIdsOverride">Issue #16 round 2 (Rick's review, 2a): an explicit allow-list
     /// of persona ids to use INSTEAD OF "every folder with a persona.json", matching
     /// <c>persona_loader.PersonaCatalog.load()</c>'s own <c>PERSONAS</c> env-var allow-list
-    /// precedence (SearchIndexIngestor's <see cref="SearchIndexIngestor.PersonaCatalogEnvResolver"/>
+    /// precedence (SearchIndexIngestor's <c>PersonaCatalogEnvResolver</c>
     /// resolves <c>PERSONAS</c> into this list before calling here). <c>null</c>/empty (the
     /// default, and SearchIndexRequestBuilder's only caller, which has no <c>PERSONAS</c>-allow-list
     /// concept of its own) means "every enabled persona", matching this method's original
@@ -50,7 +50,7 @@ public static class EnabledPersonaDiscovery
     /// sorted by id regardless of the requested ids' own order, matching
     /// <c>PersonaCatalog.ids</c>'s own <c>sorted(self._personas.keys())</c> (the requested ids'
     /// order only matters for <c>--persona</c>, handled entirely by
-    /// <see cref="SearchIndexIngestor.PersonaTargeting"/>, a separate, later step).</param>
+    /// SearchIndexIngestor's <c>PersonaTargeting</c>, a separate, later step).</param>
     public static IReadOnlyList<DiscoveredPersona> DiscoverAll(
         string repoRoot, string? personasDirOverride = null, IReadOnlyList<string>? enabledIdsOverride = null)
     {

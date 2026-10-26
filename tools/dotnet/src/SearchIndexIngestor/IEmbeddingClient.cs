@@ -20,6 +20,7 @@ public interface IEmbeddingClient
     /// order, exactly like <c>ingest_plan</c>'s own <c>zip(plan.documents, embeddings)</c>.</param>
     /// <param name="deployment">The Azure OpenAI deployment name to embed with (resolved by
     /// <c>OpenAiSettingsResolver</c>).</param>
+    /// <param name="cancellationToken">Cancels the outstanding embedding request.</param>
     /// <returns>One embedding vector per input text, same order, same length as
     /// <paramref name="texts"/>.</returns>
     Task<IReadOnlyList<IReadOnlyList<double>>> GenerateEmbeddingsAsync(

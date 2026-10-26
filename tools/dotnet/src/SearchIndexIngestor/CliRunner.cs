@@ -81,6 +81,12 @@ public static class CliRunner
                 case "--help" or "-h":
                     stdout.WriteLine(HelpText);
                     return 0;
+                case "--persona" or "--personas-dir" or "--search-endpoint" or "--openai-endpoint" or "--embedding-deployment":
+                    return UsageError(stderr, $"argument {args[i]}: expected one argument");
+                default:
+                    // Python's argparse rejects unknown arguments the same way (exit code 2). A
+                    // typo such as "--dryrun" must never silently fall through to a live Azure run.
+                    return UsageError(stderr, $"unrecognized arguments: {args[i]}");
             }
         }
 
@@ -158,11 +164,18 @@ public static class CliRunner
             // for every expected, resolvable configuration/validation failure (unknown --persona
             // id, missing menu file, no endpoint configured, ...). Mirrors Python's own SystemExit
             // paths (lines 386-388, 400-401) -- NOT verify_document_count's RuntimeError (lines
-            // 346-348), which this port also raises as a plain, UN-caught Exception (see
+            // 346-348), which this port raises as an UN-caught DocumentCountMismatchException (see
             // SearchIndexOrchestrator's remarks) so that failure surfaces distinctly, matching
             // Python's own distinct unhandled-exception behaviour there.
             stderr.WriteLine($"search-index-ingestor: {ex.Message}");
             return 1;
         }
+    }
+
+    private static int UsageError(TextWriter stderr, string message)
+    {
+        stderr.WriteLine($"search-index-ingestor: {message}");
+        stderr.WriteLine(HelpText);
+        return 2;
     }
 }
