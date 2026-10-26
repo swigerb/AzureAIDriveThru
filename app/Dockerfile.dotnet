@@ -125,6 +125,11 @@ ENV PORT=8000
 
 EXPOSE 8000
 
+# Run as the non-root `app` user the .NET 8+ aspnet images provide ($APP_UID). The backend only
+# reads from /app (publish output, personas/, config.yaml, static/ -- all world-readable) and
+# listens on unprivileged port 8000, so it needs no root privileges.
+USER $APP_UID
+
 # No Docker-level HEALTHCHECK: the minimal aspnet runtime image ships no HTTP client tool (curl/
 # wget), and adding one just for this would mean an extra apt-get layer. Azure Container Apps'
 # own liveness/readiness/startup probes (infra/core/host/container-app.bicep's healthProbePath:
