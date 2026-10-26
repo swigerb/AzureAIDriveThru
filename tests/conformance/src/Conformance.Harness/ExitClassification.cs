@@ -50,7 +50,7 @@ internal static class ExitClassification
         if (remaining > TimeSpan.Zero)
         {
             var drain = Task.Run(process.WaitForExit);
-            await Task.WhenAny(drain, Task.Delay(remaining)).ConfigureAwait(false);
+            await drain.WaitAsync(remaining).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }
 
         TimeSpan elapsed = DateTimeOffset.UtcNow - startedAt;

@@ -153,7 +153,7 @@ public sealed class RateLimitGuestSpeechCancellationTests(RateLimitIdleInteracti
         // afterward, no margin needed.
         bool cancelled = await fixture.Backend!.WaitForDiagnosticsAsync(
             d => d.Contains("Rate-limit retry cancelled: guest started speaking", StringComparison.Ordinal),
-            s_frameTimeout, ct, sinceWatermark: diagnosticsWatermark);
+            s_frameTimeout, sinceWatermark: diagnosticsWatermark, cancellationToken: ct);
         Assert.True(cancelled,
             "Expected the backend to log \"Rate-limit retry cancelled: guest started speaking\" after " +
             "guest speech reached it.\n\n--- backend stdout/stderr ---\n" + fixture.Backend!.DumpDiagnostics());

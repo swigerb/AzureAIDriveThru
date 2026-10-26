@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net.WebSockets;
 using System.Runtime.ExceptionServices;
 using System.Text.Json;
@@ -320,7 +321,7 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
     /// <summary>The raw bytes the NEXT `/openai/v1/audio/speech` call returns as its response
     /// body. Defaults to a short, arbitrary-but-valid byte sequence -- a cascade scenario that
     /// only asserts *some* audio streamed back (not its exact content) never needs to set this.</summary>
-    public byte[] NextTtsAudio { get; set; } = [1, 2, 3, 4];
+    public ReadOnlyMemory<byte> NextTtsAudio { get; set; } = new byte[] { 1, 2, 3, 4 };
 
     /// <summary>#262: one-shot HTTP error status for the NEXT `/openai/v1/audio/speech` call --
     /// e.g. 500, simulating a non-429 TTS failure so a cascade scenario can prove
@@ -493,11 +494,13 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
         }
     }
 
-    public async Task StartAsync(CancellationToken cancellationToken = default, int? fixedPort = null)
+    public Task StartAsync(CancellationToken cancellationToken = default) => StartAsync(fixedPort: null, cancellationToken);
+
+    public async Task StartAsync(int? fixedPort, CancellationToken cancellationToken = default)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
-        builder.WebHost.UseUrls($"http://127.0.0.1:{fixedPort?.ToString() ?? "0"}");
+        builder.WebHost.UseUrls($"http://127.0.0.1:{fixedPort?.ToString(CultureInfo.InvariantCulture) ?? "0"}");
         WebApplication app = builder.Build();
         app.UseWebSockets();
         app.MapGet("/", () => Results.Ok());
@@ -509,7 +512,11 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
         // DeploymentNotFound; only the deployment-scoped route transcribes. Serving the old route
         // as a 404 makes the conformance suite catch a regression back to it on either backend.
         app.MapPost("/openai/v1/audio/transcriptions", HandleV1TranscriptionNotFoundAsync);
+        // ASP0018: {deployment} is a deliberate wildcard -- the fake transcribes for whichever
+        // deployment name the backend is configured with, so the handler never reads it.
+#pragma warning disable ASP0018
         app.MapPost("/openai/deployments/{deployment}/audio/transcriptions", HandleTranscriptionAsync);
+#pragma warning restore ASP0018
         app.MapPost("/openai/v1/audio/speech", HandleSpeechAsync);
 
         await app.StartAsync(cancellationToken).ConfigureAwait(false);
@@ -650,7 +657,12 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
                 // two teardown signals (a hard abort via ct, or a graceful close observed by the
                 // receive loop via TeardownCancellation).
             }
+            // CA1031: deliberate catch-all -- this is the fault sink for fire-and-forget frame
+            // handlers; every unexpected exception must be recorded for AssertNoHandlerFaults
+            // rather than escaping into Kestrel's pipeline where no test would ever see it.
+#pragma warning disable CA1031
             catch (Exception ex)
+#pragma warning restore CA1031
             {
                 connection.RecordHandlerFault(ex);
             }
@@ -960,7 +972,7 @@ public sealed class FakeRealtimeUpstreamServer : IAsyncDisposable
             ct).ConfigureAwait(false);
     }
 
-    private async Task RespondAsync(FakeRealtimeConnection connection, CancellationToken ct)
+    private static async Task RespondAsync(FakeRealtimeConnection connection, CancellationToken ct)
     {
         RealtimeSessionState state = connection.SessionState;
         ResponseScript script = connection.Script.QueuedResponses.TryDequeue(out ResponseScript? scripted)

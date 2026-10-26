@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Primitives;
@@ -299,11 +300,13 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
         gate?.TrySetResult();
     }
 
-    public async Task StartAsync(CancellationToken cancellationToken = default, int? fixedPort = null)
+    public Task StartAsync(CancellationToken cancellationToken = default) => StartAsync(fixedPort: null, cancellationToken);
+
+    public async Task StartAsync(int? fixedPort, CancellationToken cancellationToken = default)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
-        builder.WebHost.UseUrls($"http://127.0.0.1:{fixedPort?.ToString() ?? "0"}");
+        builder.WebHost.UseUrls($"http://127.0.0.1:{fixedPort?.ToString(CultureInfo.InvariantCulture) ?? "0"}");
         WebApplication app = builder.Build();
         app.MapGet("/", () => Results.Ok());
         app.MapPost("/chat/completions", HandleCompletionAsync);
@@ -393,7 +396,7 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
         {
             if (scripted.RetryAfterSeconds is int retryAfterSeconds)
             {
-                context.Response.Headers.RetryAfter = retryAfterSeconds.ToString();
+                context.Response.Headers.RetryAfter = retryAfterSeconds.ToString(CultureInfo.InvariantCulture);
             }
             context.Response.StatusCode = statusCode;
             return;

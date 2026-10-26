@@ -303,12 +303,14 @@ public class ConformanceFixture : IAsyncLifetime
         {
             await EntraIssuer.DisposeAsync().ConfigureAwait(false);
         }
+
+        GC.SuppressFinalize(this);
     }
 
     /// <summary>Layers <paramref name="overrides"/> over <paramref name="baseEnvironment"/>,
     /// overrides winning on a key collision -- used to combine a profile's own env vars with
     /// whatever <see cref="StartExtraFakesAsync"/> additionally returns.</summary>
-    private static IReadOnlyDictionary<string, string> MergeEnvironment(
+    private static Dictionary<string, string> MergeEnvironment(
         IReadOnlyDictionary<string, string> baseEnvironment, IReadOnlyDictionary<string, string> overrides)
     {
         var merged = new Dictionary<string, string>(baseEnvironment);

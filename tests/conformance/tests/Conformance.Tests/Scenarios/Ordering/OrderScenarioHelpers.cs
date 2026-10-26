@@ -328,13 +328,13 @@ public static class OrderScenarioHelpers
     }
 
     public static decimal GetOrderTotal(string orderSummaryJson) =>
-        JsonDocument.Parse(orderSummaryJson).RootElement.GetProperty("total").GetDecimal();
+        JsonElement.Parse(orderSummaryJson).GetProperty("total").GetDecimal();
 
     public static decimal GetOrderTax(string orderSummaryJson) =>
-        JsonDocument.Parse(orderSummaryJson).RootElement.GetProperty("tax").GetDecimal();
+        JsonElement.Parse(orderSummaryJson).GetProperty("tax").GetDecimal();
 
     public static decimal GetOrderFinalTotal(string orderSummaryJson) =>
-        JsonDocument.Parse(orderSummaryJson).RootElement.GetProperty("finalTotal").GetDecimal();
+        JsonElement.Parse(orderSummaryJson).GetProperty("finalTotal").GetDecimal();
 
     /// <summary>
     /// PR #50 review (should-fix 1, Rick's X1): the wire schema carries pre-rendered
@@ -345,16 +345,16 @@ public static class OrderScenarioHelpers
     /// when the raw JSON numbers are still exact.
     /// </summary>
     public static string GetOrderTotalDisplay(string orderSummaryJson) =>
-        JsonDocument.Parse(orderSummaryJson).RootElement.GetProperty("totalDisplay").GetString()!;
+        JsonElement.Parse(orderSummaryJson).GetProperty("totalDisplay").GetString()!;
 
     public static string GetOrderTaxDisplay(string orderSummaryJson) =>
-        JsonDocument.Parse(orderSummaryJson).RootElement.GetProperty("taxDisplay").GetString()!;
+        JsonElement.Parse(orderSummaryJson).GetProperty("taxDisplay").GetString()!;
 
     public static string GetOrderFinalTotalDisplay(string orderSummaryJson) =>
-        JsonDocument.Parse(orderSummaryJson).RootElement.GetProperty("finalTotalDisplay").GetString()!;
+        JsonElement.Parse(orderSummaryJson).GetProperty("finalTotalDisplay").GetString()!;
 
     public static int GetOrderItemCount(string orderSummaryJson) =>
-        JsonDocument.Parse(orderSummaryJson).RootElement.GetProperty("items").GetArrayLength();
+        JsonElement.Parse(orderSummaryJson).GetProperty("items").GetArrayLength();
 
     /// <summary>
     /// #73 (Rick's PR #100 review, required item 1): asserts <paramref name="functionCallOutputText"/>

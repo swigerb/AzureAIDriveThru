@@ -106,7 +106,7 @@ public sealed class CascadeMenuModeAndVoiceConformanceTests(CascadeMenuModeAndVo
             s_frameTimeout, ct);
         Assert.True(toolResponse is not null, $"Expected an extension.middle_tier_tool_response(update_order) within {s_frameTimeout}.");
 
-        JsonElement order = JsonDocument.Parse(toolResponse!.Json.GetProperty("tool_result").GetString()!).RootElement;
+        var order = JsonElement.Parse(toolResponse!.Json.GetProperty("tool_result").GetString()!);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
 
         // Rick's PR #253 review item 2: drain to this turn's OWN response.done (round 2's
@@ -174,7 +174,7 @@ public sealed class CascadeMenuModeAndVoiceConformanceTests(CascadeMenuModeAndVo
             s_frameTimeout, ct);
         Assert.True(getOrderResponse is not null, $"Expected an extension.middle_tier_tool_response(get_order) within {s_frameTimeout}.");
 
-        JsonElement order = JsonDocument.Parse(getOrderResponse!.Json.GetProperty("tool_result").GetString()!).RootElement;
+        var order = JsonElement.Parse(getOrderResponse!.Json.GetProperty("tool_result").GetString()!);
         Assert.Equal(0, order.GetProperty("items").GetArrayLength());
 
         // Rick's PR #253 review item 2 (correcting this comment's own prior, wrong theory): the

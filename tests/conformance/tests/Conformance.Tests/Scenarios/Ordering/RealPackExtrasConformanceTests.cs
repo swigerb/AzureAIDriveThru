@@ -83,12 +83,13 @@ internal static class PersonaExtrasRules
             ReadCategorySet(extras, "blockedBaseCategories"));
     }
 
-    private static IReadOnlySet<string> ReadCategorySet(JsonElement extras, string propertyName) =>
-        extras.GetProperty(propertyName)
+    private static HashSet<string> ReadCategorySet(JsonElement extras, string propertyName) =>
+    [
+        .. extras.GetProperty(propertyName)
             .EnumerateArray()
             .Select(e => (e.GetString() ?? "").Trim().ToLowerInvariant())
-            .Where(s => s.Length > 0)
-            .ToHashSet();
+            .Where(s => s.Length > 0),
+    ];
 }
 
 /// <summary>

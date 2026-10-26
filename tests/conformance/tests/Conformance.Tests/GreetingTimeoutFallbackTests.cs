@@ -65,8 +65,8 @@ public sealed class GreetingTimeoutFallbackTests(ShortTimersConformanceFixture f
             "default instead, this would time out.");
 
         bool diagnostics = await fixture.Backend!.WaitForDiagnosticsAsync(
-            d => d.Contains("No session.updated within", StringComparison.Ordinal), s_frameTimeout, ct,
-            sinceWatermark: diagnosticsWatermark);
+            d => d.Contains("No session.updated within", StringComparison.Ordinal), s_frameTimeout,
+            sinceWatermark: diagnosticsWatermark, cancellationToken: ct);
         Assert.True(diagnostics,
             "Expected the backend's captured stderr to eventually contain \"No session.updated " +
             "within\" — the greeting fired via the fallback timeout above, so this line must " +

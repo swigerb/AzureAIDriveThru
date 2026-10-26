@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Conformance.Fakes;
 using Microsoft.Playwright;
 using Xunit;
@@ -8,8 +9,14 @@ namespace Conformance.Tests.Scenarios.Browser;
 [Collection(BrowserConformanceCollection.Name)]
 [Trait("Category", "Browser")]
 [Trait("Dotnet", "ready")]
-public sealed class RewardsDemoBrowserTests(BrowserConformanceFixture fixture)
+public sealed partial class RewardsDemoBrowserTests(BrowserConformanceFixture fixture)
 {
+    [GeneratedRegex(@"/personas/tacobell/assets/logo\.svg")]
+    private static partial Regex TacoBellLogoSrc { get; }
+
+    [GeneratedRegex("^Tacos")]
+    private static partial Regex TacosCategoryName { get; }
+
     [Fact]
     public Task Taco_Bell_checkin_rewards_resume_and_mobile_dark_theme_work_in_Edge() => fixture.RunAsync(async () =>
     {
@@ -42,9 +49,9 @@ public sealed class RewardsDemoBrowserTests(BrowserConformanceFixture fixture)
         FakeRealtimeConnection? connection = await connectionTask;
         Assert.NotNull(connection);
         ILocator logo = page.GetByRole(AriaRole.Img, new() { Name = "Taco Bell Voice Ordering Demo logo", Exact = true });
-        await Expect(logo).ToHaveAttributeAsync("src", new System.Text.RegularExpressions.Regex(@"/personas/tacobell/assets/logo\.svg"));
+        await Expect(logo).ToHaveAttributeAsync("src", TacoBellLogoSrc);
         Assert.True(await logo.EvaluateAsync<bool>("e => e.complete && e.naturalWidth > 0"));
-        ILocator tacos = page.GetByRole(AriaRole.Button, new() { NameRegex = new("^Tacos") });
+        ILocator tacos = page.GetByRole(AriaRole.Button, new() { NameRegex = TacosCategoryName });
         await Expect(tacos).ToBeVisibleAsync();
         if (await tacos.GetAttributeAsync("aria-expanded") != "true")
         {

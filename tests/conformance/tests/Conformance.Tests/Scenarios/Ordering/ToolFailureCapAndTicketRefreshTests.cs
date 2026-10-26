@@ -112,7 +112,7 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
             connection, browser,
             [("add", "Tots", "medium", 1, 2.79m)],
             nextIndex, ct);
-        JsonElement order = JsonDocument.Parse(next.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(next.ToolResultJson!);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
     }, allowedNewBackendErrors: 1);
 
@@ -208,7 +208,7 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
             connection, browser,
             [("add", "Tots", "medium", 1, 2.79m)],
             roundTripIndex, ct);
-        JsonElement order = JsonDocument.Parse(next.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(next.ToolResultJson!);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
     }, allowedNewBackendErrors: 2);
 

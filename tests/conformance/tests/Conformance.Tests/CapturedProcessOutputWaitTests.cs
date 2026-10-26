@@ -36,7 +36,7 @@ public sealed class CapturedProcessOutputWaitTests
 
         var sw = Stopwatch.StartNew();
         bool matched = await output.WaitForDiagnosticsAsync(
-            d => d.Contains("already here", StringComparison.Ordinal), TimeSpan.FromSeconds(5), ct);
+            d => d.Contains("already here", StringComparison.Ordinal), TimeSpan.FromSeconds(5), cancellationToken: ct);
         sw.Stop();
 
         Assert.True(matched);
@@ -62,7 +62,7 @@ public sealed class CapturedProcessOutputWaitTests
         }, ct);
 
         bool matched = await output.WaitForDiagnosticsAsync(
-            d => d.Contains("arrives late", StringComparison.Ordinal), TimeSpan.FromSeconds(5), ct);
+            d => d.Contains("arrives late", StringComparison.Ordinal), TimeSpan.FromSeconds(5), cancellationToken: ct);
 
         Assert.True(matched);
     }
@@ -75,7 +75,7 @@ public sealed class CapturedProcessOutputWaitTests
         output.Append("ERR", "never contains the target phrase");
 
         bool matched = await output.WaitForDiagnosticsAsync(
-            d => d.Contains("no such phrase", StringComparison.Ordinal), TimeSpan.FromMilliseconds(300), ct);
+            d => d.Contains("no such phrase", StringComparison.Ordinal), TimeSpan.FromMilliseconds(300), cancellationToken: ct);
 
         Assert.False(matched);
     }
@@ -91,7 +91,7 @@ public sealed class CapturedProcessOutputWaitTests
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             output.WaitForDiagnosticsAsync(
-                _ => false, TimeSpan.FromSeconds(30), cts.Token));
+                _ => false, TimeSpan.FromSeconds(30), cancellationToken: cts.Token));
     }
 
     /// <summary>
@@ -112,8 +112,8 @@ public sealed class CapturedProcessOutputWaitTests
         bool matched = await output.WaitForDiagnosticsAsync(
             d => d.Contains("fallback-timeout warning", StringComparison.Ordinal),
             TimeSpan.FromMilliseconds(300),
-            ct,
-            sinceWatermark: watermark);
+            sinceWatermark: watermark,
+            cancellationToken: ct);
 
         Assert.False(matched);
     }
@@ -130,8 +130,8 @@ public sealed class CapturedProcessOutputWaitTests
         bool matched = await output.WaitForDiagnosticsAsync(
             d => d.Contains("this scenario's own fallback-timeout warning", StringComparison.Ordinal),
             TimeSpan.FromMilliseconds(300),
-            ct,
-            sinceWatermark: watermark);
+            sinceWatermark: watermark,
+            cancellationToken: ct);
 
         Assert.True(matched);
     }
@@ -254,7 +254,7 @@ public sealed class CapturedProcessOutputWaitTests
             }
         }, ct);
 
-        bool quiesced = await output.WaitForOutputQuiescenceAsync(s_shortIdleWindow, TimeSpan.FromMilliseconds(300), ct);
+        bool quiesced = await output.WaitForOutputQuiescenceAsync(s_shortIdleWindow, TimeSpan.FromMilliseconds(300), cancellationToken: ct);
         churnerStop.Cancel();
         await churner;
 
@@ -405,7 +405,7 @@ public sealed class CapturedProcessOutputWaitTests
             // ConformanceFixture actually drives a scenario.
             await process.StandardInput.WriteLineAsync("0|INFO:sonic-drive-in:scenario A body ran");
             bool sawBodyOutput = await output.WaitForDiagnosticsAsync(
-                d => d.Contains("scenario A body ran", StringComparison.Ordinal), TimeSpan.FromSeconds(5), ct);
+                d => d.Contains("scenario A body ran", StringComparison.Ordinal), TimeSpan.FromSeconds(5), cancellationToken: ct);
             Assert.True(sawBodyOutput, "The immediate body-output line never arrived.");
 
             // Scenario A's own check runs and passes HERE -- strictly before the error below is
@@ -432,7 +432,7 @@ public sealed class CapturedProcessOutputWaitTests
             // could (Append enqueues a line before ScanLine increments the count). 30s is a
             // generous cap, far larger than any lag exercised by this [Theory].
             bool errorLanded = await output.WaitForDiagnosticsAsync(
-                _ => output.CountUnhandledErrors() > actualA, TimeSpan.FromSeconds(30), ct);
+                _ => output.CountUnhandledErrors() > actualA, TimeSpan.FromSeconds(30), cancellationToken: ct);
             Assert.True(errorLanded, "The late error from scenario A never landed within 30s.");
 
             (int _, string? strandedMessage) = attribution.BeginScenario(output.CountUnhandledErrors);

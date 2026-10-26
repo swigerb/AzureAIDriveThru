@@ -59,7 +59,7 @@ public sealed class ComboAbsorptionTests(HappyHourJustBeforeOpenFixture fixture)
         IEnumerable<(string Action, string Item, string Size, int Quantity, decimal Price)> steps = scenario.Steps.Select(s => (s.Action, s.Item, s.Size, s.Quantity, s.Price));
         ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(connection, browser, steps, roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         Assert.Equal(scenario.ExpectedLineItemCount, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(scenario.ExpectedTotal, order.GetProperty("total").GetDecimal());
 
@@ -108,7 +108,7 @@ public sealed class ComboAbsorptionTests(HappyHourJustBeforeOpenFixture fixture)
             ],
             roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         JsonElement items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Contains("(No Onions)", items[0].GetProperty("item").GetString());
@@ -143,7 +143,7 @@ public sealed class ComboAbsorptionTests(HappyHourJustBeforeOpenFixture fixture)
             ],
             roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         string? comboDisplay = order.GetProperty("items").EnumerateArray()
             .Single(i => i.GetProperty("item").GetString()!.Contains("Combo"))
             .GetProperty("display").GetString();
@@ -184,7 +184,7 @@ public sealed class ComboAbsorptionTests(HappyHourJustBeforeOpenFixture fixture)
             [("add", combo.Name, combo.Size, 1, combo.Price)],
             roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         OrderScenarioHelpers.AssertMoneyEqual(combo.Price, order.GetProperty("total").GetDecimal());
         OrderScenarioHelpers.AssertMoneyEqual(combo.ExpectedTax, order.GetProperty("tax").GetDecimal());
         OrderScenarioHelpers.AssertMoneyEqual(combo.ExpectedFinalTotal, order.GetProperty("finalTotal").GetDecimal());
@@ -219,7 +219,7 @@ public sealed class ComboAbsorptionHappyHourTests(HappyHourAtOpenFixture fixture
         IEnumerable<(string Action, string Item, string Size, int Quantity, decimal Price)> steps = scenario.Steps.Select(s => (s.Action, s.Item, s.Size, s.Quantity, s.Price));
         ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(connection, browser, steps, roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         Assert.Equal(scenario.ExpectedLineItemCount, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(scenario.ExpectedTotal, order.GetProperty("total").GetDecimal());
     });
@@ -255,7 +255,7 @@ public sealed class ComboAbsorptionHappyHourTests(HappyHourAtOpenFixture fixture
             [("add", combo.Name, combo.Size, 1, combo.Price)],
             roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         // A combo's bundle price is never itself classified as a "drink" line, so happy hour
         // being active must make no difference at all -- identical to the off-happy-hour Theory.
         OrderScenarioHelpers.AssertMoneyEqual(combo.Price, order.GetProperty("total").GetDecimal());

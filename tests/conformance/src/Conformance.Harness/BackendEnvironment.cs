@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 
 namespace Conformance.Harness;
@@ -51,7 +52,7 @@ public static class BackendEnvironment
             // to match the scenarios this suite drives; only the concrete launcher wiring for a
             // different language would differ, not whether these are needed at all. ──
             ["HOST"] = BackendContract.Host,
-            ["PORT"] = contract.Port.ToString(),
+            ["PORT"] = contract.Port.ToString(CultureInfo.InvariantCulture),
 
             // Key auth (never DefaultAzureCredential/AzureDeveloperCliCredential in CI).
             ["AZURE_OPENAI_EASTUS2_API_KEY"] = BackendContract.OpenAiApiKey,

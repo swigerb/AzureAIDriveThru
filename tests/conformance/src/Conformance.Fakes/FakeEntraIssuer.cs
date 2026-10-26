@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
@@ -151,6 +152,11 @@ public sealed class FakeEntraIssuer : IAsyncDisposable
     private static readonly byte[] s_hs256Secret =
         Encoding.UTF8.GetBytes("conformance-fake-entra-issuer-hs256-secret-never-published-not-a-real-secret");
 
+    private static readonly string[] s_responseTypesSupported = ["code", "id_token", "code id_token", "id_token token"];
+    private static readonly string[] s_responseModesSupported = ["query", "fragment", "form_post"];
+    private static readonly string[] s_subjectTypesSupported = ["pairwise"];
+    private static readonly string[] s_idTokenSigningAlgValuesSupported = ["RS256"];
+
     private WebApplication? _app;
     private RSA? _publishedKey;
     private RSA? _unpublishedKey;
@@ -183,14 +189,16 @@ public sealed class FakeEntraIssuer : IAsyncDisposable
     /// app registration's key material being tenant-independent.</summary>
     public string JwksUriFor(string tenant) => new Uri(BaseUri, $"{tenant}/discovery/v2.0/keys").ToString();
 
-    public async Task StartAsync(CancellationToken cancellationToken = default, int? fixedPort = null)
+    public Task StartAsync(CancellationToken cancellationToken = default) => StartAsync(fixedPort: null, cancellationToken);
+
+    public async Task StartAsync(int? fixedPort, CancellationToken cancellationToken = default)
     {
         _publishedKey = RSA.Create(2048);
         _unpublishedKey = RSA.Create(2048);
 
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
-        builder.WebHost.UseUrls($"http://127.0.0.1:{fixedPort?.ToString() ?? "0"}");
+        builder.WebHost.UseUrls($"http://127.0.0.1:{fixedPort?.ToString(CultureInfo.InvariantCulture) ?? "0"}");
         WebApplication app = builder.Build();
 
         app.MapGet("/{tenant}/v2.0/.well-known/openid-configuration", (string tenant) =>
@@ -202,14 +210,18 @@ public sealed class FakeEntraIssuer : IAsyncDisposable
                 jwks_uri = JwksUriFor(tenant),
                 authorization_endpoint = $"{issuer}/oauth2/v2.0/authorize",
                 token_endpoint = $"{issuer}/oauth2/v2.0/token",
-                response_types_supported = new[] { "code", "id_token", "code id_token", "id_token token" },
-                response_modes_supported = new[] { "query", "fragment", "form_post" },
-                subject_types_supported = new[] { "pairwise" },
-                id_token_signing_alg_values_supported = new[] { "RS256" },
+                response_types_supported = s_responseTypesSupported,
+                response_modes_supported = s_responseModesSupported,
+                subject_types_supported = s_subjectTypesSupported,
+                id_token_signing_alg_values_supported = s_idTokenSigningAlgValuesSupported,
             });
         });
 
+        // ASP0018: {tenant} is a deliberate wildcard -- one shared JWKS regardless of tenant
+        // (see JwksUriFor), so the handler never reads it.
+#pragma warning disable ASP0018
         app.MapGet("/{tenant}/discovery/v2.0/keys", () => Results.Json(BuildJwks()));
+#pragma warning restore ASP0018
 
         await app.StartAsync(cancellationToken).ConfigureAwait(false);
         _app = app;

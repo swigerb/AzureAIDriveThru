@@ -620,8 +620,8 @@ public sealed class RealtimeBrowserClient : IAsyncDisposable
 
         if (_readerTask is not null)
         {
-            bool settledOnItsOwn = await Task.WhenAny(_readerTask, Task.Delay(s_disposeGracePeriod)).ConfigureAwait(false)
-                == _readerTask;
+            await _readerTask.WaitAsync(s_disposeGracePeriod).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            bool settledOnItsOwn = _readerTask.IsCompleted;
             if (!settledOnItsOwn)
             {
                 await _readerCts.CancelAsync().ConfigureAwait(false);

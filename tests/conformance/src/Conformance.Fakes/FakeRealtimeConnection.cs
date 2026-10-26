@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net.WebSockets;
 
 namespace Conformance.Fakes;
@@ -11,6 +12,11 @@ namespace Conformance.Fakes;
 /// response script — in one test could be satisfied/consumed by a frame recorded on, or a script
 /// meant for, a *different* test's still-open (or already-closed) connection.
 /// </summary>
+[SuppressMessage("Design", "CA1001:Types that own disposable fields should be disposable",
+    Justification = "_sendLock must outlive the socket loop: callers may still invoke SendAsync after the " +
+                    "connection closes and must get FakeConnectionClosedException, not ObjectDisposedException " +
+                    "(asserted by FakeRealtimeScriptingModelTests). SemaphoreSlim only allocates an OS handle " +
+                    "when AvailableWaitHandle is read, which this type never does, so GC reclaims it fully.")]
 public sealed class FakeRealtimeConnection
 {
     /// <summary>Unique per accepted connection — never reused, even across a closed/reopened socket.</summary>

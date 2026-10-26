@@ -13,6 +13,7 @@ namespace Conformance.Tests.Scenarios.Browser;
 public sealed class TacoBellCustomizationBrowserTests(BrowserConformanceFixture fixture)
 {
     private static readonly TimeSpan s_timeout = TimeSpan.FromSeconds(30);
+    private static readonly JsonSerializerOptions s_indentedJson = new() { WriteIndented = true };
 
     private const string Capture = """
         (() => {
@@ -208,7 +209,7 @@ public sealed class TacoBellCustomizationBrowserTests(BrowserConformanceFixture 
         {
             Directory.CreateDirectory(folder);
             await File.WriteAllTextAsync(Path.Combine(folder, "customization-transcript.json"),
-                JsonSerializer.Serialize(evidence, new JsonSerializerOptions { WriteIndented = true }), ct);
+                JsonSerializer.Serialize(evidence, s_indentedJson), ct);
             await page.ScreenshotAsync(new() { Path = Path.Combine(folder, "customization-desktop.png"), FullPage = true });
             await page.SetViewportSizeAsync(390, 844);
             Assert.False(await page.EvaluateAsync<bool>("document.documentElement.scrollWidth > innerWidth"));

@@ -218,7 +218,7 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
         return -1;
     }
 
-    private static async Task<(IBrowserContext Context, IPage Page)> NewPageAsync(IBrowser browser, CancellationToken ct)
+    private static async Task<(IBrowserContext Context, IPage Page)> NewPageAsync(IBrowser browser)
     {
         IBrowserContext context = await browser.NewContextAsync(new BrowserNewContextOptions { Permissions = ["microphone"] })
             .ConfigureAwait(false);
@@ -235,7 +235,7 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
     private async Task RunSwitchScenarioAsync(bool clickImmediately)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!, ct).ConfigureAwait(false);
+        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!).ConfigureAwait(false);
         await using IBrowserContext _ = context;
 
         Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
@@ -297,7 +297,7 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
     /// pass <see langword="false"/> when it was already closed beforehand (Cases E/E2: nothing at
     /// all may land on it, since there is nothing left to end).
     /// </summary>
-    private async Task AssertSwitchDeliveredToNewPersonaAsync(
+    private static async Task AssertSwitchDeliveredToNewPersonaAsync(
         IPage page,
         int socketsBeforeSwitch,
         int alphaSentBeforeSwitch,
@@ -328,7 +328,7 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
             idx => idx >= 0, s_frameTimeout, "a test-beta socket to exist", ct);
         JsonElement betaSent = await UntilAsync(
             () => SentAsync(page, betaIndex),
-            sent => TypesOf(sent).Count(t => t == "session.update") >= 1,
+            sent => TypesOf(sent).Any(t => t == "session.update"),
             s_frameTimeout, "session.update to be sent on the test-beta socket", ct);
         Assert.Equal(1, TypesOf(betaSent).Count(t => t == "session.update"));
 
@@ -423,7 +423,7 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
     private async Task RunSwitchScenarioCAsync()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!, ct).ConfigureAwait(false);
+        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!).ConfigureAwait(false);
         await using IBrowserContext _ = context;
 
         Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
@@ -494,7 +494,7 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
     private async Task RunSwitchScenarioDAsync()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!, ct).ConfigureAwait(false);
+        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!).ConfigureAwait(false);
         await using IBrowserContext _ = context;
 
         Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
@@ -578,7 +578,7 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
     private async Task RunSwitchScenarioEAsync(bool holdFetch)
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!, ct).ConfigureAwait(false);
+        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!).ConfigureAwait(false);
         await using IBrowserContext _ = context;
 
         Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
@@ -692,7 +692,7 @@ public sealed class PersonaSwitchBrowserTests(PersonaSwitchBrowserFixture fixtur
     private async Task RunSwitchAfterReloadResumeScenarioAsync()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;
-        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!, ct).ConfigureAwait(false);
+        (IBrowserContext? context, IPage? page) = await NewPageAsync(fixture.Browser!).ConfigureAwait(false);
         await using IBrowserContext _ = context;
 
         Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);

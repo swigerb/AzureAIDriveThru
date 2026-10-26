@@ -25,7 +25,7 @@ public sealed class RewardsDemoConformanceTests(ConformanceFixture fixture)
         Assert.NotNull(frame);
         Assert.Equal(JsonValueKind.Null, frame.Json.GetProperty("previous_item_id").ValueKind);
         Assert.Equal("get_order", frame.Json.GetProperty("tool_name").GetString());
-        return JsonDocument.Parse(frame.Json.GetProperty("tool_result").GetString()!).RootElement.Clone();
+        return JsonElement.Parse(frame.Json.GetProperty("tool_result").GetString()!);
     }
 
     [Fact]

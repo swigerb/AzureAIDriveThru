@@ -165,19 +165,24 @@ public sealed class WindowsJobObject : IDisposable
             public nuint PeakJobMemoryUsed;
         }
 
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         public static extern nint CreateJobObject(nint lpJobAttributes, string? lpName);
 
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool SetInformationJobObject(
             nint hJob, int infoType, nint lpJobObjectInfo, uint cbJobObjectInfoLength);
 
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool AssignProcessToJobObject(nint hJob, nint hProcess);
 
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern nint OpenProcess(int dwDesiredAccess, bool bInheritHandle, int dwProcessId);
 
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("kernel32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool CloseHandle(nint hObject);

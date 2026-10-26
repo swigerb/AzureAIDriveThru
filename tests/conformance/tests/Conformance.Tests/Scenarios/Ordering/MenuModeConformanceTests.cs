@@ -37,7 +37,7 @@ public sealed class MenuModeConformanceTests(MenuModeConformanceFixture fixture)
             [("add", "Delta Breakfast Meal", "regular", 1, 4.99m)],
             roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(4.99m, OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
             "A session bound to breakfast mode must accept the breakfast-only meal at its own menu price.");
@@ -57,7 +57,7 @@ public sealed class MenuModeConformanceTests(MenuModeConformanceFixture fixture)
             [("add", "Delta Lunch Meal", "regular", 1, 6.49m)],
             roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(6.49m, OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
             "A session bound to lunch mode must accept the lunch-only meal at its own menu price, " +
@@ -158,7 +158,7 @@ public sealed class MenuModeConformanceTests(MenuModeConformanceFixture fixture)
             [("add", "Delta Burger", "regular", 1, 3.99m)],
             roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(3.99m, OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!),
             $"A period-less item must be addable in {mode} mode exactly like every other mode a dayparts pack supports.");
@@ -184,7 +184,7 @@ public sealed class MenuModeConformanceTests(MenuModeConformanceFixture fixture)
             connection, browser,
             [("add", "Alpha Burger", "small", 1, 3.99m)],
             roundTripIndex, ct);
-        JsonElement order = JsonDocument.Parse(addResult.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(addResult.ToolResultJson!);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
 
         const string Query = "issue165 menu mode unaffected pack search";

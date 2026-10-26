@@ -20,7 +20,7 @@ public sealed class GetOrderResetOrderTests(ConformanceFixture fixture)
         ToolCallResult result = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "get_order", "{}", "call_get_order_empty", roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         Assert.Equal(0, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(0m, order.GetProperty("total").GetDecimal());
         OrderScenarioHelpers.AssertMoneyEqual(0m, order.GetProperty("tax").GetDecimal());
@@ -76,13 +76,13 @@ public sealed class GetOrderResetOrderTests(ConformanceFixture fixture)
                 ("add", "Cherry Limeade", "medium", 1, 2.89m),
             ],
             roundTripIndex, ct);
-        JsonElement beforeReset = JsonDocument.Parse(added.ToolResultJson!).RootElement;
+        var beforeReset = JsonElement.Parse(added.ToolResultJson!);
         Assert.Equal(2, beforeReset.GetProperty("items").GetArrayLength());
 
         ToolCallResult reset = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "reset_order", "{}", "call_reset_order", added.RoundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(reset.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(reset.ToolResultJson!);
         Assert.Equal(0, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(0m, order.GetProperty("total").GetDecimal());
         OrderScenarioHelpers.AssertMoneyEqual(0m, order.GetProperty("finalTotal").GetDecimal());
@@ -99,7 +99,7 @@ public sealed class GetOrderResetOrderTests(ConformanceFixture fixture)
         ToolCallResult reset = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "reset_order", "{}", "call_reset_order_on_empty", roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(reset.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(reset.ToolResultJson!);
         Assert.Equal(0, order.GetProperty("items").GetArrayLength());
 
         // Prove the session is still fully usable afterwards.
@@ -107,7 +107,7 @@ public sealed class GetOrderResetOrderTests(ConformanceFixture fixture)
             connection, browser,
             [("add", "Tots", "medium", 1, 2.79m)],
             reset.RoundTripIndex, ct);
-        JsonElement orderAfter = JsonDocument.Parse(afterReset.ToolResultJson!).RootElement;
+        var orderAfter = JsonElement.Parse(afterReset.ToolResultJson!);
         Assert.Equal(1, orderAfter.GetProperty("items").GetArrayLength());
     });
 }

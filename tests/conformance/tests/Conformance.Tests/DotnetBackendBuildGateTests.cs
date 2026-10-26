@@ -37,7 +37,7 @@ public sealed class DotnetBackendBuildGateTests
             File.WriteAllText(dllPath, "stale dll content from a previous run");
 
             int buildInvocations = 0;
-            var gate = new DotnetBackendBuildGate((_, _) =>
+            using var gate = new DotnetBackendBuildGate((_, _) =>
             {
                 Interlocked.Increment(ref buildInvocations);
                 File.WriteAllText(dllPath, "freshly built dll content");
@@ -80,7 +80,7 @@ public sealed class DotnetBackendBuildGateTests
             int buildInvocations = 0;
             var arrivals = new SemaphoreSlim(0, CallerCount);
             var releaseBuild = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            var gate = new DotnetBackendBuildGate(async (_, token) =>
+            using var gate = new DotnetBackendBuildGate(async (_, token) =>
             {
                 Interlocked.Increment(ref buildInvocations);
                 await releaseBuild.Task.WaitAsync(token);
@@ -132,7 +132,7 @@ public sealed class DotnetBackendBuildGateTests
             Directory.CreateDirectory(Path.GetDirectoryName(dllPath)!);
 
             int buildInvocations = 0;
-            var gate = new DotnetBackendBuildGate((_, _) =>
+            using var gate = new DotnetBackendBuildGate((_, _) =>
             {
                 int invocation = Interlocked.Increment(ref buildInvocations);
                 if (invocation == 1)
@@ -180,7 +180,7 @@ public sealed class DotnetBackendBuildGateTests
             int buildInvocations = 0;
             var buildEntered = new SemaphoreSlim(0, 1);
             var releaseBuild = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            var gate = new DotnetBackendBuildGate(async (_, token) =>
+            using var gate = new DotnetBackendBuildGate(async (_, token) =>
             {
                 Interlocked.Increment(ref buildInvocations);
                 buildEntered.Release();
@@ -236,7 +236,7 @@ public sealed class DotnetBackendBuildGateTests
             Directory.CreateDirectory(Path.GetDirectoryName(dllPath)!);
 
             int buildInvocations = 0;
-            var gate = new DotnetBackendBuildGate((_, _) =>
+            using var gate = new DotnetBackendBuildGate((_, _) =>
             {
                 int invocation = Interlocked.Increment(ref buildInvocations);
                 if (invocation == 1)

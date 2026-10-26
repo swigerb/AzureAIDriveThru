@@ -132,7 +132,7 @@ public sealed class PersonaBusinessRuleConformanceTests(TwoPersonaConformanceFix
             """{"action":"add","item_name":"Beta Root Beer","size":"regular","quantity":1,"price":2.29}""",
             "call_beta_machine_down", roundTripIndex, ct, toClient: false);
 
-        JsonElement payload = JsonDocument.Parse(rejected.FunctionCallOutputText).RootElement;
+        var payload = JsonElement.Parse(rejected.FunctionCallOutputText);
         Assert.Equal("machine_unavailable", payload.GetProperty("reason").GetString());
         Assert.Equal("Beta Root Beer", payload.GetProperty("item_name").GetString());
     });

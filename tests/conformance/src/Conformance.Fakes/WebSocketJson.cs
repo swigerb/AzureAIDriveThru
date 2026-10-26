@@ -112,5 +112,5 @@ public readonly record struct WebSocketMessageOrClose
     public static WebSocketMessageOrClose Close(WebSocketCloseStatus? status, string? description) =>
         new() { IsClose = true, CloseStatus = status, CloseStatusDescription = description };
 
-    public static readonly WebSocketMessageOrClose Dropped = new();
+    public static readonly WebSocketMessageOrClose Dropped;
 }

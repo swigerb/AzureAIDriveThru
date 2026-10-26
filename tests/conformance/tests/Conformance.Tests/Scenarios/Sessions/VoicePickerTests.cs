@@ -137,7 +137,7 @@ public sealed class VoicePickerTests(VoicePickerConformanceFixture fixture)
     }
 
     private static RecordedFrame MakeSessionUpdateFrame(string json) =>
-        new(Sequence: 0, Type: "session.update", Json: JsonDocument.Parse(json).RootElement, ReceivedAt: DateTimeOffset.UtcNow);
+        new(Sequence: 0, Type: "session.update", Json: JsonElement.Parse(json), ReceivedAt: DateTimeOffset.UtcNow);
 
     /// <summary>
     /// PR #42 review item 8 ("set_voice before lock"): the deferred behaviour only applies once

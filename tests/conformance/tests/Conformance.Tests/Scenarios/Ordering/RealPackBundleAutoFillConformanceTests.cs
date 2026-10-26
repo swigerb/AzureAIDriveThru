@@ -57,8 +57,8 @@ public static class PersonaBundleAutoFillMenuData
 
     public static BundleAutoFillCase? Discover(string personasDir, string personaId)
     {
-        IReadOnlyList<CandidateItem> items = ReadMenuItems(personasDir, personaId);
-        IReadOnlySet<string> downMachines = CurrentlyDownMachines(personasDir, personaId);
+        List<CandidateItem> items = ReadMenuItems(personasDir, personaId);
+        HashSet<string> downMachines = CurrentlyDownMachines(personasDir, personaId);
         bool hasDayparts = PersonaDaypartsFeature.Read(personasDir, personaId);
 
         foreach (CandidateItem? bundle in items.Where(i => i.AutoFillTemplates.Count > 0 && i.BundleSlots.Count > 0))
@@ -147,7 +147,7 @@ public static class PersonaBundleAutoFillMenuData
             string.Equals(componentMenuPeriod, bundleMenuPeriod, StringComparison.Ordinal);
     }
 
-    private static IReadOnlyList<CandidateItem> ReadMenuItems(string personasDir, string personaId)
+    private static List<CandidateItem> ReadMenuItems(string personasDir, string personaId)
     {
         string menuItemsPath = Path.Combine(personasDir, personaId, "menu", "menuItems.json");
         using var doc = JsonDocument.Parse(File.ReadAllText(menuItemsPath));
@@ -200,7 +200,7 @@ public static class PersonaBundleAutoFillMenuData
         return items;
     }
 
-    private static IReadOnlySet<string> CurrentlyDownMachines(string personasDir, string personaId)
+    private static HashSet<string> CurrentlyDownMachines(string personasDir, string personaId)
     {
         string personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
         using var doc = JsonDocument.Parse(File.ReadAllText(personaJsonPath));
@@ -253,7 +253,7 @@ public sealed class RealPackBundleAutoFillConformanceTests
 
     [Theory]
     [Trait("Dotnet", "ready")]
-    [MemberData(nameof(DiscoveredBundleAutoFillCases))]
+    [MemberData(nameof(DiscoveredBundleAutoFillCases), DisableDiscoveryEnumeration = true)]
     public async Task Discovered_pack_autofills_its_own_bundle_slots_when_meal_size_is_explicit(
         PersonaBundleAutoFillMenuData.BundleAutoFillCase bundleCase)
     {
@@ -277,7 +277,7 @@ public sealed class RealPackBundleAutoFillConformanceTests
 
     [Theory]
     [Trait("Dotnet", "ready")]
-    [MemberData(nameof(DiscoveredBundleAutoFillCases))]
+    [MemberData(nameof(DiscoveredBundleAutoFillCases), DisableDiscoveryEnumeration = true)]
     public async Task Discovered_pack_uses_its_own_bundle_default_size_for_unsized_bundle_autofill(
         PersonaBundleAutoFillMenuData.BundleAutoFillCase bundleCase)
     {
@@ -301,7 +301,7 @@ public sealed class RealPackBundleAutoFillConformanceTests
 
     [Theory]
     [Trait("Dotnet", "ready")]
-    [MemberData(nameof(DiscoveredBundleAutoFillCases))]
+    [MemberData(nameof(DiscoveredBundleAutoFillCases), DisableDiscoveryEnumeration = true)]
     public async Task Discovered_pack_absorbs_preordered_side_or_drink_instead_of_autofilling_that_slot(
         PersonaBundleAutoFillMenuData.BundleAutoFillCase bundleCase)
     {
@@ -318,15 +318,15 @@ public sealed class RealPackBundleAutoFillConformanceTests
                 "to prove drink absorption beats autoFill.");
 
             ToolCallResult sideFirst = await AddStandaloneThenBundleAsync(
-                fixture, bundleCase.PersonaId, bundleCase.MenuMode, bundleCase.PreorderedSide!, bundleCase, ct,
-                callIdPrefix: "call_real_pack_bundle_absorb_side");
+                fixture, bundleCase.PersonaId, bundleCase.MenuMode, bundleCase.PreorderedSide!, bundleCase,
+                callIdPrefix: "call_real_pack_bundle_absorb_side", ct);
             AssertAbsorptionState(
                 sideFirst.ToolResultJson!, bundleCase, bundleCase.SizedBundleSize,
                 absorbedComponent: bundleCase.PreorderedSide!.Display, absorbedSlot: "sides");
 
             ToolCallResult drinkFirst = await AddStandaloneThenBundleAsync(
-                fixture, bundleCase.PersonaId, bundleCase.MenuMode, bundleCase.PreorderedDrink!, bundleCase, ct,
-                callIdPrefix: "call_real_pack_bundle_absorb_drink");
+                fixture, bundleCase.PersonaId, bundleCase.MenuMode, bundleCase.PreorderedDrink!, bundleCase,
+                callIdPrefix: "call_real_pack_bundle_absorb_drink", ct);
             AssertAbsorptionState(
                 drinkFirst.ToolResultJson!, bundleCase, bundleCase.SizedBundleSize,
                 absorbedComponent: bundleCase.PreorderedDrink!.Display, absorbedSlot: "drinks");
@@ -339,8 +339,8 @@ public sealed class RealPackBundleAutoFillConformanceTests
         string? mode,
         PersonaBundleAutoFillMenuData.MenuItemRef preordered,
         PersonaBundleAutoFillMenuData.BundleAutoFillCase bundleCase,
-        CancellationToken ct,
-        string callIdPrefix)
+        string callIdPrefix,
+        CancellationToken ct)
     {
         (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
             fixture, ct, persona: personaId, mode: mode);

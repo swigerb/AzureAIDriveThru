@@ -295,7 +295,7 @@ public sealed class TaxToTheCentOffHappyHourTests(HappyHourJustBeforeOpenFixture
         IEnumerable<(string, string Item, string Size, int Quantity, decimal UnitPrice)> steps = taxCase.Items.Select(i => ("add", i.Item, i.Size, i.Quantity, i.UnitPrice));
         ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(connection, browser, steps, roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         OrderScenarioHelpers.AssertMoneyEqual(taxCase.ExpectedSubtotal, order.GetProperty("total").GetDecimal());
         OrderScenarioHelpers.AssertMoneyEqual(taxCase.ExpectedTax, order.GetProperty("tax").GetDecimal());
         OrderScenarioHelpers.AssertMoneyEqual(taxCase.ExpectedFinalTotal, order.GetProperty("finalTotal").GetDecimal());
@@ -336,7 +336,7 @@ public sealed class TaxToTheCentDuringHappyHourTests(HappyHourAtOpenFixture fixt
         IEnumerable<(string, string Item, string Size, int Quantity, decimal UnitPrice)> steps = taxCase.Items.Select(i => ("add", i.Item, i.Size, i.Quantity, i.UnitPrice));
         ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(connection, browser, steps, roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         OrderScenarioHelpers.AssertMoneyEqual(taxCase.ExpectedSubtotal, order.GetProperty("total").GetDecimal());
         OrderScenarioHelpers.AssertMoneyEqual(taxCase.ExpectedTax, order.GetProperty("tax").GetDecimal());
         OrderScenarioHelpers.AssertMoneyEqual(taxCase.ExpectedFinalTotal, order.GetProperty("finalTotal").GetDecimal());

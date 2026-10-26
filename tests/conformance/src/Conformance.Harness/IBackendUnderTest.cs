@@ -62,8 +62,8 @@ public interface IBackendUnderTest : IAsyncDisposable
     Task<bool> WaitForDiagnosticsAsync(
         Func<string, bool> predicate,
         TimeSpan timeout,
-        CancellationToken cancellationToken = default,
-        int sinceWatermark = 0) =>
+        int sinceWatermark = 0,
+        CancellationToken cancellationToken = default) =>
         Task.FromResult(predicate(DumpDiagnostics()));
 
     /// <summary>

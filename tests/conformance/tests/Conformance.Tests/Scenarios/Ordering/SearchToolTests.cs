@@ -23,8 +23,6 @@ namespace Conformance.Tests.Scenarios.Ordering;
 [Collection(ConformanceCollection.Name)]
 public sealed class SearchToolTests(ConformanceFixture fixture)
 {
-    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
-
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Search_returns_a_result_upstream_and_never_notifies_the_browser() => fixture.RunAsync(async () =>
@@ -128,7 +126,7 @@ public sealed class SearchToolTests(ConformanceFixture fixture)
             [("add", "Tots", "medium", 1, 2.79m)],
             searchResult.RoundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(orderResult.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(orderResult.ToolResultJson!);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
     });
 }

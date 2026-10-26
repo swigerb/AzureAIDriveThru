@@ -13,6 +13,8 @@ namespace Conformance.Tests.Scenarios.Browser;
 [Trait("Dotnet", "n/a-live-azure")] // Opt-in deployed-endpoint test; skipped unless LIVE_CSHARP_ORDER_ENDPOINT is set.
 public sealed class LiveAzureOrderCompletionTests
 {
+    private static readonly JsonSerializerOptions s_indentedJson = new() { WriteIndented = true };
+
     private const string CaptureEventsScript = """
         (() => {
           window.__liveOrderEvents = [];
@@ -287,6 +289,6 @@ public sealed class LiveAzureOrderCompletionTests
             events,
             ticket,
             pageTail = status,
-        }, new JsonSerializerOptions { WriteIndented = true }));
+        }, s_indentedJson));
     }
 }

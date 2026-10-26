@@ -30,7 +30,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
             roundTripIndex, ct);
 
         Assert.NotNull(result.ToolResultJson);
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(2.79m, order.GetProperty("total").GetDecimal());
     });
@@ -55,7 +55,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
             ],
             roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         JsonElement items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Equal(3, items[0].GetProperty("quantity").GetInt32());
@@ -78,7 +78,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
             ],
             roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         JsonElement items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Equal(2, items[0].GetProperty("quantity").GetInt32());
@@ -100,7 +100,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
             ],
             roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         Assert.Equal(0, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(0m, order.GetProperty("total").GetDecimal());
     });
@@ -118,7 +118,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
             [("remove", "Onion Rings", "medium", 1, 3.89m)],
             roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         Assert.Equal(0, order.GetProperty("items").GetArrayLength());
     });
 
@@ -206,7 +206,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
             "call_wrong_tool_price", roundTripIndex, ct);
 
         Assert.NotNull(result.ToolResultJson);
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(2.79m, order.GetProperty("total").GetDecimal(),
             $"A wrong tool-call price ({toolCallPriceJson}) must be ignored and 'Tots' (medium) charged " +
@@ -234,7 +234,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
             "call_omitted_tool_price", roundTripIndex, ct);
 
         Assert.NotNull(result.ToolResultJson);
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(2.79m, order.GetProperty("total").GetDecimal(),
             "An omitted tool-call price must default harmlessly and 'Tots' (medium) still be " +
@@ -275,7 +275,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
             "call_add_large_stale_price", roundTripIndex, ct);
 
         Assert.NotNull(result.ToolResultJson);
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(3.49m, order.GetProperty("total").GetDecimal(),
             "A large re-add with the medium's stale tool-call price (2.79) carried over must be " +
@@ -300,7 +300,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
             [("add", "Cherry Limeade", sizeAlias, 1, 3.79m)],
             roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         JsonElement items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Equal($"{golden.Route44.ExpectedDisplayPrefix} Cherry Limeade", items[0].GetProperty("display").GetString());
@@ -340,7 +340,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
             ],
             roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         JsonElement items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Equal(2, items[0].GetProperty("quantity").GetInt32());
@@ -375,7 +375,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
             ],
             roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         JsonElement items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Equal(2, items[0].GetProperty("quantity").GetInt32());
@@ -398,7 +398,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
             ],
             roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         Assert.Equal(0, order.GetProperty("items").GetArrayLength());
     });
 
@@ -440,7 +440,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
             [("add", sizeCase.Item, sizeCase.Size, 1, 1.00m)],
             roundTripIndex, ct);
 
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         JsonElement items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Equal(sizeCase.ExpectedDisplay, items[0].GetProperty("display").GetString());
@@ -512,7 +512,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
             connection, browser,
             [("add", "Tots", "medium", max, 2.79m)],
             roundTripIndex, ct);
-        JsonElement orderAtLimit = JsonDocument.Parse(atLimit.ToolResultJson!).RootElement;
+        var orderAtLimit = JsonElement.Parse(atLimit.ToolResultJson!);
         Assert.Equal(max, orderAtLimit.GetProperty("items")[0].GetProperty("quantity").GetInt32());
 
         // One more of the same item+size pushes the per-item total over MAX_QUANTITY_PER_ITEM —
@@ -525,7 +525,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
 
         ToolCallResult result = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "get_order", "{}", "call_get_after_item_limit", overLimit.RoundTripIndex, ct);
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
         Assert.Equal(max, order.GetProperty("items")[0].GetProperty("quantity").GetInt32());
     });
@@ -556,7 +556,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
                 ("add", "Groovy Fries", "medium", remainder, 2.79m),
             ],
             roundTripIndex, ct);
-        JsonElement orderFilled = JsonDocument.Parse(filled.ToolResultJson!).RootElement;
+        var orderFilled = JsonElement.Parse(filled.ToolResultJson!);
         int totalQty = 0;
         foreach (JsonElement item in orderFilled.GetProperty("items").EnumerateArray())
         {
@@ -572,7 +572,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
 
         ToolCallResult result = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "get_order", "{}", "call_get_after_total_limit", overLimit.RoundTripIndex, ct);
-        JsonElement order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         int finalQty = 0;
         foreach (JsonElement item in order.GetProperty("items").EnumerateArray())
         {

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net;
 using System.Net.WebSockets;
 using Conformance.Fakes;
@@ -107,6 +108,7 @@ internal static class AuthRowRealtimeAssertions
     /// valid default), never <paramref name="rowAccessToken"/> (the row's own, possibly-bad, token
     /// under test). Pure and I/O-free so a unit test can pin the decision without a real
     /// <see cref="Conformance.Fakes.FakeEntraIssuer"/> or backend.</summary>
+    [SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "rowAccessToken is deliberately accepted and ignored: it is the input this pinned decision must never use, and AuthRowRealtimeAssertionsTests passes both tokens to prove it.")]
     internal static string? ResolveSessionTokenFetchToken(string? rowAccessToken, string? defaultAccessToken) => defaultAccessToken;
 
     /// <summary>R3 pin (Rick's PR #158 round 1 review): pure query-string builder for the

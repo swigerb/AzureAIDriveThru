@@ -10,7 +10,7 @@ namespace Conformance.Harness;
 /// so it can be dumped into a test failure message without needing the process to still be
 /// alive or the test to have redirected output itself.
 /// </summary>
-public sealed class CapturedProcessOutput
+public sealed partial class CapturedProcessOutput
 {
     private const int MaxLines = 4000;
     private readonly ConcurrentQueue<string> _lines = new();
@@ -78,8 +78,8 @@ public sealed class CapturedProcessOutput
     /// instant, a literal <c>Z</c>, then a single space. One shared regex for both backends
     /// since they deliberately emit byte-identical prefixes.
     /// </summary>
-    private static readonly Regex s_backendTimestampPrefix = new(
-        @"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z) ", RegexOptions.Compiled);
+    [GeneratedRegex(@"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z) ")]
+    private static partial Regex BackendTimestampPrefix { get; }
 
     /// <summary>
     /// #233: splits an optional backend-embedded self-timestamp off the front of a freshly
@@ -93,7 +93,7 @@ public sealed class CapturedProcessOutput
     /// </summary>
     private static (DateTimeOffset? Timestamp, string Content) StripBackendTimestamp(string line)
     {
-        Match match = s_backendTimestampPrefix.Match(line);
+        Match match = BackendTimestampPrefix.Match(line);
         if (!match.Success)
         {
             return (null, line);
@@ -132,7 +132,7 @@ public sealed class CapturedProcessOutput
         (DateTimeOffset? embeddedTimestamp, string? content) = StripBackendTimestamp(line);
         DateTimeOffset displayTimestamp = embeddedTimestamp ?? DateTimeOffset.UtcNow;
 
-        _lines.Enqueue($"[{displayTimestamp:HH:mm:ss.fff} {stream}] {content}");
+        _lines.Enqueue(string.Create(CultureInfo.InvariantCulture, $"[{displayTimestamp:HH:mm:ss.fff} {stream}] {content}"));
         if (Interlocked.Increment(ref _count) > MaxLines)
         {
             _lines.TryDequeue(out _);
@@ -196,8 +196,8 @@ public sealed class CapturedProcessOutput
     public async Task<bool> WaitForDiagnosticsAsync(
         Func<string, bool> predicate,
         TimeSpan timeout,
-        CancellationToken cancellationToken = default,
-        int sinceWatermark = 0)
+        int sinceWatermark = 0,
+        CancellationToken cancellationToken = default)
     {
         // #66 S3: one timeout task for the entire wait -- the previous version recomputed
         // "remaining" and allocated a fresh Task.Delay on every wake, which also meant a
