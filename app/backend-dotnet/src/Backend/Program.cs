@@ -4,6 +4,7 @@ using Backend.Auth;
 using Backend.Cascade;
 using Backend.Configuration;
 using Backend.Health;
+using Backend.Http;
 using Backend.Models;
 using Backend.Personas;
 using Backend.Prompts;
@@ -348,6 +349,10 @@ app.UseAuthorization();
 
 // ── Routes ───────────────────────────────────────────────────────────────────────────────────
 app.MapGet("/health", () => HealthEndpoint.Handle(startupChecks, personaCatalog)).AllowAnonymous();
+
+// Browsers probe /favicon.ico before the persona-supplied icon exists; answer it anonymously
+// (204) instead of letting the Entra fallback policy turn the probe into a 401 console error.
+FaviconEndpoint.Map(app);
 
 // Issue #147 bullet 6 (design doc 18.3's layered session token): the minted token's `oid` binds
 // to the caller's own Entra-validated principal (Entra mode) or the Development pass-through's
