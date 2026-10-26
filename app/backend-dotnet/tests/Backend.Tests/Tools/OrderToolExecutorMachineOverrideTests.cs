@@ -16,9 +16,9 @@ public sealed class OrderToolExecutorMachineOverrideTests
     }
 
     private static JsonElement UpdateOrderArgs(string itemName, string size, int quantity = 1) =>
-        JsonDocument.Parse($$"""
+        JsonElement.Parse($$"""
             {"action":"add","item_name":"{{itemName}}","size":"{{size}}","quantity":{{quantity}}}
-            """).RootElement.Clone();
+            """);
 
     [Fact]
     public async Task UpdateOrder_accepts_an_item_when_a_down_machine_is_overridden_up()
@@ -41,7 +41,7 @@ public sealed class OrderToolExecutorMachineOverrideTests
         ToolResult result = await executor.ExecuteAsync("update_order", UpdateOrderArgs("Beta Root Beer", "regular"), TestContext.Current.CancellationToken);
 
         Assert.Equal(ToolResultDirection.ToServer, result.Destination);
-        JsonElement payload = JsonDocument.Parse(result.ToText()).RootElement;
+        var payload = JsonElement.Parse(result.ToText());
         Assert.Equal("machine_unavailable", payload.GetProperty("reason").GetString());
         Assert.Equal("Beta Root Beer", payload.GetProperty("item_name").GetString());
     }

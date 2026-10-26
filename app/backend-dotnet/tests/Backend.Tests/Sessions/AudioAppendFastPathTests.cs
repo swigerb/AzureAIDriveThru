@@ -212,7 +212,7 @@ public sealed class AudioAppendFastPathTests
         Assert.True(fastPath.IsMatch);
         Assert.False(fastPath.Suppressed);
 
-        await processor.ForwardFastPathAudioAsync(fastPath, payload, upstream, sessionId: "s1", CancellationToken.None);
+        await processor.ForwardFastPathAudioAsync(fastPath, payload, upstream, sessionId: "s1", TestContext.Current.CancellationToken);
 
         (byte[] Data, WebSocketMessageType MessageType, bool EndOfMessage) sent = Assert.Single(upstream.SentMessages);
         Assert.Equal(payload, sent.Data);
@@ -236,7 +236,7 @@ public sealed class AudioAppendFastPathTests
         Assert.True(fastPath.IsMatch);
         Assert.True(fastPath.Suppressed);
 
-        await processor.ForwardFastPathAudioAsync(fastPath, payload, upstream, sessionId: "s1", CancellationToken.None);
+        await processor.ForwardFastPathAudioAsync(fastPath, payload, upstream, sessionId: "s1", TestContext.Current.CancellationToken);
 
         Assert.Empty(upstream.SentMessages);
     }
@@ -249,7 +249,7 @@ public sealed class AudioAppendFastPathTests
         var socket = new FakeWebSocket([]);
         byte[] payload = Utf8("""{"type":"input_audio_buffer.append","audio":"AQIDBA=="}""");
 
-        await RealtimeProcessor.SendBytesAsync(socket, payload, CancellationToken.None);
+        await RealtimeProcessor.SendBytesAsync(socket, payload, TestContext.Current.CancellationToken);
 
         (byte[] Data, WebSocketMessageType MessageType, bool EndOfMessage) sent = Assert.Single(socket.SentMessages);
         Assert.Equal(payload, sent.Data);
@@ -261,9 +261,9 @@ public sealed class AudioAppendFastPathTests
     public async Task SendBytesAsync_is_a_no_op_once_the_socket_is_no_longer_open()
     {
         var socket = new FakeWebSocket([]);
-        await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
+        await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, null, TestContext.Current.CancellationToken);
 
-        await RealtimeProcessor.SendBytesAsync(socket, Utf8("""{"type":"input_audio_buffer.append","audio":"AAAA"}"""), CancellationToken.None);
+        await RealtimeProcessor.SendBytesAsync(socket, Utf8("""{"type":"input_audio_buffer.append","audio":"AAAA"}"""), TestContext.Current.CancellationToken);
 
         Assert.Empty(socket.SentMessages);
     }

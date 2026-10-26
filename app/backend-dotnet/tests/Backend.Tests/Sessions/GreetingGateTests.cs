@@ -43,7 +43,7 @@ public sealed class GreetingGateTests
         await Task.WhenAll(gate.SendOnceAsync("ack"), gate.SendOnceAsync("timeout"));
         await gate.SendOnceAsync("duplicate");
         var frames = upstream.SentMessages.Select(message => JsonNode.Parse(message.Data)!.AsObject()).ToList();
-        Assert.Equal(new[] { "input_audio_buffer.clear", "response.create" },
+        Assert.Equal<string>(["input_audio_buffer.clear", "response.create"],
             frames.Select(frame => frame["type"]!.GetValue<string>()));
         JsonObject response = frames[1]["response"]!.AsObject();
         Assert.Equal(loader.SystemPrompt + "\n\n"

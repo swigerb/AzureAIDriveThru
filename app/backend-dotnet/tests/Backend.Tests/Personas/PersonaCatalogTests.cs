@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json.Nodes;
 using Backend.Ordering;
 using Backend.Personas;
@@ -480,7 +481,7 @@ public sealed class PersonaCatalogTests
 
         foreach (string id in catalog.Ids)
         {
-            double rate = double.Parse(catalog.Get(id).Pricing.TaxRate);
+            double rate = double.Parse(catalog.Get(id).Pricing.TaxRate, CultureInfo.InvariantCulture);
             Assert.InRange(rate, 0.0, 1.0);
         }
     }

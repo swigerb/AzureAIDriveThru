@@ -48,8 +48,8 @@ public sealed class OrderToolExecutorCanonicalItemNameTests
     private static async Task<List<JsonElement>> GetOrderItemsAsync(OrderToolExecutor executor, CancellationToken ct)
     {
         ToolResult summary = await executor.ExecuteAsync("get_order", JsonSerializer.SerializeToElement(new { }), ct);
-        var client = JsonDocument.Parse(summary.ToClientText());
-        return [.. client.RootElement.GetProperty("items").EnumerateArray()];
+        var client = JsonElement.Parse(summary.ToClientText());
+        return [.. client.GetProperty("items").EnumerateArray()];
     }
 
     [Fact]
@@ -178,8 +178,8 @@ public sealed class OrderToolExecutorCanonicalItemNameSonicTests
     private static async Task<List<JsonElement>> GetOrderItemsAsync(OrderToolExecutor executor, CancellationToken ct)
     {
         ToolResult summary = await executor.ExecuteAsync("get_order", JsonSerializer.SerializeToElement(new { }), ct);
-        var client = JsonDocument.Parse(summary.ToClientText());
-        return [.. client.RootElement.GetProperty("items").EnumerateArray()];
+        var client = JsonElement.Parse(summary.ToClientText());
+        return [.. client.GetProperty("items").EnumerateArray()];
     }
 
     [Fact]

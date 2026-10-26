@@ -84,10 +84,10 @@ public sealed class CascadeToolCallDispatcherTests
         CascadeToolCallDispatcher dispatcher = NewDispatcher(handler, new RecordingToolExecutor(["get_order"]), state,
             configureContext: context => context.Diagnostic = capture);
 
-        Assert.Equal("What drink would you like?", await dispatcher.RunChatToolLoopAsync(CancellationToken.None));
+        Assert.Equal("What drink would you like?", await dispatcher.RunChatToolLoopAsync(TestContext.Current.CancellationToken));
 
         JsonNode secondRequest = JsonNode.Parse(handler.ChatRequestBodies[1])!;
-        Assert.Equal(new[] { "user", "assistant", "tool" },
+        Assert.Equal<string>(["user", "assistant", "tool"],
             secondRequest["messages"]!.AsArray().Select(m => m!["role"]!.GetValue<string>()));
         Assert.Equal("Adding your combo.", secondRequest["messages"]![1]!["content"]!.GetValue<string>());
         Assert.Equal(4, state.Messages.Count);
@@ -112,7 +112,7 @@ public sealed class CascadeToolCallDispatcherTests
             });
         context!.SessionId = "resumed-session";
 
-        Assert.Equal("Restored.", await dispatcher.RunChatToolLoopAsync(CancellationToken.None));
+        Assert.Equal("Restored.", await dispatcher.RunChatToolLoopAsync(TestContext.Current.CancellationToken));
 
         Assert.Null(context.Diagnostic);
         Assert.Empty(logger.Lines);
@@ -136,7 +136,7 @@ public sealed class CascadeToolCallDispatcherTests
         context!.SessionId = "resumed-session";
         context.ToolExecutor = resumed;
 
-        Assert.Equal("Restored.", await dispatcher.RunChatToolLoopAsync(CancellationToken.None));
+        Assert.Equal("Restored.", await dispatcher.RunChatToolLoopAsync(TestContext.Current.CancellationToken));
 
         Assert.Empty(provisional.ReceivedArgumentsJson);
         Assert.Single(resumed.ReceivedArgumentsJson);
@@ -149,7 +149,7 @@ public sealed class CascadeToolCallDispatcherTests
         CascadeProcessor.CascadeSessionState state = NewState();
         CascadeToolCallDispatcher dispatcher = NewDispatcher(handler, new StubToolExecutor([]), state);
 
-        string result = await dispatcher.RunChatToolLoopAsync(CancellationToken.None);
+        string result = await dispatcher.RunChatToolLoopAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("Order confirmed.", result);
         Assert.Contains(state.Messages, m => m["role"]?.GetValue<string>() == "assistant"
@@ -171,7 +171,7 @@ public sealed class CascadeToolCallDispatcherTests
         CascadeProcessor.CascadeSessionState state = NewState();
         CascadeToolCallDispatcher dispatcher = NewDispatcher(handler, toolExecutor, state);
 
-        string result = await dispatcher.RunChatToolLoopAsync(CancellationToken.None);
+        string result = await dispatcher.RunChatToolLoopAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("Here's your order.", result);
         Assert.Single(toolExecutor.ReceivedArgumentsJson);
@@ -193,7 +193,7 @@ public sealed class CascadeToolCallDispatcherTests
         CascadeProcessor.CascadeSessionState state = NewState();
         CascadeToolCallDispatcher dispatcher = NewDispatcher(handler, toolExecutor, state);
 
-        string result = await dispatcher.RunChatToolLoopAsync(CancellationToken.None);
+        string result = await dispatcher.RunChatToolLoopAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("Done.", result);
         Assert.Empty(toolExecutor.ReceivedArgumentsJson);
@@ -217,7 +217,7 @@ public sealed class CascadeToolCallDispatcherTests
         CascadeProcessor.CascadeSessionState state = NewState();
         CascadeToolCallDispatcher dispatcher = NewDispatcher(handler, toolExecutor, state);
 
-        string result = await dispatcher.RunChatToolLoopAsync(CancellationToken.None);
+        string result = await dispatcher.RunChatToolLoopAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("Recovered.", result);
         JsonObject toolMessage = Assert.Single(state.Messages, m => m["role"]?.GetValue<string>() == "tool");
@@ -241,7 +241,7 @@ public sealed class CascadeToolCallDispatcherTests
         CascadeProcessor.CascadeSessionState state = NewState();
         CascadeToolCallDispatcher dispatcher = NewDispatcher(handler, toolExecutor, state);
 
-        string result = await dispatcher.RunChatToolLoopAsync(CancellationToken.None);
+        string result = await dispatcher.RunChatToolLoopAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("", result);
         Assert.Equal(CascadeProcessor.MaxToolRounds, toolExecutor.ReceivedArgumentsJson.Count);

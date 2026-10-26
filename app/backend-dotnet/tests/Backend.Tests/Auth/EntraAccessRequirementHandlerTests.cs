@@ -50,7 +50,7 @@ public sealed class EntraAccessRequirementHandlerTests
         return new ClaimsPrincipal(identity);
     }
 
-    private static HttpContext RequestFor(string? routeName, string? assetPath = null)
+    private static DefaultHttpContext RequestFor(string? routeName, string? assetPath = null)
     {
         var httpContext = new DefaultHttpContext();
         if (routeName is not null)
@@ -619,7 +619,7 @@ public sealed class ConfigureJwtBearerTests
         // configuration has actually been obtained.
         var inner = new ConfigurationManager<OpenIdConnectConfiguration>("http://unused/", new FakeConfigurationRetriever());
         var warmDecorator = new CooldownAwareConfigurationManager(inner, gate);
-        await warmDecorator.GetBaseConfigurationAsync(CancellationToken.None);
+        await warmDecorator.GetBaseConfigurationAsync(TestContext.Current.CancellationToken);
         Assert.True(warmDecorator.HasConfiguration);
         options.ConfigurationManager = warmDecorator;
         var httpContext = new DefaultHttpContext();

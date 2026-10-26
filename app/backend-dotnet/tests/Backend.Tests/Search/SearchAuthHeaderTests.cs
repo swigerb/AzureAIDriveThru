@@ -97,7 +97,7 @@ public sealed class SearchAuthHeaderTests
         var provider = new FakeSearchBearerTokenProvider("should-not-be-used");
         SearchTool tool = NewTool(apiKey: "sk-real-search-key", provider);
 
-        (string? name, string? value) = await tool.ResolveAuthHeaderAsync(CancellationToken.None);
+        (string? name, string? value) = await tool.ResolveAuthHeaderAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("api-key", name);
         Assert.Equal("sk-real-search-key", value);
@@ -110,7 +110,7 @@ public sealed class SearchAuthHeaderTests
         var provider = new FakeSearchBearerTokenProvider("fake-aad-token");
         SearchTool tool = NewTool(apiKey: string.Empty, provider);
 
-        (string? name, string? value) = await tool.ResolveAuthHeaderAsync(CancellationToken.None);
+        (string? name, string? value) = await tool.ResolveAuthHeaderAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal("Authorization", name);
         // The header value is the real bearer token (same as #140's upstream fallback,
@@ -126,8 +126,8 @@ public sealed class SearchAuthHeaderTests
         var provider = new FakeSearchBearerTokenProvider("fake-aad-token");
         SearchTool tool = NewTool(apiKey: string.Empty, provider);
 
-        await tool.ResolveAuthHeaderAsync(CancellationToken.None);
-        await tool.ResolveAuthHeaderAsync(CancellationToken.None);
+        await tool.ResolveAuthHeaderAsync(TestContext.Current.CancellationToken);
+        await tool.ResolveAuthHeaderAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(2, provider.CallCount);
     }
@@ -144,7 +144,7 @@ public sealed class SearchAuthHeaderTests
         JsonElement args = System.Text.Json.JsonSerializer.SerializeToElement(
             new Dictionary<string, object?> { ["query"] = "anything" });
 
-        ToolResult result = await tool.ExecuteAsync(args, CancellationToken.None);
+        ToolResult result = await tool.ExecuteAsync(args, TestContext.Current.CancellationToken);
 
         // Falls into ExecuteAsync's generic catch-all (not the SearchApiException-specific
         // branches, since a credential failure never reaches the HTTP call at all) -- same
@@ -173,7 +173,7 @@ public sealed class SearchAuthHeaderTests
         JsonElement args = System.Text.Json.JsonSerializer.SerializeToElement(
             new Dictionary<string, object?> { ["query"] = "anything" });
 
-        ToolResult result = await tool.ExecuteAsync(args, CancellationToken.None);
+        ToolResult result = await tool.ExecuteAsync(args, TestContext.Current.CancellationToken);
 
         Assert.Equal("I'm sorry, I can't reach our menu data right now.", result.ToText());
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error);

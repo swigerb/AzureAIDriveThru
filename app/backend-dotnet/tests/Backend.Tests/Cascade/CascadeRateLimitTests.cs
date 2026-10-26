@@ -56,7 +56,7 @@ public sealed class CascadeRateLimitTests
         int result = await CascadeRateLimit.WithRetryAsync(
             settings, () => Task.FromResult(42), "test-op",
             (frame, _) => { notices.Add(frame); return Task.CompletedTask; },
-            "sess-1", logger: null, CancellationToken.None);
+            "sess-1", logger: null, TestContext.Current.CancellationToken);
 
         Assert.Equal(42, result);
         Assert.Empty(notices);
@@ -83,7 +83,7 @@ public sealed class CascadeRateLimitTests
             },
             "test-op",
             (frame, _) => { notices.Add(frame); return Task.CompletedTask; },
-            "sess-1", logger: null, CancellationToken.None, fakeTime);
+            "sess-1", logger: null, TestContext.Current.CancellationToken, fakeTime);
 
         // The method runs synchronously up to attempt 0's failure, then suspends in its (silent)
         // first-retry Task.Delay -- the op has been called exactly once so far, with no notice.
@@ -118,7 +118,7 @@ public sealed class CascadeRateLimitTests
             () => throw new FoundryHttpException(429, retryAfterSeconds: null, "still rate limited"),
             "test-op",
             (frame, _) => { notices.Add(frame); return Task.CompletedTask; },
-            "sess-1", logger: null, CancellationToken.None, fakeTime);
+            "sess-1", logger: null, TestContext.Current.CancellationToken, fakeTime);
 
         // Attempt 0 fails, suspends in its (tiny, unclamped-default) first-retry delay. Advancing
         // past it drives attempt 1 inline, which immediately exhausts (maxRetries=1) and throws --
@@ -143,7 +143,7 @@ public sealed class CascadeRateLimitTests
                 () => throw new InvalidOperationException("boom"),
                 "test-op",
                 (frame, _) => { notices.Add(frame); return Task.CompletedTask; },
-                "sess-1", logger: null, CancellationToken.None));
+                "sess-1", logger: null, TestContext.Current.CancellationToken));
 
         Assert.Equal("boom", exc.Message);
         Assert.Empty(notices);
@@ -161,7 +161,7 @@ public sealed class CascadeRateLimitTests
                 () => { callCount++; throw new FoundryHttpException(429, null, "rate limited"); },
                 "test-op",
                 (_, _) => Task.CompletedTask,
-                "sess-1", logger: null, CancellationToken.None));
+                "sess-1", logger: null, TestContext.Current.CancellationToken));
 
         Assert.Equal(1, callCount);
     }

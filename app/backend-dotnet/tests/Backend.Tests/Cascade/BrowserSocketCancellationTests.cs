@@ -267,7 +267,11 @@ public sealed class BrowserSocketCancellationTests
         using TcpClient _server = serverTcp;
         using TcpClient _client = clientTcp;
 
+        // CA2025: sessionTask is awaited at the end of the test once the guest closes; on a failure
+        // path, disposing the using-declared TcpClients closes the loopback socket and ends the session.
+#pragma warning disable CA2025 // awaited before disposal on the passing path (see above)
         Task sessionTask = processor.RunSessionAsync(browserSocket, persona, resolvedModel, sessionId: "sess-real-socket", ct);
+#pragma warning restore CA2025
 
         // 1) Drain the greeting's turn fully (small payload -- fits easily even in the tiny buffer).
         await DrainUntilAsync(guestSocket, "extension.round_trip_token", ct);

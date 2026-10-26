@@ -184,7 +184,7 @@ public sealed class RealtimeProcessorExtensionMessageTests
             SessionId, socket, TestContext.Current.CancellationToken));
 
         (byte[] Data, WebSocketMessageType MessageType, bool EndOfMessage) pushed = Assert.Single(socket.SentMessages);
-        JsonElement frame = System.Text.Json.JsonDocument.Parse(System.Text.Encoding.UTF8.GetString(pushed.Data)).RootElement;
+        var frame = JsonElement.Parse(pushed.Data);
         Assert.Equal("extension.middle_tier_tool_response", frame.GetProperty("type").GetString());
         Assert.Equal("get_order", frame.GetProperty("tool_name").GetString());
         Assert.Equal(System.Text.Json.JsonValueKind.Null, frame.GetProperty("previous_item_id").ValueKind);

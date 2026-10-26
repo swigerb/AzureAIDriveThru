@@ -426,13 +426,13 @@ public sealed class CascadeProcessorTests
         Assert.All(request["messages"]!.AsArray(), message =>
             Assert.Equal("system", message!["role"]!.GetValue<string>()));
         Assert.Contains("Say exactly:", request["messages"]!.AsArray().Last()!["content"]!.GetValue<string>());
-        Assert.Equal(new[] { "system", "assistant" },
+        Assert.Equal<string>(["system", "assistant"],
             context.State.Messages.Select(message => message["role"]!.GetValue<string>()));
         Assert.Equal(Greeting, context.State.Messages.Last()["content"]!.GetValue<string>());
         context.State.Messages.Add(CascadeChatMessage.User("Ready to order."));
         await context.TurnCoordinator.RunTurnAndSpeakAsync(cts.Token);
         JsonArray next = JsonNode.Parse(handler.ChatRequestBodies[1])!["messages"]!.AsArray();
-        Assert.Equal(new[] { "system", "assistant", "user" },
+        Assert.Equal<string>(["system", "assistant", "user"],
             next.Select(message => message!["role"]!.GetValue<string>()));
         Assert.DoesNotContain("Say exactly:", next.ToJsonString());
         Assert.DoesNotContain("Greet exactly:", next.ToJsonString());
@@ -946,9 +946,9 @@ public sealed class CascadeProcessorTests
             JsonNode cancelled = Assert.Single(events, e => (string?)e["stage"] == "cancelled");
             Assert.Equal((string?)created[1]["responseId"], (string?)cancelled["responseId"]);
             Assert.True(events.IndexOf(cancelled) < events.IndexOf(created[2]));
-            Assert.Equal(new[] { (string?)created[0]["responseId"], (string?)created[2]["responseId"] },
+            Assert.Equal<string?>([(string?)created[0]["responseId"], (string?)created[2]["responseId"]],
                 events.Where(e => (string?)e["stage"] == "response.done").Select(e => (string?)e["responseId"]));
-            Assert.Equal(new[] { (string?)created[0]["responseId"], (string?)created[2]["responseId"] },
+            Assert.Equal<string?>([(string?)created[0]["responseId"], (string?)created[2]["responseId"]],
                 events.Where(e => (string?)e["stage"] == "tts.started").Select(e => (string?)e["responseId"]));
         }
     }
