@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Backend.Shared;
 
 namespace Backend.Realtime;
@@ -37,6 +38,10 @@ internal sealed class NudgeScheduler
     private readonly TimeProvider _timeProvider;
     private readonly string? _sessionId;
     private readonly ILogger<NudgeScheduler> _logger;
+
+    // The production lock stays a plainly-named field; SyncRootForTests is only a test-facing
+    // alias of it, so folding the two into one auto-property would rename every production lock.
+    [SuppressMessage("Style", "IDE0032:Use auto property", Justification = "SyncRootForTests is a test-only alias of the production lock.")]
     private readonly Lock _sync = new();
 
     private bool _armed;
@@ -145,7 +150,9 @@ internal sealed class NudgeScheduler
             // send, same as RateLimitRecovery's own delayed retry.
             await _sendNudgeAsync(CancellationToken.None).ConfigureAwait(false);
         }
+#pragma warning disable CA1031 // Fire-and-forget send on a possibly-closing socket: any failure is logged and the nudge is dropped, never rethrown.
         catch (Exception ex)
+#pragma warning restore CA1031
         {
             _logger.NudgeSendFailed(ex, ex.Message, _sessionId);
         }

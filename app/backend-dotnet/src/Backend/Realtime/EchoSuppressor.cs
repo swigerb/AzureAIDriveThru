@@ -307,7 +307,9 @@ internal sealed class EchoSuppressor : IDisposable
         {
             await _flushSendAsync(CancellationToken.None).ConfigureAwait(false);
         }
+#pragma warning disable CA1031 // Mirrors rtmt.py's `_best_effort_send`: nothing downstream depends on the flush.
         catch (Exception)
+#pragma warning restore CA1031
         {
             // Best-effort: nothing downstream depends on the flush succeeding -- the connection
             // may already be closing/closed. Mirrors rtmt.py's `_best_effort_send`.

@@ -20,7 +20,7 @@ namespace Backend.Shared;
 /// types (see each type's own doc comment for why) -- only these settings/parsing/bounds/event-
 /// shape pieces are shared.
 /// </summary>
-internal static class RateLimit
+internal static partial class RateLimit
 {
     public const string RateLimitedEventType = "extension.rate_limited";
 
@@ -29,9 +29,10 @@ internal static class RateLimit
 
     // "Please try again in 1.5s", "try again in 250ms", "retry after 7 seconds" -- byte-for-byte
     // port of rate_limit.py's own _HINT_RE.
-    private static readonly Regex s_hintRegex = new(
+    [GeneratedRegex(
         @"(?:try\s+again|retry)\s+(?:in|after)\s+(\d+(?:\.\d+)?)\s*(ms|msec|millisecond|milliseconds|s|sec|secs|second|seconds)\b",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        RegexOptions.IgnoreCase)]
+    private static partial Regex HintRegex { get; }
 
     /// <summary>Seconds the service asked us to wait, from an error message, else null. Port of
     /// rate_limit.py's `parse_retry_hint`.</summary>
@@ -41,13 +42,14 @@ internal static class RateLimit
         {
             return null;
         }
-        Match match = s_hintRegex.Match(text);
+        Match match = HintRegex.Match(text);
         if (!match.Success)
         {
             return null;
         }
         double value = double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
-        return match.Groups[2].Value.StartsWith("m", StringComparison.OrdinalIgnoreCase) ? value / 1000.0 : value;
+        // Group 2 is never empty on a successful match; the unit is case-insensitive ("MS" == "ms").
+        return match.Groups[2].ValueSpan[0] is 'm' or 'M' ? value / 1000.0 : value;
     }
 
     /// <summary>The service's hint clamped to <paramref name="bounds"/>; <paramref name="defaultValue"/>

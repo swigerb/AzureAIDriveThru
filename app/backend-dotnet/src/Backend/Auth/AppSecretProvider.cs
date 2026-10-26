@@ -22,19 +22,14 @@ internal static class AppSecretProvider
             byte[] secretBytes = Encoding.UTF8.GetBytes(configured);
             if (secretBytes.Length < MinimumRecommendedLength)
             {
-                logger.LogWarning(
-                    "APP_SESSION_SECRET is only {Length} bytes; recommend at least {Minimum} for HMAC-SHA256.",
-                    secretBytes.Length, MinimumRecommendedLength);
+                logger.AppSessionSecretTooShort(secretBytes.Length, MinimumRecommendedLength);
             }
             return secretBytes;
         }
 
         if (runningInProduction)
         {
-            logger.LogWarning(
-                "APP_SESSION_SECRET is not set. Falling back to a random per-process secret, " +
-                "which will invalidate every session token on the next restart or scale-out " +
-                "event. Set APP_SESSION_SECRET in production.");
+            logger.AppSessionSecretMissing();
         }
 
         return RandomNumberGenerator.GetBytes(MinimumRecommendedLength);

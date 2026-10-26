@@ -22,7 +22,7 @@ internal static class Overridable
 /// `None`) -- C# has no natural "distinct from null" sentinel without an explicit wrapper like
 /// this one.
 /// </summary>
-public readonly struct Overridable<T>
+public readonly record struct Overridable<T>
 {
     public bool HasValue { get; }
     public T? Value { get; }

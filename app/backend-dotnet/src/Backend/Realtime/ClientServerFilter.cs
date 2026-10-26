@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
@@ -10,31 +11,29 @@ namespace Backend.Realtime;
 /// allowed to send upstream, rebuilt from scratch (never the browser's original object) so no
 /// forged extra top-level key or sub-key can ride through unfiltered.
 /// </summary>
-internal static class ClientServerFilter
+internal static partial class ClientServerFilter
 {
     /// <summary>Every event type a browser is allowed to send upstream in production.</summary>
-    public static readonly IReadOnlySet<string> ClientAllowedTypes = new HashSet<string>
-    {
+    public static readonly IReadOnlySet<string> ClientAllowedTypes = FrozenSet.Create(
         "session.update",
         "input_audio_buffer.append",
         "input_audio_buffer.clear",
-        "response.cancel",
-    };
+        "response.cancel");
 
     /// <summary>Allowed only when CONFORMANCE_TEST_HOOKS=1 (never in a real deployment) -- many
     /// conformance scenarios use a browser-sent response.create as a same-effect stand-in for a
     /// server-VAD-triggered turn.</summary>
-    public static readonly IReadOnlySet<string> ClientTestOnlyTypes = new HashSet<string> { "response.create" };
+    public static readonly IReadOnlySet<string> ClientTestOnlyTypes = FrozenSet.Create("response.create");
 
     public static readonly IReadOnlyDictionary<string, IReadOnlySet<string>> ClientTopLevelKeys =
         new Dictionary<string, IReadOnlySet<string>>
         {
-            ["session.update"] = new HashSet<string> { "type", "event_id", "session" },
-            ["input_audio_buffer.append"] = new HashSet<string> { "type", "event_id", "audio" },
-            ["input_audio_buffer.clear"] = new HashSet<string> { "type", "event_id" },
-            ["response.cancel"] = new HashSet<string> { "type", "event_id", "response_id" },
-            ["response.create"] = new HashSet<string> { "type", "event_id" },
-        };
+            ["session.update"] = FrozenSet.Create("type", "event_id", "session"),
+            ["input_audio_buffer.append"] = FrozenSet.Create("type", "event_id", "audio"),
+            ["input_audio_buffer.clear"] = FrozenSet.Create("type", "event_id"),
+            ["response.cancel"] = FrozenSet.Create("type", "event_id", "response_id"),
+            ["response.create"] = FrozenSet.Create("type", "event_id"),
+        }.ToFrozenDictionary();
 
     /// <summary>Session keys the browser may legitimately set on session.update -- everything else
     /// GA accepts at the session top level is server-owned and must come only from
@@ -58,8 +57,11 @@ internal static class ClientServerFilter
     // byte-for-byte onto the upstream GA socket) while Python strips/drops it. `\z` anchors to
     // the absolute end of the string with no such exception, matching `fullmatch`'s semantics
     // exactly.
-    private static readonly Regex s_eventIdRegex = new("^[A-Za-z0-9_-]{1,64}\\z", RegexOptions.Compiled);
-    private static readonly Regex s_base64Regex = new("^[A-Za-z0-9+/]*={0,2}\\z", RegexOptions.Compiled);
+    [GeneratedRegex("^[A-Za-z0-9_-]{1,64}\\z")]
+    private static partial Regex EventIdRegex { get; }
+
+    [GeneratedRegex("^[A-Za-z0-9+/]*={0,2}\\z")]
+    private static partial Regex Base64Regex { get; }
 
     /// <summary>Allow-lists and rebuilds a browser→upstream event. Returns null if the whole event
     /// must be dropped. <paramref name="hooksEnabled"/> mirrors Python's live
@@ -86,7 +88,7 @@ internal static class ClientServerFilter
         if (filtered.TryGetPropertyValue("audio", out JsonNode? audioNode))
         {
             bool audioOk = audioNode is JsonValue av && av.TryGetValue<string>(out string? audioStr)
-                && s_base64Regex.IsMatch(audioStr);
+                && Base64Regex.IsMatch(audioStr);
             if (!audioOk)
             {
                 return null;
@@ -96,7 +98,7 @@ internal static class ClientServerFilter
         if (filtered.TryGetPropertyValue("event_id", out JsonNode? eventIdNode))
         {
             bool eventIdOk = eventIdNode is JsonValue ev && ev.TryGetValue<string>(out string? eventIdStr)
-                && s_eventIdRegex.IsMatch(eventIdStr);
+                && EventIdRegex.IsMatch(eventIdStr);
             if (!eventIdOk)
             {
                 filtered.Remove("event_id");
@@ -106,7 +108,7 @@ internal static class ClientServerFilter
         if (filtered.TryGetPropertyValue("response_id", out JsonNode? responseIdNode))
         {
             bool responseIdOk = responseIdNode is JsonValue rv && rv.TryGetValue<string>(out string? responseIdStr)
-                && s_eventIdRegex.IsMatch(responseIdStr);
+                && EventIdRegex.IsMatch(responseIdStr);
             if (!responseIdOk)
             {
                 return null;

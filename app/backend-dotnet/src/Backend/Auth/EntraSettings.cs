@@ -24,7 +24,7 @@ internal sealed class EntraConfigException(string message) : Exception(message);
 /// DOTNET_ENVIRONMENT) instead -- every caller here takes that boolean in, already resolved,
 /// rather than reading RUNNING_IN_PRODUCTION itself.
 /// </summary>
-internal sealed record EntraSettings(
+internal sealed partial record EntraSettings(
     EntraMode Mode,
     string? TenantId,
     string? ClientId,
@@ -42,15 +42,14 @@ internal sealed record EntraSettings(
     private const string DefaultApiScope = "access_as_user";
     private const string DefaultAppRole = "DriveThru.User";
 
-    private static readonly Regex s_guidRegex = new(
-        @"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    [GeneratedRegex(@"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", RegexOptions.IgnoreCase)]
+    private static partial Regex GuidRegex { get; }
 
-    private static readonly Regex s_placeholderWordsRegex = new(
-        @"(your[-_]?|placeholder|changeme|example|todo|xxxx+|\bfixme\b)",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    [GeneratedRegex(@"(your[-_]?|placeholder|changeme|example|todo|xxxx+|\bfixme\b)", RegexOptions.IgnoreCase)]
+    private static partial Regex PlaceholderWordsRegex { get; }
 
-    private static readonly Regex s_angleOrWhitespaceRegex = new(@"[<>]|\s", RegexOptions.Compiled);
+    [GeneratedRegex(@"[<>]|\s")]
+    private static partial Regex AngleOrWhitespaceRegex { get; }
 
     private static readonly HashSet<string> s_loopbackHosts =
         [with(StringComparer.OrdinalIgnoreCase), "127.0.0.1", "::1", "localhost"];
@@ -73,12 +72,12 @@ internal sealed record EntraSettings(
             return true;
         }
 
-        if (s_angleOrWhitespaceRegex.IsMatch(trimmed))
+        if (AngleOrWhitespaceRegex.IsMatch(trimmed))
         {
             return true;
         }
 
-        return s_placeholderWordsRegex.IsMatch(trimmed);
+        return PlaceholderWordsRegex.IsMatch(trimmed);
     }
 
     /// <summary>
@@ -96,7 +95,7 @@ internal sealed record EntraSettings(
             return "ENTRA_TENANT_ID is missing or looks like a placeholder value.";
         }
 
-        if (!s_guidRegex.IsMatch(tenant))
+        if (!GuidRegex.IsMatch(tenant))
         {
             return "ENTRA_TENANT_ID is not a valid GUID.";
         }
@@ -106,7 +105,7 @@ internal sealed record EntraSettings(
             return "ENTRA_CLIENT_ID is missing or looks like a placeholder value.";
         }
 
-        if (!s_guidRegex.IsMatch(client))
+        if (!GuidRegex.IsMatch(client))
         {
             return "ENTRA_CLIENT_ID is not a valid GUID.";
         }

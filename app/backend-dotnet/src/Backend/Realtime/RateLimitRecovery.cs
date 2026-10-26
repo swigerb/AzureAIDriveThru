@@ -376,7 +376,9 @@ public sealed class RateLimitRecovery
             // forwarder, same as EchoSuppressor's own delayed flush send.
             await _sendUpstream(s_responseCreateMessage, CancellationToken.None).ConfigureAwait(false);
         }
+#pragma warning disable CA1031 // Fire-and-forget retry on a possibly-closing socket: any failure is logged and resets the ladder.
         catch (Exception exc)
+#pragma warning restore CA1031
         {
             _logger?.RateLimitRetryNotSent(attempt, exc.Message, _sessionId);
             lock (_sync)
@@ -392,7 +394,9 @@ public sealed class RateLimitRecovery
         {
             await _sendClient(payload, ct).ConfigureAwait(false);
         }
+#pragma warning disable CA1031 // Best-effort client notification: the browser socket may already be gone, so any failure is only logged.
         catch (Exception exc)
+#pragma warning restore CA1031
         {
             // CA1873: payload["type"]?.GetValue<string>() is a JsonNode lookup + method call, so
             // it's only computed once logging at this level is actually enabled.
