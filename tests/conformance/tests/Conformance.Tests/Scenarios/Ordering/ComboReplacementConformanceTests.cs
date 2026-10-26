@@ -39,6 +39,9 @@ internal static class ComboReplacementContract
         Assert.Contains("Nope, that'll be it", prompt);
         Assert.Contains("do not repeat the read-back or call get_order again", prompt);
         Assert.DoesNotContain("After EVERY confirmed item", prompt);
+        Assert.DoesNotContain("ALWAYS state the total in the closing phrase", prompt);
+        Assert.DoesNotContain("- Call get_order and read back items with TOTAL only", prompt);
+        Assert.DoesNotContain("NEVER say 'All set'", prompt);
         JsonElement update = tools.EnumerateArray()
             .Select(t => nestedFunction ? t.GetProperty("function") : t)
             .Single(t => t.GetProperty("name").GetString() == "update_order");

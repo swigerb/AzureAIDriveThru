@@ -113,6 +113,10 @@ public sealed class ComboComponentReplacementTests
             Assert.Contains("Do NOT ask 'Anything else?'", loader.SystemPrompt);
             Assert.Contains("If the guest repeats that they are done and the order has not changed", loader.SystemPrompt);
             Assert.Contains("do not repeat the read-back or call get_order again", loader.SystemPrompt);
+            Assert.DoesNotContain("ALWAYS state the total in the closing phrase", loader.SystemPrompt);
+            Assert.DoesNotContain("- Call get_order and read back items with TOTAL only", loader.SystemPrompt);
+            Assert.DoesNotContain("NEVER say 'All set'", loader.SystemPrompt);
+            Assert.DoesNotContain("Every closing statement MUST", loader.SystemPrompt);
         }
     }
 
@@ -146,5 +150,20 @@ public sealed class ComboComponentReplacementTests
         ToolResult result = await Call(executor, "replace", NewDrink, "standard", OldDrink, quantity);
         Assert.Equal("invalid_replacement", JsonElement.Parse(result.ToText()).GetProperty("reason").GetString());
         Assert.Equal(before, OrderSummaryJson.Serialize(order.Summary));
+    }
+
+    [Fact]
+    public async Task SideReplacementPreservesDrinkAndUsesActualSideUpcharge()
+    {
+        (OrderToolExecutor executor, OrderState order, _) = NewExecutor();
+        await Seed(executor);
+        ToolResult result = await Call(executor, "replace", "Groovy Fries", "large", "Tots");
+        Assert.Equal(ToolResultDirection.ToBoth, result.Destination);
+        OrderItem combo = Assert.Single(order.Items);
+        Assert.Contains("Large Groovy Fries", combo.Display);
+        Assert.DoesNotContain("Tots", combo.Display);
+        Assert.Contains(OldDrink, combo.Display);
+        Assert.Equal(10.89m, combo.Price);
+        Assert.Equal([0.70m, 0m], combo.ComponentUpcharges);
     }
 }

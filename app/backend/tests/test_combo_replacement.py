@@ -99,6 +99,10 @@ def test_finish_contract_overrides_open_order_questions(persona_id):
     assert "Do NOT ask 'Anything else?'" in prompt
     assert "If the guest repeats that they are done and the order has not changed" in prompt
     assert "do not repeat the read-back or call get_order again" in prompt
+    assert "ALWAYS state the total in the closing phrase" not in prompt
+    assert "- Call get_order and read back items with TOTAL only" not in prompt
+    assert "NEVER say 'All set'" not in prompt
+    assert "Every closing statement MUST" not in prompt
 
 
 @pytest.mark.parametrize("persona_id", BUNDLE_PACK_IDS)
@@ -142,6 +146,37 @@ def test_replacement_requires_exactly_one_component(session, quantity):
     result = call(session, "replace", NEW, "standard", quantity=quantity, original_item_name=OLD)
     assert json.loads(result.to_text())["reason"] == "invalid_replacement"
     assert order_state_singleton.get_order_summary_json(session) == before
+
+
+def test_side_replacement_preserves_included_drink_and_charges_only_real_size_delta(session):
+    result = call(session, "replace", "Groovy Fries", "large", original_item_name="Tots")
+    ticket = json.loads(result.to_client_text())
+    combo = ticket["items"][0]
+    assert len(ticket["items"]) == 1
+    assert "Large Groovy Fries" in combo["display"]
+    assert "Tots" not in combo["display"]
+    assert OLD in combo["display"]
+    assert combo["price"] == 10.89
+    assert combo["componentUpcharges"] == [0.70, 0]
+
+
+def test_quantity_two_replacement_changes_one_unit_not_standalone_same_drink(session):
+    call(session, "add", BUNDLE, "standard")
+    call(session, "add", "Tots")
+    call(session, "add", OLD, "standard")
+    call(session, "add", OLD, "standard")
+    before = json.loads(order_state_singleton.get_order_summary_json(session))["items"]
+    assert len(before) == 2
+    assert before[0]["item"] == BUNDLE and before[0]["quantity"] == 2
+    assert before[1]["item"] == OLD and before[1]["quantity"] == 1
+    result = call(session, "replace", "Cherry Slush", "large", original_item_name=OLD)
+    items = json.loads(result.to_client_text())["items"]
+    assert len(items) == 3
+    assert sum(i["quantity"] for i in items) == 3
+    assert any(i["item"] == OLD and i["quantity"] == 1 for i in items)
+    assert any(i["item"] == BUNDLE and OLD in i["display"] and i["price"] == 10.19 for i in items)
+    assert any(i["item"] == BUNDLE and "Cherry Slush" in i["display"] and i["price"] == 10.79 for i in items)
+    assert not any(i["item"] == "Cherry Slush" for i in items)
 
 
 def test_replacement_reprices_down_and_keeps_standalone_same_drink(session):
