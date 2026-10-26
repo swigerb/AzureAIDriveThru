@@ -25,14 +25,22 @@ tools:
       properties:
         action:
           type: "string"
-          description: "Action to perform: 'add', 'remove', or 'modify' (resize an existing item in place, e.g. 'make that a large')."
+          description: "Use add for an extra item, remove to delete, modify to resize the same item, or replace to atomically swap one included meal side/drink. For replace, item_name is the NEW item, original_item_name is the OLD included item, size is the new size, quantity must be 1."
           enum:
             - "add"
             - "remove"
             - "modify"
+            - "replace"
         item_name:
           type: "string"
           description: "Name of the McDonald's menu item to update, e.g., 'Big Mac'."
+        original_item_name:
+          type: "string"
+          description: "Required for replace: exact existing included side/drink name from get_order. Replaces one physical meal slot only; never a standalone line."
+        combo_index:
+          type: "integer"
+          minimum: 0
+          description: "For replace when several meal lines contain the old item: zero-based items array index from get_order, after clarifying which meal the guest means. One of identical units on that line is changed."
         size:
           type: "string"
           description: "Size of the item to update, e.g., 'Large'."
