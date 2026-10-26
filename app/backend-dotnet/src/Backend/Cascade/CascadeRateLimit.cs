@@ -84,9 +84,7 @@ internal static class CascadeRateLimit
                 double? hint = exc.RetryAfterSeconds ?? ParseRetryHint(exc.Message);
                 if (attempt >= settings.MaxRetries)
                 {
-                    logger?.LogWarning(
-                        "Cascade {OpName} rate-limited; retries exhausted after {Attempt} attempt(s) (session={SessionId})",
-                        opName, attempt, sessionId);
+                    logger?.CascadeRateLimitRetriesExhausted(opName, attempt, sessionId);
                     await notifyClient(
                         new JsonObject { ["type"] = RateLimitedEvent, ["attempt"] = attempt, ["final"] = true }, ct)
                         .ConfigureAwait(false);
@@ -104,9 +102,7 @@ internal static class CascadeRateLimit
                     await notifyClient(new JsonObject { ["type"] = RateLimitedEvent, ["attempt"] = attempt }, ct)
                         .ConfigureAwait(false);
                 }
-                logger?.LogInformation(
-                    "Cascade {OpName} rate-limited; retry {Attempt} after {Delay:F2}s (session={SessionId})",
-                    opName, attempt + 1, delay, sessionId);
+                logger?.CascadeRateLimitRetrying(opName, attempt + 1, delay, sessionId);
                 await Task.Delay(TimeSpan.FromSeconds(delay), clock, ct).ConfigureAwait(false);
                 attempt++;
             }

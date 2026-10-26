@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net.WebSockets;
 using System.Text.Json.Nodes;
 using Backend.Models;
@@ -149,6 +150,8 @@ internal sealed class ResumeCoordinator(
     // Issue #15: reads an IOrderTicketSource best-effort, matching HandleToolCallDoneAsync's
     // own post-exception refresh pattern -- a session with no readable order state yet (or an
     // executor that throws on read) just gets "{}" instead of losing the whole announcement.
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Best-effort order read through IOrderTicketSource, whose implementations can fail in any way; the failure is logged and an empty summary is used.")]
     private string SafeOrderSummaryJson(IOrderTicketSource source)
     {
         try

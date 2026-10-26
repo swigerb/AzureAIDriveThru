@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net.WebSockets;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -26,6 +27,8 @@ internal sealed class ToolCallDispatcher(
     ILogger logger,
     CancellationToken ct)
 {
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Tool boundary: any tool or argument-parse failure is logged and still answered with a function_call_output so the upstream response can continue.")]
     public async Task HandleToolCallDoneAsync(JsonObject item)
     {
         string? callId = RealtimeProcessor.GetString(item, "call_id");
@@ -124,6 +127,8 @@ internal sealed class ToolCallDispatcher(
 
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Best-effort ticket read through IOrderTicketSource, whose implementations can fail in any way; the failure is logged and the refresh is skipped.")]
     private async Task RefreshTicketAsync(string previousItemId)
     {
         if (state.ToolExecutor is not IOrderTicketSource ticketSource)

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net.WebSockets;
 using System.Text.Json.Nodes;
 using Backend.Cascade;
@@ -249,6 +250,8 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
         await RelaySessionAsync(context, linkedCts).ConfigureAwait(false);
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Connect boundary: any auth or connect failure is logged and closes the browser socket with 1011 instead of faulting the session.")]
     private async Task<bool> ConnectUpstreamAsync(
         ClientWebSocket upstream, WebSocket browserSocket, string deployment, string sessionId,
         CancellationToken cancellationToken)
@@ -468,6 +471,8 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
         };
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Session relay boundary: an unexpected fault is logged and the finally block still tears the session down.")]
     private async Task RelaySessionAsync(RealtimeSessionContext context, CancellationTokenSource linkedCts)
     {
         RealtimeSessionState state = context.State;
@@ -553,7 +558,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
         FramePump.TryAppendFastPath(payload, echo, _timeProvider);
 
     internal Task ForwardFastPathAudioAsync(FramePump.AppendFastPathResult fastPath, byte[] payload, WebSocket upstream, string sessionId, CancellationToken ct) =>
-        FramePump.ForwardFastPathAudioAsync(fastPath, payload, upstream, sessionId, ct, _logger);
+        FramePump.ForwardFastPathAudioAsync(fastPath, payload, upstream, sessionId, _logger, ct);
 
     internal static Task ForwardClientFrameAsync(
         JsonObject forwarded, string? sentType, EchoSuppressor echo, RateLimitRecovery rateLimit, WebSocket upstream, CancellationToken ct) =>
@@ -571,6 +576,8 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
     /// so tests can exercise the exact drop/apply behaviour without a live websocket relay.
     /// <paramref name="browserSocket"/> is optional (tests that don't care about the ticket push
     /// pass none) -- production call sites always pass the live connection's own socket.</summary>
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Best-effort ticket push: the tool executor's order-summary read can throw anything, and a failure only skips the push.")]
     internal async Task<bool> TryHandleSessionOverrideExtensionMessageAsync(
         string msgType, JsonObject message, string effectiveSessionId, WebSocket? browserSocket = null, CancellationToken ct = default)
     {
@@ -648,7 +655,7 @@ internal sealed class RealtimeProcessor : IPipelineProcessor
         return false;
     }
 
-    private static IReadOnlyList<JsonObject> BuildToolSchemas(PromptLoader? promptLoader)
+    private static List<JsonObject> BuildToolSchemas(PromptLoader? promptLoader)
     {
         if (promptLoader is null)
         {

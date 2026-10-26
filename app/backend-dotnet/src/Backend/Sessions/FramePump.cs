@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Diagnostics.CodeAnalysis;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -14,7 +16,7 @@ namespace Backend.Sessions;
 /// Pure move-and-delegate: every method here is copied verbatim from
 /// <see cref="RealtimeProcessor"/> (only the receiver changed, from an instance field to an
 /// explicit parameter), so templates, levels, EventIds, lock scopes, <c>ConfigureAwait</c> and
-/// cancellation-token flow are all unchanged. See <see cref="FramePumpLog"/> for the three log
+/// cancellation-token flow are all unchanged. See <c>FramePump.Log.cs</c> for the three log
 /// methods that moved here with their call sites, keeping their original EventIds (1038-1040)
 /// from <see cref="RealtimeProcessor"/>'s own reserved 1000-1999 range -- they are grandfathered,
 /// not renumbered, because the conformance suite matches on log text/EventId and moving a log
@@ -49,6 +51,8 @@ internal static class FramePump
     /// rest of <see cref="s_supersededCloseTimeout"/>.</summary>
     private static readonly TimeSpan s_supersededSettlePollInterval = TimeSpan.FromMilliseconds(10);
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Relay-loop drain boundary: any fault that escaped a loop's own per-frame handling must be logged, never rethrown into session teardown.")]
     internal static async Task SwallowAsync(Task task, ILogger logger)
     {
         try
@@ -72,6 +76,8 @@ internal static class FramePump
         }
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Best-effort close: the peer or transport may already be gone, and a failed close must never fault teardown.")]
     internal static async Task CloseIfOpenAsync(WebSocket socket, WebSocketCloseStatus status, string? description)
     {
         if (socket.State is not WebSocketState.Open and not WebSocketState.CloseReceived)
@@ -101,6 +107,8 @@ internal static class FramePump
     /// such a transport. Callers that cannot afford to be blocked by a stuck PEER (i.e. anywhere
     /// this runs inline in some OTHER connection's own call stack, like the supersede path) must
     /// pass a bounded token rather than <see cref="CancellationToken.None"/>.</summary>
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Best-effort close of a superseded or dropped socket: a failed or cancelled close frame is acceptable and must not fault the caller.")]
     internal static async Task CloseOutputIfOpenAsync(
         WebSocket socket, WebSocketCloseStatus status, string? description, CancellationToken cancellationToken)
     {
@@ -151,6 +159,8 @@ internal static class FramePump
     /// independent of whether the close itself completed, timed out, or threw -- a stale
     /// connection's relay loops must stop either way, this just makes sure that stop can never
     /// itself be the thing that drops the courtesy close frame.</summary>
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Fire-and-forget background close: any fault is logged so the finally block always cancels the stale connection.")]
     internal static async Task CloseSupersededStaleConnectionAsync(
         WebSocket staleWs,
         CancellationTokenSource? staleCts,
@@ -216,8 +226,20 @@ internal static class FramePump
         {
             return;
         }
-        byte[] bytes = Encoding.UTF8.GetBytes(payload);
-        await socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, ct).ConfigureAwait(false);
+        // Hot path (every forwarded JSON event): encode into a pooled buffer instead of allocating
+        // a fresh byte[] per frame. The socket is done with the buffer once SendAsync completes.
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(Encoding.UTF8.GetMaxByteCount(payload.Length));
+        try
+        {
+            int byteCount = Encoding.UTF8.GetBytes(payload, buffer);
+            await socket.SendAsync(
+                new ArraySegment<byte>(buffer, 0, byteCount), WebSocketMessageType.Text, endOfMessage: true, ct)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
     }
 
     /// <summary>Issue #13 Wave 2 audio-append fast path: forwards a frame's ORIGINAL bytes
@@ -266,7 +288,7 @@ internal static class FramePump
     /// Python's own fast-path forward (errors are logged and swallowed, same as the slow path,
     /// since a single dropped audio frame must never tear down the whole session).</summary>
     internal static async Task ForwardFastPathAudioAsync(
-        AppendFastPathResult fastPath, byte[] payload, WebSocket upstream, string sessionId, CancellationToken ct, ILogger logger)
+        AppendFastPathResult fastPath, byte[] payload, WebSocket upstream, string sessionId, ILogger logger, CancellationToken ct)
     {
         if (fastPath.Suppressed)
         {

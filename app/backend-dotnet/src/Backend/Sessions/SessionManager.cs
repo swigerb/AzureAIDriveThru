@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Net.WebSockets;
 using System.Security.Cryptography;
@@ -89,6 +90,8 @@ internal sealed class SessionManager
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<SessionManager> _logger;
     private readonly ILogger<ContextMonitor> _contextMonitorLogger;
+    [SuppressMessage("Style", "IDE0032:Use auto property",
+        Justification = "_sync is the registry lock every member takes; SyncRootForTests is only a test-facing alias, so the field keeps its production name.")]
     private readonly Lock _sync = new();
     private readonly Dictionary<string, SessionRecord> _sessions = [];
     private readonly Dictionary<string, string> _resumeIndex = []; // digest -> sessionId
@@ -691,6 +694,8 @@ internal sealed class SessionManager
     /// 1009 path) sending the close frame and returning immediately -- without also waiting here for
     /// the peer's close handshake reply -- avoids contending with that pending receive.
     /// </summary>
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Best-effort idle close from the background sweep: the peer may already have torn the socket down, and one bad socket must not stop the sweep.")]
     public async Task CloseIdleSessionsAsync(CancellationToken ct)
     {
         List<(WebSocket Socket, string SessionId)> idle;

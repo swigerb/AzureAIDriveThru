@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -91,6 +92,8 @@ internal sealed class FoundryChatClient(HttpClient httpClient, string endpoint, 
         return message;
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Best-effort error-body read: any failure falls back to a status-code-only message.")]
     private static async Task<string> ReadBodySafelyAsync(HttpResponseMessage response, CancellationToken ct)
     {
         try

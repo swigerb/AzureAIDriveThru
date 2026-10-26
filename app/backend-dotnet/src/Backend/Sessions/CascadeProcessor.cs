@@ -1,5 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net.WebSockets;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Backend.Cascade;
@@ -243,6 +243,8 @@ internal sealed class CascadeProcessor : IPipelineProcessor
         return context;
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Per-message isolation: a failure replaying the leftover first frame is logged and must not end the session.")]
     private async Task StartSessionAsync(CascadeSessionContext context, CascadeClientMessageHandler handler)
     {
         JsonObject? leftoverFirstFrame = null;
@@ -274,6 +276,8 @@ internal sealed class CascadeProcessor : IPipelineProcessor
         }
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Per-message isolation: one failing client message is logged and the receive loop keeps serving the session.")]
     private async Task ReceiveSessionAsync(CascadeSessionContext context, CascadeClientMessageHandler handler)
     {
         try
@@ -380,12 +384,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
     internal static async Task SendTextAsync(WebSocket socket, string payload, CancellationToken turnCt, CancellationToken socketCt)
     {
         turnCt.ThrowIfCancellationRequested();
-        if (socket.State != WebSocketState.Open)
-        {
-            return;
-        }
-        byte[] bytes = Encoding.UTF8.GetBytes(payload);
-        await socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, socketCt).ConfigureAwait(false);
+        await FramePump.SendTextAsync(socket, payload, socketCt).ConfigureAwait(false);
     }
 
     /// <summary>Duplicated from <see cref="RealtimeProcessor"/>'s own private helper of the same
@@ -397,7 +396,7 @@ internal sealed class CascadeProcessor : IPipelineProcessor
     /// <summary>Duplicated from <see cref="RealtimeProcessor"/>'s own private helper of the same
     /// name (that one stays private to its class) -- both pipelines resolve a connection's own
     /// tool schemas from its bound persona's <see cref="PromptLoader"/> the same way.</summary>
-    private static IReadOnlyList<JsonObject> BuildToolSchemas(PromptLoader? promptLoader)
+    private static List<JsonObject> BuildToolSchemas(PromptLoader? promptLoader)
     {
         if (promptLoader is null)
         {
