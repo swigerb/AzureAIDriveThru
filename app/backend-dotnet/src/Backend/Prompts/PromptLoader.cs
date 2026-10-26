@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Globalization;
 using System.Text.RegularExpressions;
 using YamlDotNet.Core;
@@ -21,7 +22,7 @@ internal sealed class PromptLoadException(string message) : Exception(message);
 /// full Jinja2-equivalent engine, since every real persona pack's templates (verified against
 /// the default pack) only ever use plain variable interpolation, never control flow.
 /// </summary>
-internal sealed class PromptLoader
+internal sealed partial class PromptLoader
 {
     // Plain (unquoted) scalars are typed per YAML's core schema -- `false` -> bool, `3` -> int --
     // exactly as PyYAML's safe_load does for the Python backend. Without this, tool_schemas.yaml's
@@ -92,7 +93,8 @@ internal sealed class PromptLoader
     // conditionals, filters, or loops -- so this single-pass token substitution is a byte-for-byte
     // behavioral match for Python's `_jinja_env.from_string(template_str).render(**kwargs)` for
     // every template that actually ships, without pulling in a full template-engine dependency.
-    private static readonly Regex s_templateToken = new(@"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}", RegexOptions.Compiled);
+    [GeneratedRegex(@"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")]
+    private static partial Regex TemplateTokenRegex();
 
     /// <summary>Renders error_messages.yaml's <paramref name="key"/> template with
     /// <paramref name="variables"/> substituted in for every <c>{{name}}</c> token. Mirrors
@@ -117,15 +119,15 @@ internal sealed class PromptLoader
     /// throwing.</summary>
     public static string RenderTemplate(string template, IReadOnlyDictionary<string, object?>? variables = null)
     {
-        variables ??= new Dictionary<string, object?>();
-        bool missing = s_templateToken.Matches(template)
+        variables ??= FrozenDictionary<string, object?>.Empty;
+        bool missing = TemplateTokenRegex().Matches(template)
             .Select(m => m.Groups[1].Value)
             .Any(name => !variables.ContainsKey(name));
         if (missing)
         {
             return template;
         }
-        return s_templateToken.Replace(template, m =>
+        return TemplateTokenRegex().Replace(template, m =>
         {
             object? value = variables[m.Groups[1].Value];
             return value switch
@@ -257,7 +259,7 @@ internal sealed class PromptLoader
     private static int ParsePriority(object? value) => value switch
     {
         byte or sbyte or short or ushort or int or uint or long => Convert.ToInt32(value, CultureInfo.InvariantCulture),
-        string s when int.TryParse(s, out int parsed) => parsed,
+        string s when int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) => parsed,
         _ => 999,
     };
 
