@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json.Nodes;
 using Backend.Cascade;
 using Backend.Realtime;
@@ -11,7 +12,7 @@ public sealed class CascadeDiagnosticCaptureTests
 {
     private const string Oid = "11111111-1111-1111-1111-111111111111";
     private const string Marker = "22222222222222222222222222222222";
-    private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-10-22T22:30:00Z");
+    private static readonly DateTimeOffset s_now = DateTimeOffset.Parse("2026-10-22T22:30:00Z", CultureInfo.InvariantCulture);
 
     private static CascadeDiagnosticGate Gate(FakeTimeProvider clock, string? key = null, string? value = null)
     {
@@ -20,10 +21,13 @@ public sealed class CascadeDiagnosticCaptureTests
             ["CascadeDiagnostics:Enabled"] = "true",
             ["CascadeDiagnostics:OperatorObjectId"] = Oid,
             ["CascadeDiagnostics:RunMarker"] = Marker,
-            ["CascadeDiagnostics:ExpiresUtc"] = Now.AddMinutes(10).ToString("O"),
+            ["CascadeDiagnostics:ExpiresUtc"] = s_now.AddMinutes(10).ToString("O"),
         };
         if (key is not null)
+        {
             settings["CascadeDiagnostics:" + key] = value;
+        }
+
         return new(new ConfigurationBuilder().AddInMemoryCollection(settings).Build(), clock);
     }
 
@@ -46,7 +50,7 @@ public sealed class CascadeDiagnosticCaptureTests
     public void Configuration_fails_closed(string key, string? value)
     {
         var logger = new RecordingLogger();
-        Assert.Null(Claim(Gate(new(Now), key, value), logger));
+        Assert.Null(Claim(Gate(new(s_now), key, value), logger));
         Assert.Equal(value is null || key == "Enabled" && value == "false" ? 0 : 1, logger.Warnings.Count);
     }
 
@@ -54,7 +58,7 @@ public sealed class CascadeDiagnosticCaptureTests
     public void Identity_marker_and_pipeline_must_match_before_single_claim()
     {
         var logger = new RecordingLogger();
-        var gate = Gate(new(Now));
+        CascadeDiagnosticGate gate = Gate(new(s_now));
         Assert.Null(Claim(gate, logger, oid: null));
         Assert.Null(Claim(gate, logger, oid: "33333333-3333-3333-3333-333333333333"));
         Assert.Null(Claim(gate, logger, marker: "wrong"));
@@ -69,13 +73,15 @@ public sealed class CascadeDiagnosticCaptureTests
     [Fact]
     public void Concurrent_claims_cannot_capture_two_sessions()
     {
-        var gate = Gate(new(Now));
+        CascadeDiagnosticGate gate = Gate(new(s_now));
         var claims = new System.Collections.Concurrent.ConcurrentBag<CascadeDiagnosticCapture>();
         Parallel.For(0, 20, _ =>
         {
-            var capture = Claim(gate, new());
+            CascadeDiagnosticCapture? capture = Claim(gate, new());
             if (capture is not null)
+            {
                 claims.Add(capture);
+            }
         });
         Assert.Single(claims);
     }
@@ -83,22 +89,22 @@ public sealed class CascadeDiagnosticCaptureTests
     [Fact]
     public async Task Actual_chat_client_records_choice_finish_reason_without_changing_wire_request()
     {
-        const string response = """{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"(Note: The assistant mistakenly sent two messages; ignore the duplicate.)"}}]}""";
-        var handler = new QueuedFoundryHttpHandler()
-            .Enqueue(System.Net.HttpStatusCode.OK, response)
-            .Enqueue(System.Net.HttpStatusCode.OK, response);
+        const string Response = """{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"(Note: The assistant mistakenly sent two messages; ignore the duplicate.)"}}]}""";
+        QueuedFoundryHttpHandler handler = new QueuedFoundryHttpHandler()
+            .Enqueue(System.Net.HttpStatusCode.OK, Response)
+            .Enqueue(System.Net.HttpStatusCode.OK, Response);
         var client = new FoundryChatClient(new HttpClient(handler), "https://fake.example",
             new StaticBearerTokenProvider("NEVER-COPY-AUTH"));
         var logger = new RecordingLogger();
-        var capture = Claim(Gate(new(Now)), logger)!;
-        var messages = new[] { CascadeChatMessage.User("NEVER-COPY-GUEST") };
+        CascadeDiagnosticCapture? capture = Claim(Gate(new(s_now)), logger);
+        JsonObject[] messages = [CascadeChatMessage.User("NEVER-COPY-GUEST")];
 
-        var baseline = await client.CompleteAsync(messages, "fake", [], CancellationToken.None);
-        var diagnosed = await client.CompleteAsync(messages, "fake", [], CancellationToken.None, capture);
+        JsonObject baseline = await client.CompleteAsync(messages, "fake", [], TestContext.Current.CancellationToken);
+        JsonObject diagnosed = await client.CompleteAsync(messages, "fake", [], TestContext.Current.CancellationToken, capture);
 
         Assert.Equal(handler.RequestBodies[0], handler.RequestBodies[1]);
         Assert.Equal(baseline.ToJsonString(), diagnosed.ToJsonString());
-        var output = string.Join("\n", logger.Lines);
+        string output = string.Join("\n", logger.Lines);
         Assert.Contains("ignore the duplicate", output);
         Assert.Contains("\"finishReason\":\"stop\"", output);
         Assert.DoesNotContain("NEVER-COPY", output);
@@ -109,27 +115,27 @@ public sealed class CascadeDiagnosticCaptureTests
     [InlineData(false)]
     public async Task Sanitization_timeout_disables_capture_without_changing_actual_chat_wire_or_response(bool duringRequest)
     {
-        const string response = """{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"What drink would you like?"}}]}""";
-        var handler = new QueuedFoundryHttpHandler()
-            .Enqueue(System.Net.HttpStatusCode.OK, response)
-            .Enqueue(System.Net.HttpStatusCode.OK, response);
+        const string Response = """{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"What drink would you like?"}}]}""";
+        QueuedFoundryHttpHandler handler = new QueuedFoundryHttpHandler()
+            .Enqueue(System.Net.HttpStatusCode.OK, Response)
+            .Enqueue(System.Net.HttpStatusCode.OK, Response);
         var client = new FoundryChatClient(new HttpClient(handler), "https://fake.example",
             new StaticBearerTokenProvider("NEVER-COPY-AUTH"));
         var logger = new RecordingLogger();
-        var attempts = 0;
-        var capture = new CascadeDiagnosticCapture("synthetic", Now.AddMinutes(10), new FakeTimeProvider(Now),
+        int attempts = 0;
+        var capture = new CascadeDiagnosticCapture("synthetic", s_now.AddMinutes(10), new FakeTimeProvider(s_now),
             logger, text =>
             {
                 attempts++;
                 throw new System.Text.RegularExpressions.RegexMatchTimeoutException(
                     "NEVER-COPY-INPUT", "NEVER-COPY-PATTERN", TimeSpan.FromMilliseconds(100));
             });
-        var messages = new[]
-        {
+        JsonObject[] messages =
+        [
             duringRequest ? CascadeChatMessage.Assistant("NEVER-COPY-INPUT") : CascadeChatMessage.User("NEVER-COPY-GUEST"),
-        };
-        var baseline = await client.CompleteAsync(messages, "fake", [], CancellationToken.None);
-        var actual = await client.CompleteAsync(messages, "fake", [], CancellationToken.None, capture);
+        ];
+        JsonObject baseline = await client.CompleteAsync(messages, "fake", [], TestContext.Current.CancellationToken);
+        JsonObject actual = await client.CompleteAsync(messages, "fake", [], TestContext.Current.CancellationToken, capture);
         capture.Emission("tts.started");
         capture.Request(messages);
         capture.Choice(actual, "stop");
@@ -148,14 +154,16 @@ public sealed class CascadeDiagnosticCaptureTests
     public void Captures_boundary_without_changing_messages_or_copying_private_inputs()
     {
         var logger = new RecordingLogger();
-        var capture = Claim(Gate(new(Now)), logger)!;
+        CascadeDiagnosticCapture capture = Claim(Gate(new(s_now)), logger)!;
         logger.Lines.Clear();
         capture.ResponseId = "response-one";
         var call = new JsonObject
         {
-            ["id"] = "call-one", ["function"] = new JsonObject
+            ["id"] = "call-one",
+            ["function"] = new JsonObject
             {
-                ["name"] = "update_order", ["arguments"] = """{"code":"NEVER-COPY-ARGUMENT"}""",
+                ["name"] = "update_order",
+                ["arguments"] = """{"code":"NEVER-COPY-ARGUMENT"}""",
             },
         };
         var messages = new List<JsonObject>
@@ -165,23 +173,23 @@ public sealed class CascadeDiagnosticCaptureTests
             new() { ["role"] = "assistant", ["content"] = "Adding your combo.", ["tool_calls"] = new JsonArray(call) },
             CascadeChatMessage.Tool("NEVER-COPY-TOOL-CODE", "call-one"),
         };
-        var original = new JsonArray(messages.Select(m => (JsonNode)m.DeepClone()).ToArray()).ToJsonString();
+        string original = new JsonArray(messages.Select(m => m.DeepClone()).ToArray()).ToJsonString();
         capture.Request(messages);
-        var choice = CascadeChatMessage.Assistant("(Note: The assistant mistakenly sent two messages; ignore the duplicate.)");
+        JsonObject choice = CascadeChatMessage.Assistant("(Note: The assistant mistakenly sent two messages; ignore the duplicate.)");
         capture.Choice(choice, "stop");
         capture.Emission("tts.started");
         capture.Emission("response.done");
-        var output = string.Join("\n", logger.Lines);
+        string output = string.Join("\n", logger.Lines);
         Assert.DoesNotContain("NEVER-COPY", output);
         Assert.DoesNotContain("\"arguments\"", output);
         Assert.Contains("ignore the duplicate", output);
         Assert.Contains("response-one", output);
         Assert.Contains("update_order", output);
         Assert.Contains("stop", output);
-        Assert.Equal(original, new JsonArray(messages.Select(m => (JsonNode)m.DeepClone()).ToArray()).ToJsonString());
-        var request = JsonNode.Parse(logger.Lines[0])!;
-        var snapshot = request["messages"]!.AsArray();
-        Assert.Equal(new[] { "system", "user", "assistant", "tool" },
+        Assert.Equal(original, new JsonArray(messages.Select(m => m.DeepClone()).ToArray()).ToJsonString());
+        JsonNode request = JsonNode.Parse(logger.Lines[0])!;
+        JsonArray snapshot = request["messages"]!.AsArray();
+        Assert.Equal<string>(["system", "user", "assistant", "tool"],
             snapshot.Select(m => m!["role"]!.GetValue<string>()));
         Assert.Equal(snapshot[2]!["toolCalls"]![0]!["idHash"]!.GetValue<string>(),
             snapshot[3]!["toolCallIdHash"]!.GetValue<string>());
@@ -205,16 +213,19 @@ public sealed class CascadeDiagnosticCaptureTests
     public void Expiry_event_and_payload_limits_are_enforced()
     {
         var logger = new RecordingLogger();
-        var clock = new FakeTimeProvider(Now);
-        var capture = Claim(Gate(clock), logger)!;
+        var clock = new FakeTimeProvider(s_now);
+        CascadeDiagnosticCapture capture = Claim(Gate(clock), logger)!;
         logger.Lines.Clear();
         capture.Choice(CascadeChatMessage.Assistant(new string('x', 5000)), "stop");
         Assert.True(logger.Lines[0].Length < 1500);
-        for (var i = 0; i < 200; i++)
+        for (int i = 0; i < 200; i++)
+        {
             capture.Emission("tts.started");
+        }
+
         Assert.Equal(159, logger.Lines.Count);
         var expiredLogger = new RecordingLogger();
-        var expiring = Claim(Gate(clock), expiredLogger)!;
+        CascadeDiagnosticCapture expiring = Claim(Gate(clock), expiredLogger)!;
         expiredLogger.Lines.Clear();
         clock.Advance(TimeSpan.FromMinutes(10));
         expiring.Emission("response.done");

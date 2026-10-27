@@ -11,7 +11,7 @@ HTTP and WebSocket; never imports backend source.
 
 ## Local validation
 
-Run from the repository root with the .NET 11 RC2 SDK in `global.json`, Node.js 24 LTS,
+Run from the repository root with the .NET 11 RC3 SDK in `global.json`, Node.js 24 LTS,
 and a root `.venv` containing the backend dependencies. The Python launcher does not use
 `app/backend/.venv` or a globally installed interpreter. Bootstrap with
 `pwsh ./scripts/load_python_env.ps1` (Windows) or `sh ./scripts/load_python_env.sh` (Unix).
@@ -1327,6 +1327,11 @@ This is deliberately **not** applied to the Windows-only Job Object tests elsewh
 (`WindowsJobObjectTests.cs`) — those are plain `[Fact]`s that call `Assert.Skip(...)` at runtime
 when `!OperatingSystem.IsWindows()`, a platform fact about the machine the suite itself is running
 on, not about which backend is under test, and are unrelated to `BackendUnderTest`.
+
+The same attribute is also used for rows that assert something the Python backend simply does not
+do, as opposed to a bug it has: the C# security headers (`Scenarios/Http/SecurityHeadersConformanceTests.cs`
+and the real-browser `Scenarios/Browser/SecurityHeadersBrowserTests.cs`). They are not part of the
+count above. See "Security headers and Content-Security-Policy" in `docs/dotnet_mapping.md`.
 
 ### Tool-error unhandled-error-count contract (PR #38 review item 2)
 

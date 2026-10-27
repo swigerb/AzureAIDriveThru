@@ -7,19 +7,16 @@ using Backend.Personas;
 using Backend.Prompts;
 using Backend.Realtime;
 using Backend.Sessions;
-using Backend.Shared;
 using Backend.Tests.Realtime;
+using Backend.Tests.TestSupport;
 using Backend.Tools;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Backend.Tests.Sessions;
 
 public sealed class RealtimeServerRelayOrderCompletionTests
 {
-    private const string ClosingText =
-        "I have one Double Cheeseburger. That brings your new total to $7.12. " +
-        "Thank you! Your carhop will have that right out!";
-
     [Fact]
     public async Task Tool_order_result_requests_and_relays_spoken_closing_response()
     {
@@ -36,26 +33,75 @@ public sealed class RealtimeServerRelayOrderCompletionTests
             Close(),
         ]);
         var browser = new FakeWebSocket([]);
-        var state = NewState();
+        RealtimeProcessor.RealtimeSessionState state = NewState();
         using var linkedCts = new CancellationTokenSource();
-        var context = NewContext(browser, upstream, state, linkedCts);
+        RealtimeSessionContext context = NewContext(browser, upstream, state, linkedCts);
 
         await new RealtimeServerRelay(context).RunAsync();
 
-        var upstreamFrames = TextFrames(upstream).Select(Parse).ToArray();
+        JsonObject[] upstreamFrames = [.. TextFrames(upstream).Select(Parse)];
         Assert.Equal("conversation.item.create", (string?)upstreamFrames[0]["type"]);
         Assert.Equal("function_call_output", (string?)upstreamFrames[0]["item"]!["type"]);
         Assert.Equal("response.create", (string?)upstreamFrames[1]["type"]);
 
-        var browserFrames = TextFrames(browser).Select(Parse).ToArray();
+        JsonObject[] browserFrames = [.. TextFrames(browser).Select(Parse)];
         Assert.Contains(browserFrames, frame =>
             (string?)frame["type"] == "response.audio_transcript.delta"
             && ((string?)frame["delta"])!.Contains("Double Cheeseburger", StringComparison.Ordinal));
         Assert.Contains(browserFrames, frame =>
             (string?)frame["type"] == "response.audio.delta" && (string?)frame["delta"] == "AA==");
-        var finalResponse = browserFrames.Last(frame => (string?)frame["type"] == "response.done");
-        var finalTranscript = (string?)finalResponse["response"]!["output"]![0]!["content"]![0]!["transcript"];
+        JsonObject finalResponse = browserFrames.Last(frame => (string?)frame["type"] == "response.done");
+        string? finalTranscript = (string?)finalResponse["response"]!["output"]![0]!["content"]![0]!["transcript"];
         Assert.Contains("Your carhop will have that right out!", finalTranscript, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Model_chosen_tool_name_and_call_id_are_neutralised_in_the_tool_call_logs()
+    {
+        var upstream = new FakeWebSocket(
+        [
+            Text("""{"type":"response.output_item.added","item":{"type":"function_call","call_id":"call-1\r\nforged","name":"evil\r\ntool"}}"""),
+            Text("""{"type":"response.done","response":{"id":"response-tool","status":"completed","output":[{"type":"function_call","call_id":"call-1\r\nforged","name":"evil\r\ntool","arguments":"{}"}]}}"""),
+            Close(),
+        ]);
+        var browser = new FakeWebSocket([]);
+        RealtimeProcessor.RealtimeSessionState state = NewState();
+        using var linkedCts = new CancellationTokenSource();
+        var logger = new CapturingLogger();
+        RealtimeSessionContext context = NewContext(browser, upstream, state, linkedCts, logger);
+
+        await new RealtimeServerRelay(context).RunAsync();
+
+        Assert.Equal(
+            "Tool call received: name=evil__tool, call_id=call-1__forged (session=session-order-completion)",
+            Assert.Single(logger.Entries, entry => entry.EventId.Id == 1032).Message);
+        Assert.Equal(
+            "Response contained 1 tool call(s): evil__tool (session=session-order-completion)",
+            Assert.Single(logger.Entries, entry => entry.EventId.Id == 1028).Message);
+    }
+
+    [Fact]
+    public async Task Client_chosen_voice_is_neutralised_in_the_set_voice_drop_warning()
+    {
+        var browser = new FakeWebSocket(
+        [
+            Text("""{"type":"extension.set_voice","voice":"evil\r\nWARN forged"}"""),
+            Close(),
+        ]);
+        var upstream = new FakeWebSocket([]);
+        RealtimeProcessor.RealtimeSessionState state = NewState();
+        using var linkedCts = new CancellationTokenSource();
+        var logger = new CapturingLogger();
+        RealtimeSessionContext context = NewContext(browser, upstream, state, linkedCts, logger);
+
+        await new RealtimeClientRelay(context).RunAsync();
+
+        CapturingLogger.CapturedEntry entry = Assert.Single(logger.Entries, e => e.EventId.Id == 1004);
+        Assert.Equal(LogLevel.Warning, entry.Level);
+        Assert.Equal(
+            "Dropped extension.set_voice with an unknown/invalid voice evil__WARN forged (session=session-order-completion)",
+            entry.Message);
+        Assert.DoesNotContain("\n", entry.Message, StringComparison.Ordinal);
     }
 
     private static (byte[] Data, bool EndOfMessage, WebSocketMessageType MessageType) Text(string json) =>
@@ -67,10 +113,9 @@ public sealed class RealtimeServerRelayOrderCompletionTests
     private static JsonObject Parse(string frame) => JsonNode.Parse(frame)!.AsObject();
 
     private static List<string> TextFrames(FakeWebSocket socket) =>
-        socket.SentMessages
+        [.. socket.SentMessages
             .Where(message => message.MessageType == WebSocketMessageType.Text)
-            .Select(message => Encoding.UTF8.GetString(message.Data))
-            .ToList();
+            .Select(message => Encoding.UTF8.GetString(message.Data))];
 
     private static RealtimeProcessor.RealtimeSessionState NewState()
     {
@@ -97,10 +142,11 @@ public sealed class RealtimeServerRelayOrderCompletionTests
         FakeWebSocket browser,
         FakeWebSocket upstream,
         RealtimeProcessor.RealtimeSessionState state,
-        CancellationTokenSource linkedCts)
+        CancellationTokenSource linkedCts,
+        ILogger? logger = null)
     {
-        var ct = CancellationToken.None;
-        var persona = PersonaCatalog.Load().Default;
+        CancellationToken ct = CancellationToken.None;
+        Persona persona = PersonaCatalog.Load().Default;
         var resolvedModel = new ResolvedModel("gpt-realtime-2.1", "realtime", "gpt-realtime-2.1", false);
         var sessionConfig = new RealtimeSessionConfig();
         var processor = new RealtimeProcessor(
@@ -126,7 +172,7 @@ public sealed class RealtimeServerRelayOrderCompletionTests
             NullLogger.Instance, ct);
         var resumeCoordinator = new ResumeCoordinator(
             browser, upstream, persona, resolvedModel, null, state.SessionId, linkedCts, state, null,
-            _ => new JsonObject(), NullLogger.Instance, ct);
+            _ => [], NullLogger.Instance, ct);
         var toolCallDispatcher = new ToolCallDispatcher(
             upstream, browser, state, null, state.SessionId, NullLogger.Instance, ct);
 
@@ -150,7 +196,7 @@ public sealed class RealtimeServerRelayOrderCompletionTests
             ToolCallDispatcher = toolCallDispatcher,
             ResumeCoordinator = resumeCoordinator,
             AllowedVoices = ClientServerFilter.DefaultAllowedVoices,
-            Logger = NullLogger.Instance,
+            Logger = logger ?? NullLogger.Instance,
             TimeProvider = TimeProvider.System,
             CancellationToken = ct,
         };

@@ -12,8 +12,8 @@ public sealed class HealthEndpointTests(ConformanceFixture fixture)
     [Fact]
     public Task Health_endpoint_returns_200() => fixture.RunAsync(async () =>
     {
-        using var http = ConformanceHttpClient.Create();
-        using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/health"), TestContext.Current.CancellationToken);
+        using HttpClient http = ConformanceHttpClient.Create();
+        using HttpResponseMessage response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/health"), TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var document = JsonDocument.Parse(

@@ -78,7 +78,7 @@ namespace Conformance.Tests;
 [Collection(ConformanceCollection.Name)]
 public sealed class EchoSuppressionBargeInTests(ConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
     private const string MicWhileGreetingStuckSuppressed = "bWljLWR1cmluZy1ncmVldGluZw==";
     private const string MicAfterIsolatedBargeIn = "bWljLWFmdGVyLWlzb2xhdGVkLWJhcmdlLWlu";
     private const string MicDuringAiSpeech = "bWljLWR1cmluZy1haS1zcGVlY2g=";
@@ -88,15 +88,15 @@ public sealed class EchoSuppressionBargeInTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Mic_audio_is_dropped_while_ai_speaks_and_resumes_after_the_browsers_own_response_cancel() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        bool noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(s_frameTimeout, ct);
         Assert.True(noneOpen, $"Expected no open upstream connections at test start, but " +
             $"{fixture.Realtime.OpenConnectionCount} are still open — a previous test leaked a connection.");
 
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
         // Phase A's isolation depends on the greeting's response.done never arriving (from
         // either the normal audio path or, post-#48, echo.on_response_done()'s own fallback)
@@ -118,8 +118,8 @@ public sealed class EchoSuppressionBargeInTests(ConformanceFixture fixture)
         // greeting's response.create is sent (rtmt.py's send_greeting_once), so waiting for that
         // response.create to reach the fake upstream is an equally valid barrier: suppression is
         // guaranteed armed by the time it arrives.
-        var greetingResponseCreate = await connection.ReceivedFrames.WaitForAsync(
-            f => f.Type == "response.create", FrameTimeout, ct);
+        RecordedFrame? greetingResponseCreate = await connection.ReceivedFrames.WaitForAsync(
+            f => f.Type == "response.create", s_frameTimeout, ct);
         Assert.True(greetingResponseCreate is not null, "Expected the greeting's own response.create to reach the fake upstream.");
 
         // ── Phase A: isolate echo.on_barge_in() itself (M4), with no competing completion event ──
@@ -138,8 +138,8 @@ public sealed class EchoSuppressionBargeInTests(ConformanceFixture fixture)
         // from_client_to_server), before the fake's own (fast, since the cancellation interrupts
         // its Pace immediately) cancelled-response completion can arrive back.
         await browser.SendResponseCancelAsync(ct);
-        var isolatedCancelFrame = await connection.ReceivedFrames.WaitForAsync(
-            f => f.Sequence > greetingResponseCreate!.Sequence && f.Type == "response.cancel", FrameTimeout, ct);
+        RecordedFrame? isolatedCancelFrame = await connection.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > greetingResponseCreate!.Sequence && f.Type == "response.cancel", s_frameTimeout, ct);
         Assert.True(isolatedCancelFrame is not null, "Expected the browser's response.cancel to be relayed upstream.");
 
         Assert.DoesNotContain(connection.ReceivedFrames.Snapshot(), f =>
@@ -154,10 +154,10 @@ public sealed class EchoSuppressionBargeInTests(ConformanceFixture fixture)
         // after response.cancel") must fail here: with on_barge_in() gutted to a no-op, nothing
         // else would ever clear this and this send would time out.
         await browser.SendInputAudioAppendAsync(MicAfterIsolatedBargeIn, ct);
-        var isolatedResume = await connection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? isolatedResume = await connection.ReceivedFrames.WaitForAsync(
             f => f.Sequence > isolatedCancelFrame!.Sequence && f.Type == "input_audio_buffer.append"
                 && f.Json.GetProperty("audio").GetString() == MicAfterIsolatedBargeIn,
-            FrameTimeout, ct);
+            s_frameTimeout, ct);
         Assert.True(isolatedResume is not null,
             "Expected mic audio to be forwarded upstream immediately after response.cancel with no " +
             "active response to cancel -- the only mechanism that could have lifted suppression " +
@@ -167,8 +167,8 @@ public sealed class EchoSuppressionBargeInTests(ConformanceFixture fixture)
         // interrupted its Pace) -- wait for its round trip token so Phase B's firstDelta wait
         // below has a browser.ReceivedFrames sequence bound to start from, same role the old
         // pre-Phase-A greetingRoundTrip wait used to serve.
-        var greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        RecordedFrame? greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token", s_frameTimeout, ct);
         Assert.True(greetingRoundTrip is not null, "Greeting round trip never completed.");
 
         // ── Phase B: the full, realistic "AI is genuinely speaking real audio" sequence ──
@@ -184,8 +184,8 @@ public sealed class EchoSuppressionBargeInTests(ConformanceFixture fixture)
         ]));
         await browser.SendResponseCreateAsync(ct);
 
-        var firstDelta = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Sequence > greetingRoundTrip!.Sequence && f.Type == "response.audio.delta", FrameTimeout, ct);
+        RecordedFrame? firstDelta = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > greetingRoundTrip!.Sequence && f.Type == "response.audio.delta", s_frameTimeout, ct);
         Assert.True(firstDelta is not null, "Expected AI audio to start playing before exercising echo suppression.");
 
         // 1) input_audio_buffer.append while the AI is speaking must be DROPPED -- never
@@ -201,8 +201,8 @@ public sealed class EchoSuppressionBargeInTests(ConformanceFixture fixture)
         // isolatedCancelFrame.Sequence, however, *is* on connection.ReceivedFrames, so it is a
         // valid bound here: this phase's cancel is the next one after Phase A's.
         await browser.SendResponseCancelAsync(ct);
-        var cancelFrame = await connection.ReceivedFrames.WaitForAsync(
-            f => f.Sequence > isolatedCancelFrame!.Sequence && f.Type == "response.cancel", FrameTimeout, ct);
+        RecordedFrame? cancelFrame = await connection.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > isolatedCancelFrame!.Sequence && f.Type == "response.cancel", s_frameTimeout, ct);
         Assert.True(cancelFrame is not null, "Expected the browser's response.cancel to be relayed upstream.");
 
         Assert.DoesNotContain(connection.ReceivedFrames.Snapshot(), f =>
@@ -212,7 +212,7 @@ public sealed class EchoSuppressionBargeInTests(ConformanceFixture fixture)
         // per browser-initiated cancel ever reaches upstream (Phase A's own send plus this one --
         // no more), and this phase's is the one just captured above -- nothing synthesized ever
         // preceded (or followed) either of the browser's two cancels.
-        var allCancelFrames = connection.ReceivedFrames.Snapshot().Where(f => f.Type == "response.cancel").ToArray();
+        RecordedFrame[] allCancelFrames = [.. connection.ReceivedFrames.Snapshot().Where(f => f.Type == "response.cancel")];
         Assert.Equal(2, allCancelFrames.Length);
         Assert.Equal(cancelFrame!.Sequence, allCancelFrames[1].Sequence);
 
@@ -224,7 +224,7 @@ public sealed class EchoSuppressionBargeInTests(ConformanceFixture fixture)
         // already conclusively proven by Phase A above; a permanent latch here would still time
         // this out and fail the test regardless.
         RecordedFrame? secondAppend = null;
-        var appendDeadline = DateTime.UtcNow + FrameTimeout;
+        DateTime appendDeadline = DateTime.UtcNow + s_frameTimeout;
         while (secondAppend is null && DateTime.UtcNow < appendDeadline)
         {
             await browser.SendInputAudioAppendAsync(MicAfterCancel, ct);

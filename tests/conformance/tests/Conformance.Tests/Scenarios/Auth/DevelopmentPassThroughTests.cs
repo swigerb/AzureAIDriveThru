@@ -1,4 +1,5 @@
 using System.Net;
+using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 
@@ -22,21 +23,21 @@ public abstract class DevelopmentPassThroughTestsBase(ConformanceFixture fixture
     [Fact]
     public Task No_token_REST_is_still_200() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         using var http = new HttpClient();
-        using var response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/api/personas"), ct).ConfigureAwait(false);
+        using HttpResponseMessage response = await http.GetAsync(new Uri(fixture.Backend!.BaseUri, "/api/personas"), ct).ConfigureAwait(false);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     });
 
     [Fact]
     public Task Realtime_opens_with_no_token() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(
             fixture.Backend!.BaseUri, attachAccessToken: false, attachSessionToken: false, cancellationToken: ct)
             .ConfigureAwait(false);
 
-        var created = await browser.ReceivedFrames
+        RecordedFrame? created = await browser.ReceivedFrames
             .WaitForAsync(f => f.Type == "session.created", AuthRowRealtimeAssertions.FrameTimeout, ct)
             .ConfigureAwait(false);
         Assert.True(created is not null, "Row 16: expected /realtime to open with no token at all.");

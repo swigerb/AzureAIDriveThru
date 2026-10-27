@@ -89,7 +89,7 @@ internal static class RealtimeSessionBuilder
     /// <summary>The fallback carries only what the conversation cannot work without. No voice
     /// (cannot_update_voice), no audio config, no reasoning -- the usual suspects when GA rejects
     /// an update.</summary>
-    private static readonly string[] FallbackSessionKeys = ["type", "instructions", "tools", "tool_choice"];
+    private static readonly string[] s_fallbackSessionKeys = ["type", "instructions", "tools", "tool_choice"];
 
     /// <summary>
     /// Overlays <paramref name="config"/>'s server-owned settings and <paramref name="toolSchemas"/>
@@ -111,7 +111,7 @@ internal static class RealtimeSessionBuilder
     {
         session = (JsonObject)session.DeepClone();
 
-        var effectiveSystemMessage = systemMessage.HasValue ? systemMessage.Value : config.SystemMessage;
+        string? effectiveSystemMessage = systemMessage.HasValue ? systemMessage.Value : config.SystemMessage;
         if (effectiveSystemMessage is not null)
         {
             session["instructions"] = effectiveSystemMessage;
@@ -129,7 +129,7 @@ internal static class RealtimeSessionBuilder
             session["disable_audio"] = config.DisableAudio;
         }
 
-        var effectiveVoice = voice.HasValue ? voice.Value : config.VoiceChoice;
+        string? effectiveVoice = voice.HasValue ? voice.Value : config.VoiceChoice;
         if (effectiveVoice is not null)
         {
             session["voice"] = effectiveVoice;
@@ -137,7 +137,7 @@ internal static class RealtimeSessionBuilder
 
         session["tool_choice"] = toolSchemas.Count > 0 ? "auto" : "none";
         var tools = new JsonArray();
-        foreach (var schema in toolSchemas)
+        foreach (JsonObject schema in toolSchemas)
         {
             tools.Add(schema.DeepClone());
         }
@@ -160,7 +160,7 @@ internal static class RealtimeSessionBuilder
         session.Remove("parallel_tool_calls");
         if (config.IsReasoningModel(reasoningOverride))
         {
-            var effort = ReasoningRules.NormalizeReasoningEffort(config.ReasoningEffort);
+            string? effort = ReasoningRules.NormalizeReasoningEffort(config.ReasoningEffort);
             if (effort is not null)
             {
                 session["reasoning"] = new JsonObject { ["effort"] = effort };
@@ -171,7 +171,7 @@ internal static class RealtimeSessionBuilder
             }
         }
 
-        var gaSession = GaSessionTranslator.ToGaSession(session);
+        JsonObject gaSession = GaSessionTranslator.ToGaSession(session);
         if (voiceLocked)
         {
             GaSessionTranslator.StripOutputVoice(gaSession);
@@ -195,7 +195,7 @@ internal static class RealtimeSessionBuilder
         Overridable<string?> systemMessage = default,
         Overridable<bool?> reasoningOverride = default)
     {
-        var session = BuildSession(config, BootstrapClientSession(), toolSchemas,
+        JsonObject session = BuildSession(config, BootstrapClientSession(), toolSchemas,
             voice: voice, systemMessage: systemMessage, reasoningOverride: reasoningOverride);
         return new JsonObject
         {
@@ -218,10 +218,10 @@ internal static class RealtimeSessionBuilder
         Overridable<string?> systemMessage = default,
         Overridable<bool?> reasoningOverride = default)
     {
-        var full = BuildSession(config, [], toolSchemas, voiceLocked: true,
+        JsonObject full = BuildSession(config, [], toolSchemas, voiceLocked: true,
             voice: voice, systemMessage: systemMessage, reasoningOverride: reasoningOverride);
         var session = new JsonObject();
-        foreach (var key in FallbackSessionKeys)
+        foreach (string key in s_fallbackSessionKeys)
         {
             if (full[key] is { } value)
             {

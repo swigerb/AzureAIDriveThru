@@ -1,4 +1,4 @@
-using System.Linq;
+using System.Text.Json;
 using Conformance.Fakes;
 using Conformance.Harness;
 using Conformance.Tests.Scenarios.Ordering;
@@ -7,8 +7,8 @@ using Xunit;
 namespace Conformance.Tests;
 
 /// <summary>
-/// Issue #170 round 2 (Rick's PR #175 review, item R1): <see
-/// cref="PersonaSessionUpdateInstructionsConformanceTests"/> already proves the bound persona's
+/// Issue #170 round 2 (Rick's PR #175 review, item R1):
+/// <c>PersonaSessionUpdateInstructionsConformanceTests</c> already proves the bound persona's
 /// own instructions survive the ORDINARY client session.update rebuild, but it never exercises
 /// the REJECTED-update fallback path (<c>_recover_rejected_session_update</c> / C#'s
 /// <c>RealtimeProcessor.HandleErrorAsync</c> --&gt; <c>RealtimeSessionBuilder.BuildFallbackSessionUpdate</c>).
@@ -26,8 +26,8 @@ namespace Conformance.Tests;
 /// <see cref="FakeRealtimeUpstreamServer.RejectNextSessionUpdates"/> for exactly the bootstrap
 /// session.update, connect with `?persona=&lt;id&gt;`, and assert the FALLBACK session.update's
 /// `instructions` contains THAT pack's own identity text and none of the others' -- reusing the
-/// very same per-persona `instructionsSubstring` data <see
-/// cref="PersonaSessionUpdateInstructionsConformanceTests"/>'s <c>PersonaSessionUpdateExpectations</c>
+/// very same per-persona `instructionsSubstring` data
+/// <c>PersonaSessionUpdateInstructionsConformanceTests</c>'s <c>PersonaSessionUpdateExpectations</c>
 /// already reads from each pack's own smoke.json, so this file carries no persona-specific
 /// literal of its own either.
 ///
@@ -38,21 +38,21 @@ namespace Conformance.Tests;
 /// default's own (x-boot, x-recover on Python; cs-boot-tools, cs-fallback-tools on C#) survived
 /// every suite. Both frames now also get <see
 /// cref="PersonaSessionUpdateToolsExpectations.AssertSearchToolDescriptionIsBoundTo"/> -- the
-/// SAME shared helper <see cref="PersonaSessionUpdateToolsScenario"/> in
+/// SAME shared helper <c>PersonaSessionUpdateToolsScenario</c> in
 /// PersonaSessionUpdateToolsConformanceTests.cs uses for the ordinary client-update path, so this
 /// file still carries no persona-specific literal of its own for the tools half either.
 /// </summary>
 file static class PersonaSessionUpdateFallbackScenario
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     public static async Task RunAsync(
         ConformanceFixture fixture, string personaId, IReadOnlyList<string> allPersonaIdsOnThisFixture, CancellationToken ct)
     {
-        var expected = PersonaSessionUpdateExpectations.For(personaId);
-        var greetingExpected = PersonaSmokeExpectations.For(personaId);
+        PersonaSessionUpdateExpectations.Expectation expected = PersonaSessionUpdateExpectations.For(personaId);
+        PersonaSmokeExpectations.Expectation greetingExpected = PersonaSmokeExpectations.For(personaId);
 
-        var noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
+        bool noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(s_frameTimeout, ct);
         Assert.True(noneOpen, $"Expected no open upstream connections at test start, but " +
             $"{fixture.Realtime.OpenConnectionCount} are still open -- a previous test leaked a connection.");
 
@@ -62,30 +62,30 @@ file static class PersonaSessionUpdateFallbackScenario
         // (see SessionUpdateFallbackTests.cs's own doc comment for the two correlation paths).
         fixture.Realtime.RejectNextSessionUpdates(1, code: "invalid_value", echoEventId: true);
 
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, persona: personaId, cancellationToken: ct);
-        var connection = await connectionTask;
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, persona: personaId, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
         Assert.True(connection is not null,
-            $"No upstream connection was accepted within {FrameTimeout} for persona '{personaId}'.");
+            $"No upstream connection was accepted within {s_frameTimeout} for persona '{personaId}'.");
 
-        var bootstrap = await connection!.ReceivedFrames.WaitForAsync(f => f.Sequence == 0, FrameTimeout, ct);
+        RecordedFrame? bootstrap = await connection!.ReceivedFrames.WaitForAsync(f => f.Sequence == 0, s_frameTimeout, ct);
         Assert.True(bootstrap is not null, $"Bootstrap session.update never arrived for persona '{personaId}'.");
 
         // At this point the browser hasn't sent its own session.update yet (that only happens
         // below), so the first session.update after the bootstrap can only be the fallback --
         // no race with the browser's own update is possible here, matching
         // SessionUpdateFallbackTests.cs's own ordering argument.
-        var fallback = await connection.ReceivedFrames.WaitForAsync(
-            f => f.Sequence > bootstrap!.Sequence && f.Type == "session.update", FrameTimeout, ct);
+        RecordedFrame? fallback = await connection.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > bootstrap!.Sequence && f.Type == "session.update", s_frameTimeout, ct);
         Assert.True(fallback is not null,
             $"Expected a fallback session.update after the bootstrap's rejection for persona '{personaId}'.");
 
-        var fallbackSession = fallback!.Json.GetProperty("session");
-        Assert.True(fallbackSession.TryGetProperty("instructions", out var instructionsProp),
+        JsonElement fallbackSession = fallback!.Json.GetProperty("session");
+        Assert.True(fallbackSession.TryGetProperty("instructions", out JsonElement instructionsProp),
             $"The fallback session.update for persona '{personaId}' carried no 'instructions' at " +
             "all -- the bound persona's system prompt is no longer threaded through the " +
             "rejected-update recovery path.");
-        var instructions = instructionsProp.GetString();
+        string? instructions = instructionsProp.GetString();
         Assert.True(!string.IsNullOrEmpty(instructions),
             $"The fallback session.update for persona '{personaId}' carried empty 'instructions'.");
 
@@ -95,14 +95,14 @@ file static class PersonaSessionUpdateFallbackScenario
 
         // The exact symptom Rick's round-1 review flagged: no OTHER enabled persona's identity
         // text (in particular the deployment default's) silently substituted into the fallback.
-        foreach (var otherId in allPersonaIdsOnThisFixture)
+        foreach (string otherId in allPersonaIdsOnThisFixture)
         {
             if (otherId == personaId)
             {
                 continue;
             }
 
-            var other = PersonaSessionUpdateExpectations.For(otherId);
+            PersonaSessionUpdateExpectations.Expectation other = PersonaSessionUpdateExpectations.For(otherId);
             Assert.DoesNotContain(other.InstructionsSubstring, instructions);
         }
 
@@ -111,7 +111,7 @@ file static class PersonaSessionUpdateFallbackScenario
         // the bootstrap is built fresh from this session's own bound tool_schemas just like the
         // fallback is, and both are exactly the two call sites Rick's round-2 spec named
         // explicitly but that were never actually checked here before.
-        var bootstrapSession = bootstrap!.Json.GetProperty("session");
+        JsonElement bootstrapSession = bootstrap!.Json.GetProperty("session");
         PersonaSessionUpdateToolsExpectations.AssertSearchToolDescriptionIsBoundTo(
             bootstrapSession, personaId, allPersonaIdsOnThisFixture, "bootstrap session.update");
         PersonaSessionUpdateToolsExpectations.AssertSearchToolDescriptionIsBoundTo(
@@ -121,13 +121,13 @@ file static class PersonaSessionUpdateFallbackScenario
         // recovery doesn't leave the session half-configured or silently bound to a different
         // persona than the one that greets.
         await browser.SendStartSessionAsync(cancellationToken: ct);
-        var roundTripToken = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        RecordedFrame? roundTripToken = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token", s_frameTimeout, ct);
         Assert.True(roundTripToken is not null,
             $"extension.round_trip_token never reached the browser for persona '{personaId}' " +
             "(greeting never completed after the fallback recovery).");
 
-        var greetingText = OrderScenarioHelpers.GreetingInstructions(connection);
+        string greetingText = OrderScenarioHelpers.GreetingInstructions(connection);
         Assert.Contains(greetingExpected.GreetingSubstring, greetingText);
     }
 }
@@ -166,7 +166,7 @@ public sealed class RealPackPersonaSessionUpdateFallbackConformanceTests(RealPac
     public static TheoryData<string> DiscoveredPersonaIds()
     {
         var data = new TheoryData<string>();
-        foreach (var id in ConformancePersonas.DiscoverFromDisk())
+        foreach (string id in ConformancePersonas.DiscoverFromDisk())
         {
             data.Add(id);
         }
@@ -209,7 +209,7 @@ public sealed class FixturePackPersonaSessionUpdateFallbackConformanceTests(TwoP
         return data;
     }
 
-    private static readonly IReadOnlyList<string> FixturePersonaIds =
+    private static readonly IReadOnlyList<string> s_fixturePersonaIds =
     [
         TwoPersonaConformanceFixture.PersonaA,
         TwoPersonaConformanceFixture.PersonaB,
@@ -220,7 +220,7 @@ public sealed class FixturePackPersonaSessionUpdateFallbackConformanceTests(TwoP
     [MemberData(nameof(FixturePersonaIdsData))]
     public Task Rejected_bootstrap_recovers_via_a_fallback_carrying_the_bound_personas_own_instructions(string personaId) => fixture.RunAsync(
         () => PersonaSessionUpdateFallbackScenario.RunAsync(
-            fixture, personaId, FixturePersonaIds, TestContext.Current.CancellationToken),
+            fixture, personaId, s_fixturePersonaIds, TestContext.Current.CancellationToken),
         // TwoPersonaConformanceFixture is its own dedicated collection/process already (see its
         // own doc comment), separate from ConformanceFixture's shared one -- no isolation concern
         // here, but the same reasoning-capable deployment means the same up-to-two-line (rejection

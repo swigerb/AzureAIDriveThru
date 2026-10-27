@@ -45,7 +45,11 @@ internal sealed class RewardsDemo(RewardsDemoConfig config)
 
     public void Act(string? action, string? code, IReadOnlyList<OrderItem> items, decimal netTotal)
     {
-        if (action == "status") return;
+        if (action == "status")
+        {
+            return;
+        }
+
         if (Completed)
         {
             _message = "Order already completed. Start a new demo order before making changes.";
@@ -54,10 +58,14 @@ internal sealed class RewardsDemo(RewardsDemoConfig config)
         switch (action)
         {
             case "check_in":
-                if (code is null || !config.Codes.TryGetValue(code, out var startingPoints))
+                if (code is null || !config.Codes.TryGetValue(code, out int startingPoints))
+                {
                     _message = "Invalid demo code. Use one of the fictional codes shown.";
+                }
                 else if (_checkedIn)
+                {
                     _message = "Already checked in for this session.";
+                }
                 else
                 {
                     _checkedIn = true;
@@ -73,7 +81,10 @@ internal sealed class RewardsDemo(RewardsDemoConfig config)
                     _message = "Demo reward reserved. Points are spent only when you complete this demo order.";
                 }
                 else
+                {
                     _message = "Reward unavailable: check in, have enough points, and add the eligible item.";
+                }
+
                 break;
             case "unredeem":
                 _redeemed = false;
@@ -82,7 +93,9 @@ internal sealed class RewardsDemo(RewardsDemoConfig config)
                 break;
             case "complete":
                 if (!_checkedIn || items.Count == 0)
+                {
                     _message = "Check in and add an item before completing the demo order.";
+                }
                 else
                 {
                     _awarded = Projected(netTotal);
@@ -99,13 +112,18 @@ internal sealed class RewardsDemo(RewardsDemoConfig config)
 
     public JsonObject Snapshot(IReadOnlyList<OrderItem> items, decimal netTotal, decimal discount) => new()
     {
-        ["checkedIn"] = _checkedIn, ["balance"] = _balance,
-        ["rewardItem"] = RewardItem(items), ["rewardCost"] = config.RewardCost,
+        ["checkedIn"] = _checkedIn,
+        ["balance"] = _balance,
+        ["rewardItem"] = RewardItem(items),
+        ["rewardCost"] = config.RewardCost,
         ["pointsPerDollar"] = config.PointsPerDollar,
-        ["demoCodes"] = new JsonArray(config.Codes.Keys.Select(c => (JsonNode?)JsonValue.Create(c)).ToArray()),
-        ["redeemed"] = _redeemed, ["completed"] = Completed,
+        ["demoCodes"] = new JsonArray([.. config.Codes.Keys.Select(c => (JsonNode?)JsonValue.Create(c))]),
+        ["redeemed"] = _redeemed,
+        ["completed"] = Completed,
         ["canRedeem"] = _checkedIn && !Completed && !_redeemed && _balance >= config.RewardCost && EligiblePrices(items).Any(),
         ["pointsToEarn"] = _checkedIn && !Completed ? Projected(netTotal) : 0,
-        ["pointsAwarded"] = _awarded, ["discount"] = discount, ["message"] = _message,
+        ["pointsAwarded"] = _awarded,
+        ["discount"] = discount,
+        ["message"] = _message,
     };
 }

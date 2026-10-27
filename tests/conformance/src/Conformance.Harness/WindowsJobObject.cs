@@ -43,7 +43,7 @@ public sealed class WindowsJobObject : IDisposable
     {
         try
         {
-            var jobHandle = NativeMethods.CreateJobObject(nint.Zero, null);
+            nint jobHandle = NativeMethods.CreateJobObject(nint.Zero, null);
             if (jobHandle == nint.Zero)
             {
                 return null;
@@ -55,7 +55,7 @@ public sealed class WindowsJobObject : IDisposable
                 return null;
             }
 
-            var processHandle = NativeMethods.OpenProcess(NativeMethods.ProcessAllAccess, false, processId);
+            nint processHandle = NativeMethods.OpenProcess(NativeMethods.ProcessAllAccess, false, processId);
             if (processHandle == nint.Zero)
             {
                 NativeMethods.CloseHandle(jobHandle);
@@ -96,8 +96,8 @@ public sealed class WindowsJobObject : IDisposable
             },
         };
 
-        var length = Marshal.SizeOf<NativeMethods.JOBOBJECT_EXTENDED_LIMIT_INFORMATION>();
-        var extendedInfoPtr = Marshal.AllocHGlobal(length);
+        int length = Marshal.SizeOf<NativeMethods.JOBOBJECT_EXTENDED_LIMIT_INFORMATION>();
+        nint extendedInfoPtr = Marshal.AllocHGlobal(length);
         try
         {
             Marshal.StructureToPtr(extendedInfo, extendedInfoPtr, fDeleteOld: false);
@@ -165,19 +165,24 @@ public sealed class WindowsJobObject : IDisposable
             public nuint PeakJobMemoryUsed;
         }
 
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         public static extern nint CreateJobObject(nint lpJobAttributes, string? lpName);
 
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool SetInformationJobObject(
             nint hJob, int infoType, nint lpJobObjectInfo, uint cbJobObjectInfoLength);
 
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool AssignProcessToJobObject(nint hJob, nint hProcess);
 
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern nint OpenProcess(int dwDesiredAccess, bool bInheritHandle, int dwProcessId);
 
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         [DllImport("kernel32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool CloseHandle(nint hObject);

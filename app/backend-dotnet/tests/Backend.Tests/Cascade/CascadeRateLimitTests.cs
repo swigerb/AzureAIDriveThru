@@ -53,10 +53,10 @@ public sealed class CascadeRateLimitTests
         var notices = new List<JsonObject>();
         var settings = new CascadeRateLimitSettings(true, 1.5, 4.0, 2);
 
-        var result = await CascadeRateLimit.WithRetryAsync(
+        int result = await CascadeRateLimit.WithRetryAsync(
             settings, () => Task.FromResult(42), "test-op",
             (frame, _) => { notices.Add(frame); return Task.CompletedTask; },
-            "sess-1", logger: null, CancellationToken.None);
+            "sess-1", logger: null, TestContext.Current.CancellationToken);
 
         Assert.Equal(42, result);
         Assert.Empty(notices);
@@ -68,9 +68,9 @@ public sealed class CascadeRateLimitTests
         var notices = new List<JsonObject>();
         var settings = new CascadeRateLimitSettings(true, 1.5, 4.0, 2);
         var fakeTime = new FakeTimeProvider();
-        var callCount = 0;
+        int callCount = 0;
 
-        var runTask = CascadeRateLimit.WithRetryAsync(
+        Task<string> runTask = CascadeRateLimit.WithRetryAsync(
             settings,
             () =>
             {
@@ -83,7 +83,7 @@ public sealed class CascadeRateLimitTests
             },
             "test-op",
             (frame, _) => { notices.Add(frame); return Task.CompletedTask; },
-            "sess-1", logger: null, CancellationToken.None, fakeTime);
+            "sess-1", logger: null, TestContext.Current.CancellationToken, fakeTime);
 
         // The method runs synchronously up to attempt 0's failure, then suspends in its (silent)
         // first-retry Task.Delay -- the op has been called exactly once so far, with no notice.
@@ -94,7 +94,7 @@ public sealed class CascadeRateLimitTests
         // sends its (non-final) notice, then suspends in the second-retry Task.Delay.
         fakeTime.Advance(TimeSpan.FromSeconds(2));
         Assert.Equal(2, callCount);
-        var attempt1Notice = Assert.Single(notices);
+        JsonObject attempt1Notice = Assert.Single(notices);
         Assert.Equal(CascadeRateLimit.RateLimitedEvent, attempt1Notice["type"]!.GetValue<string>());
         Assert.Equal(1, attempt1Notice["attempt"]!.GetValue<int>());
         Assert.False(attempt1Notice.ContainsKey("final"), "the attempt-1 notice must NOT carry a 'final' key -- only the exhausted ladder's last notice does.");
@@ -113,12 +113,12 @@ public sealed class CascadeRateLimitTests
         var settings = new CascadeRateLimitSettings(true, RetryDelaySeconds: 0.01, SecondRetryDelaySeconds: 0.01, MaxRetries: 1);
         var fakeTime = new FakeTimeProvider();
 
-        var runTask = CascadeRateLimit.WithRetryAsync<object?>(
+        Task<object?> runTask = CascadeRateLimit.WithRetryAsync<object?>(
             settings,
             () => throw new FoundryHttpException(429, retryAfterSeconds: null, "still rate limited"),
             "test-op",
             (frame, _) => { notices.Add(frame); return Task.CompletedTask; },
-            "sess-1", logger: null, CancellationToken.None, fakeTime);
+            "sess-1", logger: null, TestContext.Current.CancellationToken, fakeTime);
 
         // Attempt 0 fails, suspends in its (tiny, unclamped-default) first-retry delay. Advancing
         // past it drives attempt 1 inline, which immediately exhausts (maxRetries=1) and throws --
@@ -126,7 +126,7 @@ public sealed class CascadeRateLimitTests
         fakeTime.Advance(TimeSpan.FromSeconds(1));
 
         await Assert.ThrowsAsync<CascadeRateLimitExhaustedException>(() => runTask);
-        var finalNotice = Assert.Single(notices);
+        JsonObject finalNotice = Assert.Single(notices);
         Assert.Equal(1, finalNotice["attempt"]!.GetValue<int>());
         Assert.True(finalNotice["final"]!.GetValue<bool>());
     }
@@ -137,13 +137,13 @@ public sealed class CascadeRateLimitTests
         var notices = new List<JsonObject>();
         var settings = new CascadeRateLimitSettings(true, 1.5, 4.0, 2);
 
-        var exc = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        InvalidOperationException exc = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             CascadeRateLimit.WithRetryAsync<object?>(
                 settings,
                 () => throw new InvalidOperationException("boom"),
                 "test-op",
                 (frame, _) => { notices.Add(frame); return Task.CompletedTask; },
-                "sess-1", logger: null, CancellationToken.None));
+                "sess-1", logger: null, TestContext.Current.CancellationToken));
 
         Assert.Equal("boom", exc.Message);
         Assert.Empty(notices);
@@ -153,7 +153,7 @@ public sealed class CascadeRateLimitTests
     public async Task WithRetryAsync_DisabledSettingsNeverRetries429Either()
     {
         var settings = new CascadeRateLimitSettings(false, 1.5, 4.0, 2);
-        var callCount = 0;
+        int callCount = 0;
 
         await Assert.ThrowsAsync<FoundryHttpException>(() =>
             CascadeRateLimit.WithRetryAsync<object?>(
@@ -161,7 +161,7 @@ public sealed class CascadeRateLimitTests
                 () => { callCount++; throw new FoundryHttpException(429, null, "rate limited"); },
                 "test-op",
                 (_, _) => Task.CompletedTask,
-                "sess-1", logger: null, CancellationToken.None));
+                "sess-1", logger: null, TestContext.Current.CancellationToken));
 
         Assert.Equal(1, callCount);
     }

@@ -1,3 +1,5 @@
+using System.Text.Json;
+using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 
@@ -28,16 +30,16 @@ public static class ReasoningByDeploymentTestHelpers
     public static async Task<System.Text.Json.JsonElement> ConnectAndGetBootstrapSessionAsync(
         ConformanceFixture fixture, CancellationToken ct)
     {
-        var noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
+        bool noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
         Assert.True(noneOpen, $"Expected no open upstream connections at test start, but " +
             $"{fixture.Realtime.OpenConnectionCount} are still open — a previous test leaked a connection.");
 
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
         Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
 
-        var bootstrap = await connection!.ReceivedFrames.WaitForAsync(f => f.Sequence == 0, FrameTimeout, ct);
+        RecordedFrame? bootstrap = await connection!.ReceivedFrames.WaitForAsync(f => f.Sequence == 0, FrameTimeout, ct);
         Assert.True(bootstrap is not null, "Bootstrap session.update never arrived.");
         Assert.Equal("session.update", bootstrap!.Type);
         return bootstrap.Json.GetProperty("session");
@@ -51,10 +53,10 @@ public sealed class ReasoningSentForDefaultDeploymentTests(ConformanceFixture fi
     [Fact]
     public Task Reasoning_effort_is_sent_in_the_bootstrap_for_the_default_reasoning_capable_deployment() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var session = await ReasoningByDeploymentTestHelpers.ConnectAndGetBootstrapSessionAsync(fixture, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        JsonElement session = await ReasoningByDeploymentTestHelpers.ConnectAndGetBootstrapSessionAsync(fixture, ct);
 
-        Assert.True(session.TryGetProperty("reasoning", out var reasoning),
+        Assert.True(session.TryGetProperty("reasoning", out JsonElement reasoning),
             $"Expected `reasoning` on the bootstrap session.update for deployment " +
             $"'{BackendContract.DefaultDeployment}' (reasoning-capable by name).");
         Assert.Equal("low", reasoning.GetProperty("effort").GetString());
@@ -68,10 +70,10 @@ public sealed class ReasoningSentForDzDeploymentTests(Gpt21DzConformanceFixture 
     [Fact]
     public Task Reasoning_effort_is_sent_in_the_bootstrap_for_a_gpt_realtime_2_1_dz_deployment() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var session = await ReasoningByDeploymentTestHelpers.ConnectAndGetBootstrapSessionAsync(fixture, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        JsonElement session = await ReasoningByDeploymentTestHelpers.ConnectAndGetBootstrapSessionAsync(fixture, ct);
 
-        Assert.True(session.TryGetProperty("reasoning", out var reasoning),
+        Assert.True(session.TryGetProperty("reasoning", out JsonElement reasoning),
             "Expected `reasoning` on the bootstrap session.update for a gpt-realtime-2.1-dz deployment.");
         Assert.Equal("low", reasoning.GetProperty("effort").GetString());
     });
@@ -84,8 +86,8 @@ public sealed class ReasoningSwitchFalseKeepsReasoningOffA15DeploymentTests(Gpt1
     [Fact]
     public Task Reasoning_is_never_sent_in_the_bootstrap_for_a_gpt_realtime_1_5_deployment() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var session = await ReasoningByDeploymentTestHelpers.ConnectAndGetBootstrapSessionAsync(fixture, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        JsonElement session = await ReasoningByDeploymentTestHelpers.ConnectAndGetBootstrapSessionAsync(fixture, ct);
 
         Assert.False(session.TryGetProperty("reasoning", out _),
             "This fixture's session is bound to sonic's realtime default (gpt-realtime-2.1, " +
@@ -112,8 +114,8 @@ public sealed class ReasoningSwitchOffOverridesTheBoundModelsCatalogEntryTests(G
     [Fact]
     public Task Reasoning_is_not_sent_when_the_switch_is_explicitly_false_even_for_a_catalog_reasoning_model() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var session = await ReasoningByDeploymentTestHelpers.ConnectAndGetBootstrapSessionAsync(fixture, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        JsonElement session = await ReasoningByDeploymentTestHelpers.ConnectAndGetBootstrapSessionAsync(fixture, ct);
 
         Assert.False(session.TryGetProperty("reasoning", out _),
             "The session is bound to sonic's realtime default (gpt-realtime-2.1, catalog " +

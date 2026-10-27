@@ -3,7 +3,6 @@ using System.Text.Json.Nodes;
 using Backend.Cascade;
 using Backend.Models;
 using Backend.Personas;
-using Microsoft.Extensions.Logging;
 
 namespace Backend.Sessions;
 
@@ -30,9 +29,9 @@ internal sealed class CascadeAudioTurnPipeline(
     private string SessionId => getSessionId();
     public async Task<string> TranscribeAsync(byte[] turnAudio, CancellationToken turnCt)
     {
-        var cascadeAudio = catalog.CascadeAudio
+        CascadeAudioConfig cascadeAudio = catalog.CascadeAudio
             ?? throw new InvalidOperationException("config.yaml has no models.cascade transcription/tts configured.");
-        var deployment = catalog.DeploymentFor(cascadeAudio.Transcription)
+        string deployment = catalog.DeploymentFor(cascadeAudio.Transcription)
             ?? throw new InvalidOperationException(
                 $"Cascade transcription model '{cascadeAudio.Transcription}' has no AZURE_AI_MODEL_DEPLOYMENTS entry.");
         return await CascadeRateLimit.WithRetryAsync(
@@ -43,23 +42,23 @@ internal sealed class CascadeAudioTurnPipeline(
 
     public async Task SpeakAsync(string text, string responseId, CancellationToken turnCt)
     {
-        var cascadeAudio = catalog.CascadeAudio
+        CascadeAudioConfig cascadeAudio = catalog.CascadeAudio
             ?? throw new InvalidOperationException("config.yaml has no models.cascade transcription/tts configured.");
-        var deployment = catalog.DeploymentFor(cascadeAudio.Tts)
+        string deployment = catalog.DeploymentFor(cascadeAudio.Tts)
             ?? throw new InvalidOperationException(
                 $"Cascade TTS model '{cascadeAudio.Tts}' has no AZURE_AI_MODEL_DEPLOYMENTS entry.");
         // Issue #304: apply this persona's own phonetic pronunciation lexicon ONLY to the TTS
         // input text -- never to the chat transcript/history sent to the browser (that still
         // carries the unmodified `text`). Mirrors cascade_processor.py's
         // `_apply_pronunciations`/`_speak`.
-        var ttsText = persona.Pronunciations is { Count: > 0 } pronunciations
+        string ttsText = persona.Pronunciations is { Count: > 0 } pronunciations
             ? MenuCatalog.ApplyLexicon(text, pronunciations)
             : text;
         await CascadeRateLimit.WithRetryAsync(
             rateLimitSettings,
             async () =>
             {
-                var pcm = await audioClient.SpeakAsync(ttsText, state.Voice, deployment, turnCt).ConfigureAwait(false);
+                byte[] pcm = await audioClient.SpeakAsync(ttsText, state.Voice, deployment, turnCt).ConfigureAwait(false);
                 if (echoCooldownSeconds > 0)
                 {
                     // #126: arm echo suppression for the GUEST'S estimated speaker playback
@@ -67,18 +66,17 @@ internal sealed class CascadeAudioTurnPipeline(
                     // tail (`_echoCooldownSeconds`, capped at 300ms in the constructor).
                     // 0 disables suppression entirely, identically to cascade_processor.py's
                     // `_speak`. PCM16 mono => 2 bytes/sample.
-                    var durationSeconds = pcm.Length / (double)(CascadeProcessor.AudioSampleRate * 2);
+                    double durationSeconds = pcm.Length / (double)(CascadeProcessor.AudioSampleRate * 2);
                     detector.StartEchoCooldown(durationSeconds + echoCooldownSeconds, nowSeconds());
                 }
-                for (var offset = 0; offset < pcm.Length; offset += CascadeProcessor.TtsChunkBytes)
+                for (int offset = 0; offset < pcm.Length; offset += CascadeProcessor.TtsChunkBytes)
                 {
-                    var chunkLength = Math.Min(CascadeProcessor.TtsChunkBytes, pcm.Length - offset);
-                    var chunk = pcm.AsSpan(offset, chunkLength).ToArray();
+                    int chunkLength = Math.Min(CascadeProcessor.TtsChunkBytes, pcm.Length - offset);
                     await CascadeProcessor.SendTextAsync(browserSocket, new JsonObject
                     {
                         ["type"] = "response.audio.delta",
                         ["response_id"] = responseId,
-                        ["delta"] = Convert.ToBase64String(chunk),
+                        ["delta"] = Convert.ToBase64String(pcm, offset, chunkLength),
                     }.ToJsonString(), turnCt, ct).ConfigureAwait(false);
                 }
             },

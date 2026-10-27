@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Backend.Configuration;
 using Backend.Personas;
@@ -27,7 +28,7 @@ namespace Backend.Search;
 /// </summary>
 internal sealed class SearchTool
 {
-    private static readonly SearchResultCache Cache = new();
+    private static readonly SearchResultCache s_cache = new();
 
     private readonly HttpClient _http;
     private readonly SearchEndpointConfig _config;
@@ -72,21 +73,25 @@ internal sealed class SearchTool
     /// cref="ToolResultDirection.ToServer"/> -- mirrors tools.py's <c>search</c> always
     /// constructing a <c>TO_SERVER</c> <c>ToolResult</c>: search results are model-facing
     /// knowledge-base lookups, never a client-visible order-state change.</summary>
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Deliberate last-resort tool boundary (mirrors tools.py's search): credential, transport, and parse failures " +
+            "from the search round trip all become a graceful search_service_unavailable tool result instead of tearing down " +
+            "the session. A caller cancellation during the first attempt is rethrown by the dedicated OperationCanceledException catch.")]
     public async Task<ToolResult> ExecuteAsync(JsonElement args, CancellationToken cancellationToken = default)
     {
-        var rawQuery = args.TryGetProperty("query", out var queryEl) ? queryEl.GetString() ?? "" : "";
+        string rawQuery = args.TryGetProperty("query", out JsonElement queryEl) ? queryEl.GetString() ?? "" : "";
 
         // #77 (strategies.searchQueryRewrite): this persona's own named extension point, applied
         // to `query` itself so the cache key and every search request see the same rewritten text.
-        var query = _menu.RewriteSearchQuery(rawQuery);
+        string query = _menu.RewriteSearchQuery(rawQuery);
 
         // #309 (R1): the cache stores the RAW records Azure AI Search returned, not the
         // formatted/OOS-tagged ToolResult -- see FormatRecord below and SearchResultCache's own
         // doc comment for why. Machine status (and therefore which items get an "[OOS: ...]"
         // tag) is a per-session, override-sensitive property, so the formatted text is built
         // fresh on EVERY call, cache hit or not, off THIS call's own effective status.
-        var cacheKey = $"{_personaId ?? ""}::{_menuMode ?? ""}::{query.Trim().ToLowerInvariant()}";
-        List<JsonElement>? records = Cache.TryGet(cacheKey, out var cachedRecords) ? cachedRecords : null;
+        string cacheKey = $"{_personaId ?? ""}::{_menuMode ?? ""}::{query.Trim().ToLowerInvariant()}";
+        List<JsonElement>? records = s_cache.TryGet(cacheKey, out List<JsonElement>? cachedRecords) ? cachedRecords : null;
 
         // Issue 165: restrict results server-side to items whose own menuPeriod is _menuMode,
         // "allDay", or unset ("" -- setup_search_index.py's own sentinel for a period-less item)
@@ -96,12 +101,12 @@ internal sealed class SearchTool
         // MenuCatalog.ItemAvailableNow's own always-available treatment of a period-less item and
         // this search filter in sync -- without it, a period-less item could be added to an order
         // in either mode yet never surface in a mode-filtered search.
-        var modeFilter = _menuMode is { Length: > 0 }
-            ? $"menuPeriod eq '{_menuMode}' or menuPeriod eq 'allDay' or menuPeriod eq ''"
+        string? modeFilter = _menuMode is { Length: > 0 }
+            ? $"menuPeriod eq '{EscapeODataString(_menuMode)}' or menuPeriod eq 'allDay' or menuPeriod eq ''"
             : null;
 
-        var selectFields = new[] { _config.IdentifierField, "name", "category", "description", "sizes" };
-        var semanticEnabled = _config.UseSemanticRanker && !string.IsNullOrEmpty(_config.SemanticConfiguration);
+        string[] selectFields = [_config.IdentifierField, "name", "category", "description", "sizes"];
+        bool semanticEnabled = _config.UseSemanticRanker && !string.IsNullOrEmpty(_config.SemanticConfiguration);
 
         if (records is null)
         {
@@ -127,7 +132,7 @@ internal sealed class SearchTool
                 try
                 {
                     string?[] fallbackCandidates = [_config.IdentifierField, _config.ContentField];
-                    var fallbackSelect = fallbackCandidates.Where(f => !string.IsNullOrEmpty(f)).Select(f => f!).ToArray();
+                    string[] fallbackSelect = [.. fallbackCandidates.Where(f => !string.IsNullOrEmpty(f)).Select(f => f!)];
                     records = await FetchRecordsAsync(query, fallbackSelect, includeVector: true, semantic: semanticEnabled, filter: null, cancellationToken)
                         .ConfigureAwait(false);
                 }
@@ -182,12 +187,12 @@ internal sealed class SearchTool
             // #309 (R1): cache the RAW records (pre-formatting/pre-OOS-tagging) -- see the
             // comment above the cache lookup for why the formatted ToolResult itself must never
             // be cached.
-            Cache.Put(cacheKey, records, _searchConfig.CacheTtlSeconds, _searchConfig.CacheMaxSize);
+            s_cache.Put(cacheKey, records, _searchConfig.CacheTtlSeconds, _searchConfig.CacheMaxSize);
         }
 
         var results = records.Select(FormatRecord).ToList();
-        var joined = string.Join("\n-----\n", results);
-        var noResults = _promptLoader is { } pl && pl.ErrorMessages.TryGetValue("search_no_results", out var raw) && raw is string rawText
+        string joined = string.Join("\n-----\n", results);
+        string noResults = _promptLoader is { } pl && pl.ErrorMessages.TryGetValue("search_no_results", out object? raw) && raw is string rawText
             ? rawText
             : "No matching menu entries found.";
 
@@ -197,12 +202,18 @@ internal sealed class SearchTool
     private ToolResult ServerError(string errorKey, string fallback) =>
         new(_promptLoader?.RenderError(errorKey) ?? fallback, ToolResultDirection.ToServer);
 
+    /// <summary>Escapes <paramref name="value"/> for use inside a single-quoted OData string
+    /// literal (a literal <c>'</c> is written as <c>''</c>), so a value can never terminate the
+    /// literal early and inject extra filter clauses. A value with no quotes is returned
+    /// unchanged.</summary>
+    private static string EscapeODataString(string value) => value.Replace("'", "''", StringComparison.Ordinal);
+
     private string FormatRecord(JsonElement record)
     {
-        var identifier = GetString(record, _config.IdentifierField) ?? GetString(record, "id") ?? "unknown";
-        var itemName = GetString(record, "name") ?? "N/A";
-        var category = GetString(record, "category") ?? "N/A";
-        var sizeStr = FormatSizes(record);
+        string identifier = GetString(record, _config.IdentifierField) ?? GetString(record, "id") ?? "unknown";
+        string itemName = GetString(record, "name") ?? "N/A";
+        string category = GetString(record, "category") ?? "N/A";
+        string sizeStr = FormatSizes(record);
 
         // #313 (Rick's review, 1.1): every persona prompt requires calling `search` BEFORE
         // `update_order`, so this is the model's first (and often only) exposure to the item's
@@ -210,9 +221,9 @@ internal sealed class SearchTool
         // and had to improvise a pronunciation. The canonical name stays first (it
         // is what the model must still pass back to `update_order`); the spoken form is appended
         // so the model has a correct pronunciation to actually say out loud.
-        var spokenName = _menu.Spoken(itemName);
-        var nameForSpeech = spokenName != itemName ? $"{itemName} (say: {spokenName})" : itemName;
-        var summary = $"[{identifier}]: Item: {nameForSpeech}, Category: {category}, Available Sizes: {sizeStr}";
+        string spokenName = _menu.Spoken(itemName);
+        string nameForSpeech = spokenName != itemName ? $"{itemName} (say: {spokenName})" : itemName;
+        string summary = $"[{identifier}]: Item: {nameForSpeech}, Category: {category}, Available Sizes: {sizeStr}";
 
         // Flag items affected by machine outages so the model knows not to recommend them --
         // data-driven off the item's own `requiresMachine` field (#73), never a keyword list.
@@ -223,8 +234,8 @@ internal sealed class SearchTool
         // do with the same item, instead of the raw, override-blind pack default. An unbound/
         // direct caller (no effectiveMachineStatus delegate, e.g. this class's own tests) falls
         // back to the pack default exactly as before.
-        var machine = _menu.RequiresMachine(itemName);
-        var machineStatus = !string.IsNullOrEmpty(machine)
+        string? machine = _menu.RequiresMachine(itemName);
+        string? machineStatus = !string.IsNullOrEmpty(machine)
             ? (_effectiveMachineStatus is not null ? _effectiveMachineStatus(machine) : _menu.MachineStatus(machine))
             : null;
         if (!string.IsNullOrEmpty(machine) && machineStatus == "down")
@@ -237,18 +248,18 @@ internal sealed class SearchTool
 
     private string FormatSizes(JsonElement record)
     {
-        if (!record.TryGetProperty("sizes", out var sizesEl) || sizesEl.ValueKind != JsonValueKind.String)
+        if (!record.TryGetProperty("sizes", out JsonElement sizesEl) || sizesEl.ValueKind != JsonValueKind.String)
         {
             return "N/A";
         }
-        var raw = sizesEl.GetString() ?? "N/A";
+        string raw = sizesEl.GetString() ?? "N/A";
         try
         {
             using var sizesDoc = JsonDocument.Parse(raw);
-            var parts = sizesDoc.RootElement.EnumerateArray().Select(size =>
+            IEnumerable<string> parts = sizesDoc.RootElement.EnumerateArray().Select(size =>
             {
-                var sizeCode = size.TryGetProperty("size", out var s) ? s.GetString() ?? "" : "";
-                var priceText = size.TryGetProperty("price", out var p) ? p.GetRawText() : "0";
+                string sizeCode = size.TryGetProperty("size", out JsonElement s) ? s.GetString() ?? "" : "";
+                string priceText = size.TryGetProperty("price", out JsonElement p) ? p.GetRawText() : "0";
                 return $"{FormatSizeHumanReadable(sizeCode)} (${priceText})";
             });
             return string.Join(", ", parts);
@@ -263,7 +274,7 @@ internal sealed class SearchTool
     /// map's display label, or the raw code capitalized when it isn't a recognized size.</summary>
     private string FormatSizeHumanReadable(string size)
     {
-        var normalized = _menu.NormalizeSize(size);
+        string normalized = _menu.NormalizeSize(size);
         if (normalized.Length > 0)
         {
             return normalized;
@@ -272,7 +283,7 @@ internal sealed class SearchTool
     }
 
     private static string? GetString(JsonElement record, string field) =>
-        !string.IsNullOrEmpty(field) && record.TryGetProperty(field, out var value) && value.ValueKind == JsonValueKind.String
+        !string.IsNullOrEmpty(field) && record.TryGetProperty(field, out JsonElement value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()
             : null;
 
@@ -289,16 +300,16 @@ internal sealed class SearchTool
 
         try
         {
-            var body = BuildSearchBody(query, selectFields, includeVector, semantic, filter);
-            var url = $"{_config.Endpoint.TrimEnd('/')}/indexes('{Uri.EscapeDataString(_indexName)}')" +
+            Dictionary<string, object?> body = BuildSearchBody(query, selectFields, includeVector, semantic, filter);
+            string url = $"{_config.Endpoint.TrimEnd('/')}/indexes('{Uri.EscapeDataString(_indexName)}')" +
                       $"/docs/search.post.search?api-version={SearchEndpointConfig.ApiVersion}";
 
             using var request = new HttpRequestMessage(HttpMethod.Post, url) { Content = JsonContent.Create(body) };
-            var (headerName, headerValue) = await ResolveAuthHeaderAsync(timeoutCts.Token).ConfigureAwait(false);
+            (string? headerName, string? headerValue) = await ResolveAuthHeaderAsync(timeoutCts.Token).ConfigureAwait(false);
             request.Headers.Add(headerName, headerValue);
 
-            using var response = await _http.SendAsync(request, timeoutCts.Token).ConfigureAwait(false);
-            var text = await response.Content.ReadAsStringAsync(timeoutCts.Token).ConfigureAwait(false);
+            using HttpResponseMessage response = await _http.SendAsync(request, timeoutCts.Token).ConfigureAwait(false);
+            string text = await response.Content.ReadAsStringAsync(timeoutCts.Token).ConfigureAwait(false);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -306,8 +317,8 @@ internal sealed class SearchTool
             }
 
             using var doc = JsonDocument.Parse(text);
-            return doc.RootElement.TryGetProperty("value", out var values)
-                ? values.EnumerateArray().Select(e => e.Clone()).ToList()
+            return doc.RootElement.TryGetProperty("value", out JsonElement values)
+                ? [.. values.EnumerateArray().Select(e => e.Clone())]
                 : [];
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -316,9 +327,9 @@ internal sealed class SearchTool
         }
     }
 
-    private object BuildSearchBody(string query, IReadOnlyList<string> selectFields, bool includeVector, bool semantic, string? filter)
+    private Dictionary<string, object?> BuildSearchBody(string query, IReadOnlyList<string> selectFields, bool includeVector, bool semantic, string? filter)
     {
-        var body = new Dictionary<string, object?>
+        var body = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["search"] = query,
             ["top"] = _searchConfig.TopResults,
@@ -357,8 +368,8 @@ internal sealed class SearchTool
         try
         {
             using var doc = JsonDocument.Parse(body);
-            if (doc.RootElement.TryGetProperty("error", out var error) &&
-                error.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.String)
+            if (doc.RootElement.TryGetProperty("error", out JsonElement error) &&
+                error.TryGetProperty("message", out JsonElement message) && message.ValueKind == JsonValueKind.String)
             {
                 return message.GetString() ?? $"Azure AI Search request failed with status {(int)statusCode}.";
             }
@@ -390,8 +401,8 @@ internal sealed class SearchTool
             return ("api-key", _config.ApiKey);
         }
 
-        var provider = _bearerTokenProvider ?? DefaultAzureCredentialSearchTokenProvider.Instance.Value;
-        var token = await provider.GetTokenAsync(cancellationToken).ConfigureAwait(false);
+        ISearchBearerTokenProvider provider = _bearerTokenProvider ?? DefaultAzureCredentialSearchTokenProvider.Instance.Value;
+        string token = await provider.GetTokenAsync(cancellationToken).ConfigureAwait(false);
         return ("Authorization", $"Bearer {token}");
     }
 }

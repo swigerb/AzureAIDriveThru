@@ -1,4 +1,3 @@
-using System.Linq;
 using System.Text.Json;
 using Conformance.Fakes;
 using Conformance.Harness;
@@ -20,9 +19,9 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// another real pack's own autoFill'd side, needs none), add the drink at its smaller real size (absorbed into the
 /// open slot for free -- ordinary bundle-pivot absorption, not part of #179 itself), then resize
 /// that SAME drink to its larger real size two different ways: via `remove` then `add` (
-/// <see cref="Discovered_pack_resizes_the_combo_drink_via_remove_then_add"/>, the exact live
+/// <see cref="ComboComponentResizeConformanceTests.Discovered_pack_resizes_the_combo_drink_via_remove_then_add"/>, the exact live
 /// sequence) and via the explicit `modify` action (
-/// <see cref="Discovered_pack_resizes_the_combo_drink_via_explicit_modify"/>, #179's other
+/// <see cref="ComboComponentResizeConformanceTests.Discovered_pack_resizes_the_combo_drink_via_explicit_modify"/>, #179's other
 /// required path). Both must land on exactly the SAME observable state: one combo line showing the
 /// LARGER drink, no standalone drink line at all, and a total of EXACTLY this pack's own bundle
 /// price (#179 round 2, issue #184, Rick's required item 1: every pack's own bundle price already
@@ -37,7 +36,7 @@ namespace Conformance.Tests.Scenarios.Ordering;
 /// fundamentally different -- resizing ANY absorbed slot cascades into resizing the WHOLE bundle,
 /// see <see cref="ComboBundleDiscovery.BundleResizeRule"/> and
 /// <see cref="WholeBundleSizeResizeConformanceTests"/>, the dedicated scenario for that rule) is
-/// naturally absent from <see cref="DiscoveredBundleResizeCases"/>'s Theory rows rather than
+/// naturally absent from <see cref="ComboComponentResizeConformanceTests.DiscoveredBundleResizeCases"/>'s Theory rows rather than
 /// failing -- see <see cref="ComboBundleDiscovery.Discover"/>.
 ///
 /// Runs under a FixedClock pinned just before the happy-hour window opens (same fixture shape as
@@ -59,13 +58,13 @@ public static class ComboBundleDiscovery
         SizedItem? Side,
         SizedItem DrinkFromSize,
         SizedItem DrinkToSize,
-        /// <summary>
-        /// #283: null for a REAL pack under the repo's own <c>personas/</c> root (<see
-        /// cref="RepoPaths.PersonasDirectory"/>); set to <see cref="RepoPaths.FixturePersonasDirectory"/>
-        /// for a synthetic, TEST-ONLY fixture pack (e.g. <c>test-zeta</c>) discovered from that
-        /// second root instead, so <see cref="ComboBundleResizeFixture"/> knows which PERSONAS_DIR
-        /// to launch the backend-under-test against for this row.
-        /// </summary>
+        // <summary>
+        // #283: null for a REAL pack under the repo's own <c>personas/</c> root (<see
+        // cref="RepoPaths.PersonasDirectory"/>); set to <see cref="RepoPaths.FixturePersonasDirectory"/>
+        // for a synthetic, TEST-ONLY fixture pack (e.g. <c>test-zeta</c>) discovered from that
+        // second root instead, so <see cref="ComboBundleResizeFixture"/> knows which PERSONAS_DIR
+        // to launch the backend-under-test against for this row.
+        // </summary>
         string? PersonasDir = null)
     {
         public override string ToString() => PersonaId;
@@ -86,8 +85,8 @@ public static class ComboBundleDiscovery
         SizedItem DrinkFromSize,
         SizedItem DrinkToSize,
         SizedItem SecondDrink,
-        /// <summary>#283: see <see cref="BundleResizeCase.PersonasDir"/>'s own doc comment --
-        /// identical null-means-real-pack convention.</summary>
+        // <summary>#283: see <see cref="BundleResizeCase.PersonasDir"/>'s own doc comment --
+        // identical null-means-real-pack convention.</summary>
         string? PersonasDir = null)
     {
         public override string ToString() => PersonaId;
@@ -122,16 +121,16 @@ public static class ComboBundleDiscovery
     /// <summary>This pack's own persona.json `machines` block entries currently reported `"down"`
     /// -- mirrors <see cref="GoldenMenuCategoryData.LoadCurrentlyDownMachines"/>, generalized to any
     /// pack id instead of a hardcoded single pack name.</summary>
-    private static IReadOnlySet<string> CurrentlyDownMachines(string personasDir, string personaId)
+    private static HashSet<string> CurrentlyDownMachines(string personasDir, string personaId)
     {
-        var personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
+        string personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
         using var doc = JsonDocument.Parse(File.ReadAllText(personaJsonPath));
         var down = new HashSet<string>(StringComparer.Ordinal);
-        if (doc.RootElement.TryGetProperty("machines", out var machines))
+        if (doc.RootElement.TryGetProperty("machines", out JsonElement machines))
         {
-            foreach (var machine in machines.EnumerateObject())
+            foreach (JsonProperty machine in machines.EnumerateObject())
             {
-                if (machine.Value.TryGetProperty("status", out var status) && status.GetString() == "down")
+                if (machine.Value.TryGetProperty("status", out JsonElement status) && status.GetString() == "down")
                 {
                     down.Add(machine.Name);
                 }
@@ -150,10 +149,10 @@ public static class ComboBundleDiscovery
     /// generic per-component <see cref="Discover"/> scenario does not apply to.</summary>
     public static string BundleResizeRule(string personasDir, string personaId)
     {
-        var personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
+        string personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
         using var doc = JsonDocument.Parse(File.ReadAllText(personaJsonPath));
-        if (doc.RootElement.TryGetProperty("bundles", out var bundles) &&
-            bundles.TryGetProperty("resizeRule", out var rule) &&
+        if (doc.RootElement.TryGetProperty("bundles", out JsonElement bundles) &&
+            bundles.TryGetProperty("resizeRule", out JsonElement rule) &&
             rule.GetString() is { Length: > 0 } ruleValue)
         {
             return ruleValue;
@@ -179,12 +178,12 @@ public static class ComboBundleDiscovery
     /// here rather than throwing, since this is a test assertion helper, not production code).</summary>
     public static string CanonicalSizeLabel(string personasDir, string personaId, string size)
     {
-        var personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
+        string personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
         using var doc = JsonDocument.Parse(File.ReadAllText(personaJsonPath));
-        if (doc.RootElement.TryGetProperty("sizes", out var sizes) &&
-            sizes.TryGetProperty("canonical", out var canonical))
+        if (doc.RootElement.TryGetProperty("sizes", out JsonElement sizes) &&
+            sizes.TryGetProperty("canonical", out JsonElement canonical))
         {
-            foreach (var entry in canonical.EnumerateObject())
+            foreach (JsonProperty entry in canonical.EnumerateObject())
             {
                 if (string.Equals(entry.Name, size, StringComparison.OrdinalIgnoreCase) &&
                     entry.Value.GetString() is { Length: > 0 } label)
@@ -197,35 +196,35 @@ public static class ComboBundleDiscovery
         return size;
     }
 
-    private static IReadOnlyList<CandidateItem> ReadMenuItems(string personasDir, string personaId)
+    private static List<CandidateItem> ReadMenuItems(string personasDir, string personaId)
     {
-        var menuItemsPath = Path.Combine(personasDir, personaId, "menu", "menuItems.json");
+        string menuItemsPath = Path.Combine(personasDir, personaId, "menu", "menuItems.json");
         using var doc = JsonDocument.Parse(File.ReadAllText(menuItemsPath));
 
         var items = new List<CandidateItem>();
-        foreach (var category in doc.RootElement.GetProperty("menuItems").EnumerateArray())
+        foreach (JsonElement category in doc.RootElement.GetProperty("menuItems").EnumerateArray())
         {
-            foreach (var item in category.GetProperty("items").EnumerateArray())
+            foreach (JsonElement item in category.GetProperty("items").EnumerateArray())
             {
-                var name = item.GetProperty("name").GetString()!;
-                var comboSlot = item.TryGetProperty("comboSlot", out var slotEl) ? slotEl.GetString() : null;
+                string name = item.GetProperty("name").GetString()!;
+                string? comboSlot = item.TryGetProperty("comboSlot", out JsonElement slotEl) ? slotEl.GetString() : null;
                 var sizes = item.GetProperty("sizes").EnumerateArray()
                     .Select(s => (s.GetProperty("size").GetString()!, s.GetProperty("price").GetDecimal()))
                     .ToList();
-                var requiresMachine = item.TryGetProperty("requiresMachine", out var rm) ? rm.GetString() : null;
+                string? requiresMachine = item.TryGetProperty("requiresMachine", out JsonElement rm) ? rm.GetString() : null;
 
                 IReadOnlyList<string>? bundleSlots = null;
                 var autoFillKeys = new HashSet<string>(StringComparer.Ordinal);
-                if (item.TryGetProperty("bundle", out var bundleEl))
+                if (item.TryGetProperty("bundle", out JsonElement bundleEl))
                 {
-                    if (bundleEl.TryGetProperty("slots", out var slotsEl))
+                    if (bundleEl.TryGetProperty("slots", out JsonElement slotsEl))
                     {
-                        bundleSlots = slotsEl.EnumerateArray().Select(s => s.GetString()!).ToList();
+                        bundleSlots = [.. slotsEl.EnumerateArray().Select(s => s.GetString()!)];
                     }
 
-                    if (bundleEl.TryGetProperty("autoFill", out var autoFillEl))
+                    if (bundleEl.TryGetProperty("autoFill", out JsonElement autoFillEl))
                     {
-                        foreach (var prop in autoFillEl.EnumerateObject())
+                        foreach (JsonProperty prop in autoFillEl.EnumerateObject())
                         {
                             autoFillKeys.Add(prop.Name);
                         }
@@ -268,14 +267,14 @@ public static class ComboBundleDiscovery
             return null;
         }
 
-        var items = ReadMenuItems(personasDir, personaId);
+        List<CandidateItem> items = ReadMenuItems(personasDir, personaId);
 
-        bool IsMachineGated(CandidateItem item, IReadOnlySet<string> downMachines) =>
+        static bool IsMachineGated(CandidateItem item, IReadOnlySet<string> downMachines) =>
             item.RequiresMachine is { } machine && downMachines.Contains(machine);
 
-        var downMachines = CurrentlyDownMachines(personasDir, personaId);
+        HashSet<string> downMachines = CurrentlyDownMachines(personasDir, personaId);
 
-        foreach (var bundleItem in items.Where(i => i.BundleSlots is not null))
+        foreach (CandidateItem? bundleItem in items.Where(i => i.BundleSlots is not null))
         {
             if (!bundleItem.BundleSlots!.Contains("drinks") || bundleItem.AutoFillKeys.Contains("drinks"))
             {
@@ -287,7 +286,7 @@ public static class ComboBundleDiscovery
                 continue;
             }
 
-            var drinkItem = items.FirstOrDefault(i =>
+            CandidateItem? drinkItem = items.FirstOrDefault(i =>
                 i.ComboSlot == "drinks" &&
                 !IsMachineGated(i, downMachines) &&
                 i.Sizes.Select(s => s.Price).Distinct().Count() >= 2);
@@ -300,13 +299,13 @@ public static class ComboBundleDiscovery
                 .GroupBy(s => s.Price).Select(g => g.First())
                 .OrderBy(s => s.Price)
                 .ToList();
-            var fromSize = sortedDrinkSizes[0];
-            var toSize = sortedDrinkSizes[1];
+            (string Size, decimal Price) fromSize = sortedDrinkSizes[0];
+            (string Size, decimal Price) toSize = sortedDrinkSizes[1];
 
             SizedItem? side = null;
             if (bundleItem.BundleSlots!.Contains("sides") && !bundleItem.AutoFillKeys.Contains("sides"))
             {
-                var sideItem = items.FirstOrDefault(i =>
+                CandidateItem? sideItem = items.FirstOrDefault(i =>
                     i.ComboSlot == "sides" && !IsMachineGated(i, downMachines) && i.Sizes.Count > 0);
                 if (sideItem is null)
                 {
@@ -321,14 +320,14 @@ public static class ComboBundleDiscovery
                 // sort first in this pack's own menuItems.json -- sort by price like the drink
                 // sizes above and take the largest, so a pack whose own JSON lists Small before
                 // Large (or any other order) still reproduces the live sequence's own size.
-                var sideSize = sideItem.Sizes
+                (string Size, decimal Price) sideSize = sideItem.Sizes
                     .GroupBy(s => s.Price).Select(g => g.First())
                     .OrderByDescending(s => s.Price)
                     .First();
                 side = new SizedItem(sideItem.Name, sideSize.Size, sideSize.Price);
             }
 
-            var bundleSize = bundleItem.Sizes[0];
+            (string Size, decimal Price) bundleSize = bundleItem.Sizes[0];
             return new BundleResizeCase(
                 personaId,
                 bundleItem.Name,
@@ -360,16 +359,16 @@ public static class ComboBundleDiscovery
             return null;
         }
 
-        var items = ReadMenuItems(personasDir, personaId);
+        List<CandidateItem> items = ReadMenuItems(personasDir, personaId);
 
-        bool IsMachineGated(CandidateItem item, IReadOnlySet<string> downMachines) =>
+        static bool IsMachineGated(CandidateItem item, IReadOnlySet<string> downMachines) =>
             item.RequiresMachine is { } machine && downMachines.Contains(machine);
 
-        var downMachines = CurrentlyDownMachines(personasDir, personaId);
+        HashSet<string> downMachines = CurrentlyDownMachines(personasDir, personaId);
 
         var openDrinkBundles = items
             .Where(i => i.BundleSlots is not null
-                && i.BundleSlots!.Contains("drinks") && !i.AutoFillKeys.Contains("drinks")
+                && i.BundleSlots.Contains("drinks") && !i.AutoFillKeys.Contains("drinks")
                 && i.Sizes.Count > 0)
             .ToList();
         if (openDrinkBundles.Count < 2)
@@ -377,10 +376,10 @@ public static class ComboBundleDiscovery
             return null;
         }
 
-        var first = openDrinkBundles[0];
-        var second = openDrinkBundles[1];
+        CandidateItem first = openDrinkBundles[0];
+        CandidateItem second = openDrinkBundles[1];
 
-        var drinkItem = items.FirstOrDefault(i =>
+        CandidateItem? drinkItem = items.FirstOrDefault(i =>
             i.ComboSlot == "drinks" &&
             !IsMachineGated(i, downMachines) &&
             i.Sizes.Select(s => s.Price).Distinct().Count() >= 2);
@@ -393,10 +392,10 @@ public static class ComboBundleDiscovery
             .GroupBy(s => s.Price).Select(g => g.First())
             .OrderBy(s => s.Price)
             .ToList();
-        var fromSize = sortedDrinkSizes[0];
-        var toSize = sortedDrinkSizes[1];
+        (string Size, decimal Price) fromSize = sortedDrinkSizes[0];
+        (string Size, decimal Price) toSize = sortedDrinkSizes[1];
 
-        var secondDrinkItem = items.FirstOrDefault(i =>
+        CandidateItem? secondDrinkItem = items.FirstOrDefault(i =>
             i.ComboSlot == "drinks" && i.Name != drinkItem.Name &&
             !IsMachineGated(i, downMachines) && i.Sizes.Count > 0);
         if (secondDrinkItem is null)
@@ -404,8 +403,8 @@ public static class ComboBundleDiscovery
             return null;
         }
 
-        var firstSize = first.Sizes[0];
-        var secondSize = second.Sizes[0];
+        (string Size, decimal Price) firstSize = first.Sizes[0];
+        (string Size, decimal Price) secondSize = second.Sizes[0];
         return new TwoInstanceCase(
             personaId,
             first.Name,
@@ -439,10 +438,10 @@ public static class ComboBundleDiscovery
             return null;
         }
 
-        var items = ReadMenuItems(personasDir, personaId);
-        var downMachines = CurrentlyDownMachines(personasDir, personaId);
+        List<CandidateItem> items = ReadMenuItems(personasDir, personaId);
+        HashSet<string> downMachines = CurrentlyDownMachines(personasDir, personaId);
 
-        foreach (var bundleItem in items.Where(i => i.BundleSlots is not null))
+        foreach (CandidateItem? bundleItem in items.Where(i => i.BundleSlots is not null))
         {
             var distinctSizes = bundleItem.Sizes
                 .GroupBy(s => s.Price).Select(g => g.First())
@@ -453,19 +452,19 @@ public static class ComboBundleDiscovery
                 continue;
             }
 
-            var fromSize = distinctSizes[0];
-            var toSize = distinctSizes[^1];
+            (string Size, decimal Price) fromSize = distinctSizes[0];
+            (string Size, decimal Price) toSize = distinctSizes[^1];
 
             SizedItem? drink = null;
             if (bundleItem.BundleSlots!.Contains("drinks") && !bundleItem.AutoFillKeys.Contains("drinks"))
             {
-                var drinkItem = items.FirstOrDefault(i =>
+                CandidateItem? drinkItem = items.FirstOrDefault(i =>
                     i.ComboSlot == "drinks" &&
                     !(i.RequiresMachine is { } machine && downMachines.Contains(machine)) &&
                     i.Sizes.Count > 0);
                 if (drinkItem is not null)
                 {
-                    var drinkSize = drinkItem.Sizes[0];
+                    (string Size, decimal Price) drinkSize = drinkItem.Sizes[0];
                     drink = new SizedItem(drinkItem.Name, drinkSize.Size, drinkSize.Price);
                 }
             }
@@ -489,10 +488,10 @@ public static class ComboBundleDiscovery
             return null;
         }
 
-        var items = ReadMenuItems(personasDir, personaId);
-        var downMachines = CurrentlyDownMachines(personasDir, personaId);
+        List<CandidateItem> items = ReadMenuItems(personasDir, personaId);
+        HashSet<string> downMachines = CurrentlyDownMachines(personasDir, personaId);
 
-        foreach (var bundleItem in items.Where(i => i.BundleSlots is not null))
+        foreach (CandidateItem? bundleItem in items.Where(i => i.BundleSlots is not null))
         {
             if (!bundleItem.BundleSlots!.Contains("drinks") || bundleItem.AutoFillKeys.Contains("drinks"))
             {
@@ -508,8 +507,8 @@ public static class ComboBundleDiscovery
                 continue;
             }
 
-            var bundleSize = bundleSizes.Count >= 3 ? bundleSizes[1] : bundleSizes[0];
-            var drinkItem = items.FirstOrDefault(i =>
+            (string Size, decimal Price) bundleSize = bundleSizes.Count >= 3 ? bundleSizes[1] : bundleSizes[0];
+            CandidateItem? drinkItem = items.FirstOrDefault(i =>
                 i.ComboSlot == "drinks" &&
                 !(i.RequiresMachine is { } machine && downMachines.Contains(machine)) &&
                 i.Sizes.Select(s => s.Price).Distinct().Count() >= 2);
@@ -518,7 +517,7 @@ public static class ComboBundleDiscovery
                 continue;
             }
 
-            var drinkSize = drinkItem.Sizes
+            (string Size, decimal Price) drinkSize = drinkItem.Sizes
                 .Where(s => !string.Equals(s.Size, bundleSize.Size, StringComparison.OrdinalIgnoreCase))
                 .GroupBy(s => s.Price).Select(g => g.First())
                 .OrderByDescending(s => s.Price)
@@ -573,11 +572,11 @@ public sealed class ComboComponentResizeConformanceTests
     /// </summary>
     public static TheoryData<ComboBundleDiscovery.BundleResizeCase> DiscoveredBundleResizeCases()
     {
-        var repoRoot = RepoPaths.FindRepoRoot();
+        string repoRoot = RepoPaths.FindRepoRoot();
         var data = new TheoryData<ComboBundleDiscovery.BundleResizeCase>();
 
-        var personasDir = RepoPaths.PersonasDirectory(repoRoot);
-        foreach (var personaId in ConformancePersonas.DiscoverFromDisk())
+        string personasDir = RepoPaths.PersonasDirectory(repoRoot);
+        foreach (string personaId in ConformancePersonas.DiscoverFromDisk())
         {
             if (ComboBundleDiscovery.Discover(personasDir, personaId) is { } discovered)
             {
@@ -585,8 +584,8 @@ public sealed class ComboComponentResizeConformanceTests
             }
         }
 
-        var fixturePersonasDir = RepoPaths.FixturePersonasDirectory(repoRoot);
-        foreach (var personaId in ConformancePersonas.DiscoverFromDisk(fixturePersonasDir))
+        string fixturePersonasDir = RepoPaths.FixturePersonasDirectory(repoRoot);
+        foreach (string personaId in ConformancePersonas.DiscoverFromDisk(fixturePersonasDir))
         {
             if (ComboBundleDiscovery.Discover(fixturePersonasDir, personaId) is { } discovered)
             {
@@ -608,16 +607,16 @@ public sealed class ComboComponentResizeConformanceTests
         [Trait("Dotnet", "ready")]
         public async Task ComponentUpcharge_charges_positive_delta_and_serializes_component_upcharges()
         {
-            var ct = TestContext.Current.CancellationToken;
+            CancellationToken ct = TestContext.Current.CancellationToken;
             await using var fixture = new ComboBundleResizeFixture(PersonaId);
             await fixture.InitializeAsync();
             await fixture.RunAsync(async () =>
             {
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+                (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
                     fixture, ct, persona: PersonaId, mode: "lunch");
-                await using var _ = browser;
+                await using RealtimeBrowserClient _ = browser;
 
-                var medium = await OrderScenarioHelpers.RunOrderStepsAsync(
+                ToolCallResult medium = await OrderScenarioHelpers.RunOrderStepsAsync(
                     connection, browser,
                     [
                         ("add", Bundle, "standard", 1, 10.19m),
@@ -627,7 +626,7 @@ public sealed class ComboComponentResizeConformanceTests
                     roundTripIndex, ct, callIdPrefix: "call_component_upcharge_medium");
                 OrderScenarioHelpers.AssertMoneyEqual(10.19m, OrderScenarioHelpers.GetOrderTotal(medium.ToolResultJson!), "Medium side/drink are included.");
 
-                var largeDrink = await OrderScenarioHelpers.RunOrderStepsAsync(
+                ToolCallResult largeDrink = await OrderScenarioHelpers.RunOrderStepsAsync(
                     connection, browser,
                     [("modify", Drink, "large", 1, 3.39m)],
                     medium.RoundTripIndex, ct, callIdPrefix: "call_component_upcharge_large_drink");
@@ -638,19 +637,19 @@ public sealed class ComboComponentResizeConformanceTests
                 OrderScenarioHelpers.AssertMoneyEqual(10.69m, OrderScenarioHelpers.GetOrderTotal(largeDrink.ToolResultJson!), "Large drink adds only its above-medium delta.");
 
                 using var largeDrinkDoc = JsonDocument.Parse(largeDrink.ToolResultJson!);
-                var combo = largeDrinkDoc.RootElement.GetProperty("items")[0];
+                JsonElement combo = largeDrinkDoc.RootElement.GetProperty("items")[0];
                 Assert.Equal(new[] { "Medium Tots", "Large Cherry Limeade" },
                     combo.GetProperty("components").EnumerateArray().Select(e => e.GetString()).ToArray());
                 Assert.Equal(new[] { 0m, 0.50m },
                     combo.GetProperty("componentUpcharges").EnumerateArray().Select(e => e.GetDecimal()).ToArray());
 
-                var largeBoth = await OrderScenarioHelpers.RunOrderStepsAsync(
+                ToolCallResult largeBoth = await OrderScenarioHelpers.RunOrderStepsAsync(
                     connection, browser,
                     [("modify", Side, "large", 1, 3.49m)],
                     largeDrink.RoundTripIndex, ct, callIdPrefix: "call_component_upcharge_large_side");
                 OrderScenarioHelpers.AssertMoneyEqual(11.39m, OrderScenarioHelpers.GetOrderTotal(largeBoth.ToolResultJson!), "Large side and drink add both positive deltas.");
 
-                var backToMedium = await OrderScenarioHelpers.RunOrderStepsAsync(
+                ToolCallResult backToMedium = await OrderScenarioHelpers.RunOrderStepsAsync(
                     connection, browser,
                     [
                         ("modify", Drink, "medium", 1, 2.89m),
@@ -690,14 +689,14 @@ public sealed class ComboComponentResizeConformanceTests
     private static void AssertResizedComboOnlyNoStandaloneDrink(
         ComboBundleDiscovery.BundleResizeCase bundleCase, string orderSummaryJson)
     {
-        var order = JsonDocument.Parse(orderSummaryJson).RootElement;
+        var order = JsonElement.Parse(orderSummaryJson);
         var items = order.GetProperty("items").EnumerateArray().ToList();
 
         Assert.Single(items); // exactly one combo line, never a standalone drink duplicate
 
-        var comboItem = items[0];
+        JsonElement comboItem = items[0];
         Assert.Equal(bundleCase.BundleName, comboItem.GetProperty("item").GetString());
-        var display = comboItem.GetProperty("display").GetString()!;
+        string? display = comboItem.GetProperty("display").GetString();
         // #283: compare against this pack's own canonical DISPLAY label, not the raw menu size
         // key -- they only coincide by accident on packs whose own menuItems.json happens to
         // already spell its size keys in display casing. Checks the full "{label} {drink name}"
@@ -706,9 +705,9 @@ public sealed class ComboComponentResizeConformanceTests
         // (e.g. test-delta's "Regular Delta Fries" side next to a "Regular"-sized drink) would
         // otherwise make Assert.DoesNotContain(fromLabel, display) fail on the side's own
         // unrelated, still-correct "Regular" text.
-        var personasDir = bundleCase.PersonasDir ?? RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
-        var toLabel = ComboBundleDiscovery.CanonicalSizeLabel(personasDir, bundleCase.PersonaId, bundleCase.DrinkToSize.Size);
-        var fromLabel = ComboBundleDiscovery.CanonicalSizeLabel(personasDir, bundleCase.PersonaId, bundleCase.DrinkFromSize.Size);
+        string personasDir = bundleCase.PersonasDir ?? RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
+        string toLabel = ComboBundleDiscovery.CanonicalSizeLabel(personasDir, bundleCase.PersonaId, bundleCase.DrinkToSize.Size);
+        string fromLabel = ComboBundleDiscovery.CanonicalSizeLabel(personasDir, bundleCase.PersonaId, bundleCase.DrinkFromSize.Size);
         Assert.Contains($"{toLabel} {bundleCase.DrinkToSize.Name}", display);
         Assert.DoesNotContain($"{fromLabel} {bundleCase.DrinkFromSize.Name}", display);
 
@@ -748,24 +747,24 @@ public sealed class ComboComponentResizeConformanceTests
     // guard above instead of being silently skipped.
     [Theory(SkipTestWithoutData = true)]
     [Trait("Dotnet", "ready")]
-    [MemberData(nameof(DiscoveredBundleResizeCases))]
+    [MemberData(nameof(DiscoveredBundleResizeCases), DisableDiscoveryEnumeration = true)]
     public async Task Discovered_pack_resizes_the_combo_drink_via_remove_then_add(
         ComboBundleDiscovery.BundleResizeCase bundleCase)
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         await using var fixture = new ComboBundleResizeFixture(bundleCase.PersonaId, bundleCase.PersonasDir);
         await fixture.InitializeAsync();
         await fixture.RunAsync(async () =>
         {
-            var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+            (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
                 fixture, ct, persona: bundleCase.PersonaId);
-            await using var _ = browser;
+            await using RealtimeBrowserClient _ = browser;
 
-            var seeded = await SeedComboThenFillDrinkAsync(connection, browser, bundleCase, roundTripIndex, ct);
+            ToolCallResult seeded = await SeedComboThenFillDrinkAsync(connection, browser, bundleCase, roundTripIndex, ct);
 
             // The exact #179 live sequence: `remove` the slot-filling drink at its CURRENT size,
             // then `add` the SAME item at a DIFFERENT size, on the SAME connection/order.
-            var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+            ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
                 connection, browser,
                 [
                     ("remove", bundleCase.DrinkFromSize.Name, bundleCase.DrinkFromSize.Size, 1, 0m),
@@ -781,25 +780,25 @@ public sealed class ComboComponentResizeConformanceTests
     // comment above -- re-tagged `ready` for the same reason (fixture pack + floor guard).
     [Theory(SkipTestWithoutData = true)]
     [Trait("Dotnet", "ready")]
-    [MemberData(nameof(DiscoveredBundleResizeCases))]
+    [MemberData(nameof(DiscoveredBundleResizeCases), DisableDiscoveryEnumeration = true)]
     public async Task Discovered_pack_resizes_the_combo_drink_via_explicit_modify(
         ComboBundleDiscovery.BundleResizeCase bundleCase)
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         await using var fixture = new ComboBundleResizeFixture(bundleCase.PersonaId, bundleCase.PersonasDir);
         await fixture.InitializeAsync();
         await fixture.RunAsync(async () =>
         {
-            var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+            (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
                 fixture, ct, persona: bundleCase.PersonaId);
-            await using var _ = browser;
+            await using RealtimeBrowserClient _ = browser;
 
-            var seedResult = await SeedComboThenFillDrinkAsync(connection, browser, bundleCase, roundTripIndex, ct);
+            ToolCallResult seedResult = await SeedComboThenFillDrinkAsync(connection, browser, bundleCase, roundTripIndex, ct);
 
             // #179's other required path: the explicit `modify` action resizes the slot item in
             // place directly (no `remove` call at all), priced identically to the remove-then-add
             // path above.
-            var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+            ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
                 connection, browser,
                 [("modify", bundleCase.DrinkToSize.Name, bundleCase.DrinkToSize.Size, 1, bundleCase.DrinkToSize.Price)],
                 seedResult.RoundTripIndex, ct, callIdPrefix: "call_modify");
@@ -817,20 +816,20 @@ public sealed class ComboComponentResizeConformanceTests
     // comment above -- re-tagged `ready` for the same reason (fixture pack + floor guard).
     [Theory(SkipTestWithoutData = true)]
     [Trait("Dotnet", "ready")]
-    [MemberData(nameof(DiscoveredBundleResizeCases))]
+    [MemberData(nameof(DiscoveredBundleResizeCases), DisableDiscoveryEnumeration = true)]
     public async Task Discovered_pack_charges_the_same_total_large_up_front_or_resized_later(
         ComboBundleDiscovery.BundleResizeCase bundleCase)
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         await using var fixture = new ComboBundleResizeFixture(bundleCase.PersonaId, bundleCase.PersonasDir);
         await fixture.InitializeAsync();
         await fixture.RunAsync(async () =>
         {
             async Task<decimal> UpFrontTotalAsync()
             {
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+                (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
                     fixture, ct, persona: bundleCase.PersonaId);
-                await using var _ = browser;
+                await using RealtimeBrowserClient _ = browser;
 
                 var steps = new List<(string Action, string Item, string Size, int Quantity, decimal Price)>
                 {
@@ -843,27 +842,27 @@ public sealed class ComboComponentResizeConformanceTests
 
                 steps.Add(("add", bundleCase.DrinkToSize.Name, bundleCase.DrinkToSize.Size, 1, bundleCase.DrinkToSize.Price));
 
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+                ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
                     connection, browser, steps, roundTripIndex, ct, callIdPrefix: "call_upfront");
                 return OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!);
             }
 
             async Task<decimal> ResizedLaterTotalAsync()
             {
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+                (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
                     fixture, ct, persona: bundleCase.PersonaId);
-                await using var _ = browser;
+                await using RealtimeBrowserClient _ = browser;
 
-                var seeded = await SeedComboThenFillDrinkAsync(connection, browser, bundleCase, roundTripIndex, ct);
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+                ToolCallResult seeded = await SeedComboThenFillDrinkAsync(connection, browser, bundleCase, roundTripIndex, ct);
+                ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
                     connection, browser,
                     [("modify", bundleCase.DrinkToSize.Name, bundleCase.DrinkToSize.Size, 1, bundleCase.DrinkToSize.Price)],
                     seeded.RoundTripIndex, ct, callIdPrefix: "call_resize_later");
                 return OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!);
             }
 
-            var upFrontTotal = await UpFrontTotalAsync();
-            var resizedLaterTotal = await ResizedLaterTotalAsync();
+            decimal upFrontTotal = await UpFrontTotalAsync();
+            decimal resizedLaterTotal = await ResizedLaterTotalAsync();
 
             OrderScenarioHelpers.AssertMoneyEqual(
                 upFrontTotal, resizedLaterTotal,
@@ -878,11 +877,11 @@ public sealed class ComboComponentResizeConformanceTests
     /// see that method's own doc comment.</summary>
     public static TheoryData<ComboBundleDiscovery.TwoInstanceCase> DiscoveredTwoInstanceResizeCases()
     {
-        var repoRoot = RepoPaths.FindRepoRoot();
+        string repoRoot = RepoPaths.FindRepoRoot();
         var data = new TheoryData<ComboBundleDiscovery.TwoInstanceCase>();
 
-        var personasDir = RepoPaths.PersonasDirectory(repoRoot);
-        foreach (var personaId in ConformancePersonas.DiscoverFromDisk())
+        string personasDir = RepoPaths.PersonasDirectory(repoRoot);
+        foreach (string personaId in ConformancePersonas.DiscoverFromDisk())
         {
             if (ComboBundleDiscovery.DiscoverTwoInstance(personasDir, personaId) is { } discovered)
             {
@@ -890,8 +889,8 @@ public sealed class ComboComponentResizeConformanceTests
             }
         }
 
-        var fixturePersonasDir = RepoPaths.FixturePersonasDirectory(repoRoot);
-        foreach (var personaId in ConformancePersonas.DiscoverFromDisk(fixturePersonasDir))
+        string fixturePersonasDir = RepoPaths.FixturePersonasDirectory(repoRoot);
+        foreach (string personaId in ConformancePersonas.DiscoverFromDisk(fixturePersonasDir))
         {
             if (ComboBundleDiscovery.DiscoverTwoInstance(fixturePersonasDir, personaId) is { } discovered)
             {
@@ -915,19 +914,19 @@ public sealed class ComboComponentResizeConformanceTests
     // distinctly-named bundle gives DiscoverTwoInstance a real row too).
     [Theory(SkipTestWithoutData = true)]
     [Trait("Dotnet", "ready")]
-    [MemberData(nameof(DiscoveredTwoInstanceResizeCases))]
+    [MemberData(nameof(DiscoveredTwoInstanceResizeCases), DisableDiscoveryEnumeration = true)]
     public async Task Discovered_pack_with_two_bundle_instances_resizes_only_the_holder(
         ComboBundleDiscovery.TwoInstanceCase twoCase)
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
         await using var fixture = new ComboBundleResizeFixture(twoCase.PersonaId, twoCase.PersonasDir);
         await fixture.InitializeAsync();
         await fixture.RunAsync(async () =>
         {
-            var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+            (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
                 fixture, ct, persona: twoCase.PersonaId);
-            await using var _ = browser;
+            await using RealtimeBrowserClient _ = browser;
 
             var seedSteps = new List<(string Action, string Item, string Size, int Quantity, decimal Price)>
             {
@@ -940,39 +939,39 @@ public sealed class ComboComponentResizeConformanceTests
                 // FIRST-added instance instead.
                 ("add", twoCase.SecondDrink.Name, twoCase.SecondDrink.Size, 1, twoCase.SecondDrink.Price),
             };
-            var seeded = await OrderScenarioHelpers.RunOrderStepsAsync(
+            ToolCallResult seeded = await OrderScenarioHelpers.RunOrderStepsAsync(
                 connection, browser, seedSteps, roundTripIndex, ct, callIdPrefix: "call_seed_two");
 
-            var seededItems = JsonDocument.Parse(seeded.ToolResultJson!).RootElement
+            var seededItems = JsonElement.Parse(seeded.ToolResultJson!)
                 .GetProperty("items").EnumerateArray().ToList();
             Assert.Equal(2, seededItems.Count);
 
-            var seededFirstInstance = seededItems.Single(i => i.GetProperty("item").GetString() == twoCase.FirstBundleName);
-            var seededSecondInstance = seededItems.Single(i => i.GetProperty("item").GetString() == twoCase.SecondBundleName);
+            JsonElement seededFirstInstance = seededItems.Single(i => i.GetProperty("item").GetString() == twoCase.FirstBundleName);
+            JsonElement seededSecondInstance = seededItems.Single(i => i.GetProperty("item").GetString() == twoCase.SecondBundleName);
             Assert.Contains(twoCase.SecondDrink.Name, seededFirstInstance.GetProperty("display").GetString());
             Assert.Contains(twoCase.DrinkFromSize.Name, seededSecondInstance.GetProperty("display").GetString());
 
             // Resize the drink that only the most-recently-added (second) instance holds.
-            var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+            ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
                 connection, browser,
                 [("modify", twoCase.DrinkToSize.Name, twoCase.DrinkToSize.Size, 1, twoCase.DrinkToSize.Price)],
                 seeded.RoundTripIndex, ct, callIdPrefix: "call_resize_holder");
 
-            var items = JsonDocument.Parse(result.ToolResultJson!).RootElement
+            var items = JsonElement.Parse(result.ToolResultJson!)
                 .GetProperty("items").EnumerateArray().ToList();
             Assert.Equal(2, items.Count);
 
-            var resizedSecondInstance = items.Single(i => i.GetProperty("item").GetString() == twoCase.SecondBundleName);
-            var untouchedFirstInstance = items.Single(i => i.GetProperty("item").GetString() == twoCase.FirstBundleName);
+            JsonElement resizedSecondInstance = items.Single(i => i.GetProperty("item").GetString() == twoCase.SecondBundleName);
+            JsonElement untouchedFirstInstance = items.Single(i => i.GetProperty("item").GetString() == twoCase.FirstBundleName);
 
             // #283: compare against this pack's own canonical DISPLAY label, not the raw menu
             // size key -- see AssertResizedComboOnlyNoStandaloneDrink's own comment. Checks the
             // full "{label} {drink name}" segment, not a bare size label alone, for the same
             // reason (a same-size open side slot would otherwise collide on the bare label).
-            var personasDir = twoCase.PersonasDir ?? RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
-            var resizedDisplay = resizedSecondInstance.GetProperty("display").GetString()!;
-            var toLabel = ComboBundleDiscovery.CanonicalSizeLabel(personasDir, twoCase.PersonaId, twoCase.DrinkToSize.Size);
-            var fromLabel = ComboBundleDiscovery.CanonicalSizeLabel(personasDir, twoCase.PersonaId, twoCase.DrinkFromSize.Size);
+            string personasDir = twoCase.PersonasDir ?? RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
+            string resizedDisplay = resizedSecondInstance.GetProperty("display").GetString()!;
+            string toLabel = ComboBundleDiscovery.CanonicalSizeLabel(personasDir, twoCase.PersonaId, twoCase.DrinkToSize.Size);
+            string fromLabel = ComboBundleDiscovery.CanonicalSizeLabel(personasDir, twoCase.PersonaId, twoCase.DrinkFromSize.Size);
             Assert.Contains($"{toLabel} {twoCase.DrinkToSize.Name}", resizedDisplay);
             Assert.DoesNotContain($"{fromLabel} {twoCase.DrinkFromSize.Name}", resizedDisplay);
             Assert.Contains(twoCase.SecondDrink.Name, untouchedFirstInstance.GetProperty("display").GetString());
@@ -1012,11 +1011,11 @@ public sealed class WholeBundleSizeResizeConformanceTests
 {
     public static TheoryData<ComboBundleDiscovery.WholeBundleResizeCase> DiscoveredWholeBundleResizeCases()
     {
-        var personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
+        string personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
         var data = new TheoryData<ComboBundleDiscovery.WholeBundleResizeCase>();
-        foreach (var personaId in ConformancePersonas.DiscoverFromDisk())
+        foreach (string personaId in ConformancePersonas.DiscoverFromDisk())
         {
-            var discovered = ComboBundleDiscovery.DiscoverWholeBundleResize(personasDir, personaId);
+            ComboBundleDiscovery.WholeBundleResizeCase? discovered = ComboBundleDiscovery.DiscoverWholeBundleResize(personasDir, personaId);
             if (discovered is not null)
             {
                 data.Add(discovered);
@@ -1028,18 +1027,18 @@ public sealed class WholeBundleSizeResizeConformanceTests
 
     [Theory]
     [Trait("Dotnet", "ready")]
-    [MemberData(nameof(DiscoveredWholeBundleResizeCases))]
+    [MemberData(nameof(DiscoveredWholeBundleResizeCases), DisableDiscoveryEnumeration = true)]
     public async Task Discovered_whole_bundle_size_pack_resizes_the_meal_and_relabels_its_slots(
         ComboBundleDiscovery.WholeBundleResizeCase bundleCase)
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         await using var fixture = new ComboBundleResizeFixture(bundleCase.PersonaId);
         await fixture.InitializeAsync();
         await fixture.RunAsync(async () =>
         {
-            var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+            (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
                 fixture, ct, persona: bundleCase.PersonaId);
-            await using var _ = browser;
+            await using RealtimeBrowserClient _ = browser;
 
             var steps = new List<(string Action, string Item, string Size, int Quantity, decimal Price)>
             {
@@ -1050,23 +1049,23 @@ public sealed class WholeBundleSizeResizeConformanceTests
                 steps.Add(("add", drink.Name, drink.Size, 1, drink.Price));
             }
 
-            var seeded = await OrderScenarioHelpers.RunOrderStepsAsync(
+            ToolCallResult seeded = await OrderScenarioHelpers.RunOrderStepsAsync(
                 connection, browser, steps, roundTripIndex, ct, callIdPrefix: "call_seed_meal");
 
             // "Make it a large meal" -- modifies the WHOLE bundle's own line, never a slot
             // component, matching the real app's own whole-meal resize UX.
-            var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+            ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
                 connection, browser,
                 [("modify", bundleCase.BundleName, bundleCase.ToSize, 1, bundleCase.ToPrice)],
                 seeded.RoundTripIndex, ct, callIdPrefix: "call_resize_meal");
 
-            var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+            var order = JsonElement.Parse(result.ToolResultJson!);
             var items = order.GetProperty("items").EnumerateArray().ToList();
             Assert.Single(items); // the meal resize is one line, never split into a second one
 
-            var meal = items[0];
+            JsonElement meal = items[0];
             Assert.Equal(bundleCase.BundleName, meal.GetProperty("item").GetString());
-            var display = meal.GetProperty("display").GetString()!;
+            string display = meal.GetProperty("display").GetString()!;
             Assert.Contains(bundleCase.ToSize, display);
             Assert.DoesNotContain(bundleCase.FromSize, display); // old size's label is gone, not just the bundle's own
 
@@ -1082,11 +1081,11 @@ public sealed class WholeBundleSizeResizeConformanceTests
 
     public static TheoryData<ComboBundleDiscovery.WholeBundleFirstAbsorptionCase> DiscoveredWholeBundleFirstAbsorptionCases()
     {
-        var personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
+        string personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
         var data = new TheoryData<ComboBundleDiscovery.WholeBundleFirstAbsorptionCase>();
-        foreach (var personaId in ConformancePersonas.DiscoverFromDisk())
+        foreach (string personaId in ConformancePersonas.DiscoverFromDisk())
         {
-            var discovered = ComboBundleDiscovery.DiscoverWholeBundleFirstAbsorption(personasDir, personaId);
+            ComboBundleDiscovery.WholeBundleFirstAbsorptionCase? discovered = ComboBundleDiscovery.DiscoverWholeBundleFirstAbsorption(personasDir, personaId);
             if (discovered is not null)
             {
                 data.Add(discovered);
@@ -1098,11 +1097,11 @@ public sealed class WholeBundleSizeResizeConformanceTests
 
     [Theory]
     [Trait("Dotnet", "ready")]
-    [MemberData(nameof(DiscoveredWholeBundleFirstAbsorptionCases))]
+    [MemberData(nameof(DiscoveredWholeBundleFirstAbsorptionCases), DisableDiscoveryEnumeration = true)]
     public async Task Discovered_whole_bundle_size_pack_first_absorption_is_path_independent(
         ComboBundleDiscovery.WholeBundleFirstAbsorptionCase bundleCase)
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         await using var fixture = new ComboBundleResizeFixture(bundleCase.PersonaId);
         await fixture.InitializeAsync();
         await fixture.RunAsync(async () =>
@@ -1111,16 +1110,16 @@ public sealed class WholeBundleSizeResizeConformanceTests
                 IReadOnlyList<(string Action, string Item, string Size, int Quantity, decimal Price)> steps,
                 string callPrefix)
             {
-                var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+                (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
                     fixture, ct, persona: bundleCase.PersonaId);
-                await using var _ = browser;
+                await using RealtimeBrowserClient _ = browser;
 
-                var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+                ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
                     connection, browser, steps, roundTripIndex, ct, callIdPrefix: callPrefix);
                 using var order = JsonDocument.Parse(result.ToolResultJson!);
                 var items = order.RootElement.GetProperty("items").EnumerateArray().ToList();
                 Assert.Single(items);
-                var meal = items[0];
+                JsonElement meal = items[0];
                 Assert.Equal(bundleCase.BundleName, meal.GetProperty("item").GetString());
                 return (
                     meal.GetProperty("size").GetString()!,
@@ -1128,13 +1127,13 @@ public sealed class WholeBundleSizeResizeConformanceTests
                     OrderScenarioHelpers.GetOrderTotal(result.ToolResultJson!));
             }
 
-            var mealThenDrink = await RunPathAsync(
+            (string Size, string Display, decimal Total) mealThenDrink = await RunPathAsync(
                 [
                     ("add", bundleCase.BundleName, bundleCase.BundleSize, 1, bundleCase.BundlePrice),
                     ("add", bundleCase.Drink.Name, bundleCase.Drink.Size, 1, bundleCase.Drink.Price),
                 ],
                 "call_whole_first_absorb_meal_then_drink");
-            var drinkThenMeal = await RunPathAsync(
+            (string Size, string Display, decimal Total) drinkThenMeal = await RunPathAsync(
                 [
                     ("add", bundleCase.Drink.Name, bundleCase.Drink.Size, 1, bundleCase.Drink.Price),
                     ("add", bundleCase.BundleName, bundleCase.BundleSize, 1, bundleCase.BundlePrice),

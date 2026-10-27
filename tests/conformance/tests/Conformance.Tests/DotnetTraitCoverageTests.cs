@@ -1,6 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Reflection;
 using Conformance.Harness;
 using Xunit;
@@ -32,7 +29,7 @@ namespace Conformance.Tests;
 /// which call <c>Assert.Skip</c> (via <see cref="Conformance.Harness.AuthRowCapability.ShouldSkipCurrentBackend"/>)
 /// before any backend interaction: they show up as skipped, not run, on the dotnet leg until issue
 /// #147 flips <c>DotnetEnforcesAuth</c>. Tagging them was safe (skipped tests can't fail the dotnet
-/// leg), but <see cref="AuthRowGatedTypeNames"/> excludes them from THIS floor: counting a
+/// leg), but <c>AuthRowGatedTypeNames</c> excludes them from THIS floor: counting a
 /// skip-only method here would let a real regression (removing genuinely-passing coverage
 /// elsewhere) hide behind these always-skipped rows staying tagged, which defeats the point of a
 /// coverage floor. The other four Auth classes -- <c>AuthRowCasesTests</c>/
@@ -209,7 +206,7 @@ namespace Conformance.Tests;
 /// rate-limit ladder): per Rick's explicit "recount fresh, don't do arithmetic" instruction, a
 /// fresh run of <see cref="CountFloorEligibleDotnetReadyTestMethods"/> (same as
 /// <c>Conformance.Tests.exe -list methods -trait Dotnet=ready</c>, minus the 18
-/// <see cref="AuthRowGatedTypeNames"/> methods) was taken on this branch tip after rebasing onto
+/// <c>AuthRowGatedTypeNames</c> methods) was taken on this branch tip after rebasing onto
 /// origin/dev (which by then carried #226/#147's C# auth work, #235's rate-limit ladder, #237,
 /// #241, and everything else merged ahead of this PR) by temporarily asserting on the actual
 /// count, then reverting -- **256**. This matches the "+#226 = 256" projection from Rick's own
@@ -227,7 +224,7 @@ namespace Conformance.Tests;
 /// <c>RealPackCapabilityCoverageTests</c> was removed (it verbatim-duplicated the Fact already
 /// owned by <c>RealPackExtrasCoverageTests</c>), dropping the floor-eligible count by exactly one
 /// method, 262 to <b>261</b>. Re-measured directly with <c>Conformance.Tests.exe -list methods
-/// -trait Dotnet=ready</c> (279 methods) minus the 18 <see cref="AuthRowGatedTypeNames"/> methods
+/// -trait Dotnet=ready</c> (279 methods) minus the 18 <c>AuthRowGatedTypeNames</c> methods
 /// -- a fresh reflection count, never arithmetic.
 ///
 /// Issue #147 (ADR-002, PR #226): app/backend-dotnet now enforces Entra JwtBearer authentication
@@ -383,7 +380,7 @@ namespace Conformance.Tests;
 ///
 /// PR #266 merge with origin/dev (coordinator, 2026-10-05): with both #253's 4 cascade rows and
 /// this PR's auto-fill rows present, a fresh <c>Conformance.Tests.exe -list methods -trait
-/// Dotnet=ready</c> lists 283 methods; minus the 18 <see cref="AuthRowGatedTypeNames"/> methods
+/// Dotnet=ready</c> lists 283 methods; minus the 18 <c>AuthRowGatedTypeNames</c> methods
 /// that gives <b>265</b>, the floor asserted below. Any PR still rebasing on top of this MUST
 /// re-measure fresh at its own rebase time the same way, not add a historical delta to 265 blindly.
 ///
@@ -408,7 +405,7 @@ namespace Conformance.Tests;
 /// <c>At_least_262_...</c>) per this same issue's own item C.
 /// Issue #274 merge with origin/dev (coordinator, 2026-10-05): after #244 landed on dev (floor
 /// 302), a fresh <c>Conformance.Tests.exe -list methods -trait Dotnet=ready</c> on the merged tip
-/// lists 317 methods; minus the 18 <see cref="AuthRowGatedTypeNames"/> methods that gives <b>299</b>
+/// lists 317 methods; minus the 18 <c>AuthRowGatedTypeNames</c> methods that gives <b>299</b>
 /// (follow-up C +1, follow-up E -4), the floor asserted below.
 ///
 /// Issues #247/#262 (Summer, 2026-10-05): <c>CascadeConformanceTests</c> (already class-level
@@ -416,8 +413,8 @@ namespace Conformance.Tests;
 /// truncation fix (#247) and the non-429 chat-completion/TTS failure-to-`response.done` fix
 /// (#262) -- verified green against the C# backend across 3 consecutive local runs with no
 /// flakiness (and against the Python backend the same way). A fresh <c>Conformance.Tests.exe
-/// -list methods -trait Dotnet=ready</c> lists 286 methods; minus the same 18 <see
-/// cref="AuthRowGatedTypeNames"/> methods gives <b>268</b>, the floor asserted below. This raises
+/// -list methods -trait Dotnet=ready</c> lists 286 methods; minus the same 18
+/// <c>AuthRowGatedTypeNames</c> methods gives <b>268</b>, the floor asserted below. This raises
 /// the floor 265 to 268.
 ///
 /// Issue #274 merge with origin/dev after #226/#279 (coordinator, 2026-10-05): with
@@ -532,7 +529,7 @@ namespace Conformance.Tests;
 /// floor stays at 359, now backed by a real measurement instead of an unverified carry-forward.
 ///
 /// Issue #315 (coordinator dispatch, Birdperson): the fake realtime upstream's
-/// <c>session.update</c> handling (<see cref="GaSessionValidator"/>) did not validate
+/// <c>session.update</c> handling (<see cref="Conformance.Fakes.GaSessionValidator"/>) did not validate
 /// <c>tools[*].parameters</c> against a JSON-Schema metaschema the way the real API does, so a
 /// malformed schema (e.g. a bare <c>false</c> literal where an object/boolean keyword is required)
 /// was silently accepted by the dotnet conformance leg instead of being rejected with
@@ -623,34 +620,32 @@ public sealed class DotnetTraitCoverageTests
     [Fact]
     public void Every_test_class_in_the_assembly_carries_an_explicit_dotnet_classification()
     {
-        var assembly = typeof(DotnetTraitCoverageTests).Assembly;
+        Assembly assembly = typeof(DotnetTraitCoverageTests).Assembly;
         var violations = new List<string>();
 
-        foreach (var type in assembly.GetTypes())
+        foreach (Type type in assembly.GetTypes())
         {
             if (type.IsAbstract)
             {
                 continue;
             }
 
-            var classValues = type.GetCustomAttributes<TraitAttribute>(inherit: true)
+            string[] classValues = [.. type.GetCustomAttributes<TraitAttribute>(inherit: true)
                 .Where(t => t.Name == TraitName)
-                .Select(t => t.Value)
-                .ToArray();
+                .Select(t => t.Value)];
 
-            foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static))
+            foreach (MethodInfo method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static))
             {
                 if (!method.IsDefined(typeof(FactAttribute), inherit: true))
                 {
                     continue;
                 }
 
-                var methodValues = method.GetCustomAttributes<TraitAttribute>(inherit: true)
+                string[] methodValues = [.. method.GetCustomAttributes<TraitAttribute>(inherit: true)
                     .Where(t => t.Name == TraitName)
-                    .Select(t => t.Value)
-                    .ToArray();
+                    .Select(t => t.Value)];
 
-                var effective = classValues.Concat(methodValues).Distinct().ToArray();
+                string[] effective = [.. classValues.Concat(methodValues).Distinct()];
 
                 if (effective.Length == 0)
                 {
@@ -662,7 +657,7 @@ public sealed class DotnetTraitCoverageTests
                     continue;
                 }
 
-                var invalid = effective.Where(v => v != "ready" && !v.StartsWith("n/a-", StringComparison.Ordinal)).ToArray();
+                string[] invalid = [.. effective.Where(v => v != "ready" && !v.StartsWith("n/a-", StringComparison.Ordinal))];
                 if (invalid.Length > 0)
                 {
                     violations.Add($"{type.FullName}.{method.Name}: unrecognized Dotnet trait value(s) " +
@@ -689,7 +684,7 @@ public sealed class DotnetTraitCoverageTests
             "AuthRowCapabilityGated classes whenever Enforces(\"dotnet\") is false) could still " +
             "clear its lower bound from unrelated growth elsewhere, hiding the regression.");
 
-        var count = CountFloorEligibleDotnetReadyTestMethods();
+        int count = CountFloorEligibleDotnetReadyTestMethods();
 
         Assert.True(count >= 373,
             $"Expected at least 373 test method(s) tagged [Trait(\"{TraitName}\", \"{TraitValue}\")], " +
@@ -740,13 +735,13 @@ public sealed class DotnetTraitCoverageTests
     /// </summary>
     private static bool TheoryYieldsZeroRowsWhenSkipGated(MethodInfo method)
     {
-        var theoryAttribute = method.GetCustomAttribute<TheoryAttribute>(inherit: true);
+        TheoryAttribute? theoryAttribute = method.GetCustomAttribute<TheoryAttribute>(inherit: true);
         if (theoryAttribute is null || !theoryAttribute.SkipTestWithoutData)
         {
             return false;
         }
 
-        var memberDataAttributes = method.GetCustomAttributes<MemberDataAttribute>(inherit: true).ToArray();
+        MemberDataAttribute[] memberDataAttributes = [.. method.GetCustomAttributes<MemberDataAttribute>(inherit: true)];
         if (memberDataAttributes.Length == 0)
         {
             // No MemberData source to resolve (e.g. ClassData/InlineData) -- can't determine a
@@ -754,10 +749,10 @@ public sealed class DotnetTraitCoverageTests
             return false;
         }
 
-        foreach (var memberData in memberDataAttributes)
+        foreach (MemberDataAttribute? memberData in memberDataAttributes)
         {
-            var declaringType = memberData.MemberType ?? method.DeclaringType!;
-            if (!TryResolveMemberDataRows(declaringType, memberData, out var rows))
+            Type declaringType = memberData.MemberType ?? method.DeclaringType!;
+            if (!TryResolveMemberDataRows(declaringType, memberData, out IEnumerable<object?>? rows))
             {
                 // Can't resolve this source as a method, property, or field -- fail CLOSED:
                 // exclude it from the floor rather than risk silently counting a SKIPPED row.
@@ -790,24 +785,24 @@ public sealed class DotnetTraitCoverageTests
     private static bool TryResolveMemberDataRows(
         Type declaringType, MemberDataAttribute memberData, out IEnumerable<object?>? rows)
     {
-        const BindingFlags flags = BindingFlags.Public | BindingFlags.Static | BindingFlags.NonPublic;
-        var arguments = memberData.Arguments is { Length: > 0 } args ? args : null;
+        const BindingFlags Flags = BindingFlags.Public | BindingFlags.Static | BindingFlags.NonPublic;
+        object?[]? arguments = memberData.Arguments is { Length: > 0 } args ? args : null;
 
-        var methodSource = declaringType.GetMethod(memberData.MemberName, flags);
+        MethodInfo? methodSource = declaringType.GetMethod(memberData.MemberName, Flags);
         if (methodSource is not null)
         {
             rows = (methodSource.Invoke(null, arguments) as System.Collections.IEnumerable)?.Cast<object?>();
             return true;
         }
 
-        var propertySource = declaringType.GetProperty(memberData.MemberName, flags);
+        PropertyInfo? propertySource = declaringType.GetProperty(memberData.MemberName, Flags);
         if (propertySource is not null)
         {
             rows = (propertySource.GetValue(null) as System.Collections.IEnumerable)?.Cast<object?>();
             return true;
         }
 
-        var fieldSource = declaringType.GetField(memberData.MemberName, flags);
+        FieldInfo? fieldSource = declaringType.GetField(memberData.MemberName, Flags);
         if (fieldSource is not null)
         {
             rows = (fieldSource.GetValue(null) as System.Collections.IEnumerable)?.Cast<object?>();
@@ -830,28 +825,28 @@ public sealed class DotnetTraitCoverageTests
     [Fact]
     public void SkipTestWithoutData_MemberData_sources_are_all_resolvable()
     {
-        var assembly = typeof(DotnetTraitCoverageTests).Assembly;
+        Assembly assembly = typeof(DotnetTraitCoverageTests).Assembly;
         var violations = new List<string>();
 
-        foreach (var type in assembly.GetTypes())
+        foreach (Type type in assembly.GetTypes())
         {
             if (type.IsAbstract)
             {
                 continue;
             }
 
-            foreach (var method in type.GetMethods(
+            foreach (MethodInfo method in type.GetMethods(
                 BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static))
             {
-                var theoryAttribute = method.GetCustomAttribute<TheoryAttribute>(inherit: true);
+                TheoryAttribute? theoryAttribute = method.GetCustomAttribute<TheoryAttribute>(inherit: true);
                 if (theoryAttribute is null || !theoryAttribute.SkipTestWithoutData)
                 {
                     continue;
                 }
 
-                foreach (var memberData in method.GetCustomAttributes<MemberDataAttribute>(inherit: true))
+                foreach (MemberDataAttribute memberData in method.GetCustomAttributes<MemberDataAttribute>(inherit: true))
                 {
-                    var declaringType = memberData.MemberType ?? method.DeclaringType!;
+                    Type declaringType = memberData.MemberType ?? method.DeclaringType!;
                     if (!TryResolveMemberDataRows(declaringType, memberData, out _))
                     {
                         violations.Add($"{type.FullName}.{method.Name}: [MemberData(\"{memberData.MemberName}\")] " +
@@ -892,13 +887,14 @@ public sealed class DotnetTraitCoverageTests
 #pragma warning disable xUnit1000 // test class must be public -- intentionally non-public, see above
 #pragma warning disable xUnit1026 // unused Theory parameter -- the parameter is never bound, see above
 #pragma warning disable xUnit1015 // MemberData must reference an existing member -- that's the point of UnresolvableSource
+#pragma warning disable IDE0060 // unused parameter -- the Theory parameter is never bound, see above
     private abstract class ZeroRowGuardFixtures
     {
-        public static IEnumerable<object[]> EmptyProperty => Array.Empty<object[]>();
+        public static TheoryData<int> EmptyProperty => [];
 
-        public static readonly IEnumerable<object[]> EmptyField = Array.Empty<object[]>();
+        public static readonly TheoryData<int> EmptyField = [];
 
-        public static IEnumerable<object[]> NonEmptyProperty => new[] { new object[] { 1 } };
+        public static TheoryData<int> NonEmptyProperty => [1];
 
         [Theory(SkipTestWithoutData = true)]
         [MemberData(nameof(EmptyProperty))]
@@ -916,6 +912,7 @@ public sealed class DotnetTraitCoverageTests
         [MemberData("DoesNotExist")]
         public void UnresolvableSource(int value) { }
     }
+#pragma warning restore IDE0060
 #pragma warning restore xUnit1015
 #pragma warning restore xUnit1026
 #pragma warning restore xUnit1000
@@ -934,10 +931,10 @@ public sealed class DotnetTraitCoverageTests
     [Fact]
     public void TryResolveMemberDataRows_resolves_empty_property_backed_source()
     {
-        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.EmptyPropertySource));
-        var memberData = method.GetCustomAttribute<MemberDataAttribute>(inherit: true)!;
+        MethodInfo method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.EmptyPropertySource));
+        MemberDataAttribute memberData = method.GetCustomAttribute<MemberDataAttribute>(inherit: true)!;
 
-        var resolved = TryResolveMemberDataRows(typeof(ZeroRowGuardFixtures), memberData, out var rows);
+        bool resolved = TryResolveMemberDataRows(typeof(ZeroRowGuardFixtures), memberData, out IEnumerable<object?>? rows);
 
         Assert.True(resolved, "A static property-backed [MemberData] source must resolve.");
         Assert.NotNull(rows);
@@ -952,10 +949,10 @@ public sealed class DotnetTraitCoverageTests
     [Fact]
     public void TryResolveMemberDataRows_resolves_empty_field_backed_source()
     {
-        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.EmptyFieldSource));
-        var memberData = method.GetCustomAttribute<MemberDataAttribute>(inherit: true)!;
+        MethodInfo method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.EmptyFieldSource));
+        MemberDataAttribute memberData = method.GetCustomAttribute<MemberDataAttribute>(inherit: true)!;
 
-        var resolved = TryResolveMemberDataRows(typeof(ZeroRowGuardFixtures), memberData, out var rows);
+        bool resolved = TryResolveMemberDataRows(typeof(ZeroRowGuardFixtures), memberData, out IEnumerable<object?>? rows);
 
         Assert.True(resolved, "A static field-backed [MemberData] source must resolve.");
         Assert.NotNull(rows);
@@ -970,10 +967,10 @@ public sealed class DotnetTraitCoverageTests
     [Fact]
     public void TryResolveMemberDataRows_resolves_non_empty_property_backed_source_with_rows()
     {
-        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.NonEmptyPropertySource));
-        var memberData = method.GetCustomAttribute<MemberDataAttribute>(inherit: true)!;
+        MethodInfo method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.NonEmptyPropertySource));
+        MemberDataAttribute memberData = method.GetCustomAttribute<MemberDataAttribute>(inherit: true)!;
 
-        var resolved = TryResolveMemberDataRows(typeof(ZeroRowGuardFixtures), memberData, out var rows);
+        bool resolved = TryResolveMemberDataRows(typeof(ZeroRowGuardFixtures), memberData, out IEnumerable<object?>? rows);
 
         Assert.True(resolved);
         Assert.NotNull(rows);
@@ -988,10 +985,10 @@ public sealed class DotnetTraitCoverageTests
     [Fact]
     public void TryResolveMemberDataRows_fails_for_unresolvable_source()
     {
-        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.UnresolvableSource));
-        var memberData = method.GetCustomAttribute<MemberDataAttribute>(inherit: true)!;
+        MethodInfo method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.UnresolvableSource));
+        MemberDataAttribute memberData = method.GetCustomAttribute<MemberDataAttribute>(inherit: true)!;
 
-        var resolved = TryResolveMemberDataRows(typeof(ZeroRowGuardFixtures), memberData, out var rows);
+        bool resolved = TryResolveMemberDataRows(typeof(ZeroRowGuardFixtures), memberData, out IEnumerable<object?>? rows);
 
         Assert.False(resolved);
         Assert.Null(rows);
@@ -1008,7 +1005,7 @@ public sealed class DotnetTraitCoverageTests
     [Fact]
     public void TheoryYieldsZeroRowsWhenSkipGated_excludes_empty_property_backed_MemberData()
     {
-        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.EmptyPropertySource));
+        MethodInfo method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.EmptyPropertySource));
 
         Assert.True(TheoryYieldsZeroRowsWhenSkipGated(method),
             "An empty static property-backed [MemberData] source must be excluded (treated as " +
@@ -1021,7 +1018,7 @@ public sealed class DotnetTraitCoverageTests
     [Fact]
     public void TheoryYieldsZeroRowsWhenSkipGated_excludes_empty_field_backed_MemberData()
     {
-        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.EmptyFieldSource));
+        MethodInfo method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.EmptyFieldSource));
 
         Assert.True(TheoryYieldsZeroRowsWhenSkipGated(method),
             "An empty static field-backed [MemberData] source must be excluded (treated as zero " +
@@ -1035,7 +1032,7 @@ public sealed class DotnetTraitCoverageTests
     [Fact]
     public void TheoryYieldsZeroRowsWhenSkipGated_counts_non_empty_property_backed_MemberData()
     {
-        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.NonEmptyPropertySource));
+        MethodInfo method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.NonEmptyPropertySource));
 
         Assert.False(TheoryYieldsZeroRowsWhenSkipGated(method),
             "A non-empty static property-backed [MemberData] source must still count toward the " +
@@ -1051,7 +1048,7 @@ public sealed class DotnetTraitCoverageTests
     [Fact]
     public void TheoryYieldsZeroRowsWhenSkipGated_fails_closed_for_unresolvable_MemberData()
     {
-        var method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.UnresolvableSource));
+        MethodInfo method = GetFixtureMethod(nameof(ZeroRowGuardFixtures.UnresolvableSource));
 
         Assert.True(TheoryYieldsZeroRowsWhenSkipGated(method),
             "A [MemberData] source that resolves as neither a method, property, nor field must " +
@@ -1087,10 +1084,10 @@ public sealed class DotnetTraitCoverageTests
     /// </summary>
     private static int CountFloorEligibleDotnetReadyTestMethods()
     {
-        var assembly = typeof(DotnetTraitCoverageTests).Assembly;
-        var count = 0;
+        Assembly assembly = typeof(DotnetTraitCoverageTests).Assembly;
+        int count = 0;
 
-        foreach (var type in assembly.GetTypes())
+        foreach (Type type in assembly.GetTypes())
         {
             if (type.IsAbstract)
             {
@@ -1103,9 +1100,9 @@ public sealed class DotnetTraitCoverageTests
                 continue;
             }
 
-            var classHasTrait = HasDotnetReadyTrait(type.GetCustomAttributes<TraitAttribute>(inherit: true));
+            bool classHasTrait = HasDotnetReadyTrait(type.GetCustomAttributes<TraitAttribute>(inherit: true));
 
-            foreach (var method in type.GetMethods(
+            foreach (MethodInfo method in type.GetMethods(
                 BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static))
             {
                 if (!method.IsDefined(typeof(FactAttribute), inherit: true))
@@ -1113,7 +1110,7 @@ public sealed class DotnetTraitCoverageTests
                     continue;
                 }
 
-                var methodHasTrait = HasDotnetReadyTrait(method.GetCustomAttributes<TraitAttribute>(inherit: true));
+                bool methodHasTrait = HasDotnetReadyTrait(method.GetCustomAttributes<TraitAttribute>(inherit: true));
                 if (!classHasTrait && !methodHasTrait)
                 {
                     continue;

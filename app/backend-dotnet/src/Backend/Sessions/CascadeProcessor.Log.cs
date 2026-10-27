@@ -1,6 +1,3 @@
-using Microsoft.Extensions.Logging;
-using Backend.Tools;
-
 namespace Backend.Sessions;
 
 /// <summary>
@@ -75,7 +72,7 @@ internal static partial class Log
     public static partial void CascadeReplayedFirstMessageFailed(this ILogger logger, Exception ex, string sessionId);
 
     [LoggerMessage(EventId = 2023, Level = LogLevel.Warning, Message = "Malformed JSON from cascade browser client, ignoring (session={SessionId})")]
-    public static partial void CascadeMalformedJson(this ILogger logger, Exception ex, string sessionId);
+    public static partial void CascadeMalformedJson(this ILogger logger, string sessionId);
 
     [LoggerMessage(EventId = 2024, Level = LogLevel.Error, Message = "Error handling cascade client message (session={SessionId})")]
     public static partial void CascadeClientMessageHandlingFailed(this ILogger logger, Exception ex, string sessionId);

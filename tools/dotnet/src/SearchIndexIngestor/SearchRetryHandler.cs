@@ -28,7 +28,7 @@ internal sealed class SearchRetryHandler : DelegatingHandler
     /// <summary>azure-core's own default <c>retry_backoff_max</c> (seconds).</summary>
     public const double BackoffMaxSeconds = 120;
 
-    private static readonly HashSet<HttpStatusCode> RetriableStatusCodes =
+    private static readonly HashSet<HttpStatusCode> s_retriableStatusCodes =
     [
         HttpStatusCode.RequestTimeout, // 408
         HttpStatusCode.TooManyRequests, // 429
@@ -48,23 +48,30 @@ internal sealed class SearchRetryHandler : DelegatingHandler
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        for (var attempt = 0; ; attempt++)
+        for (int attempt = 0; ; attempt++)
         {
             HttpResponseMessage? response = null;
             Exception? transportException = null;
+            // Each attempt owns its clone (HttpClient never disposes a request it didn't create);
+            // the response's content is independent of it, so it is safe to dispose once sent.
+            HttpRequestMessage? attemptRequest = null;
             try
             {
-                response = await base.SendAsync(await CloneAsync(request).ConfigureAwait(false), cancellationToken)
-                    .ConfigureAwait(false);
+                attemptRequest = await CloneAsync(request).ConfigureAwait(false);
+                response = await base.SendAsync(attemptRequest, cancellationToken).ConfigureAwait(false);
             }
             catch (HttpRequestException ex)
             {
                 transportException = ex;
             }
+            finally
+            {
+                attemptRequest?.Dispose();
+            }
 
-            var isLastAttempt = attempt >= RetryTotal - 1;
-            var shouldRetry = transportException is not null ||
-                (response is not null && RetriableStatusCodes.Contains(response.StatusCode));
+            bool isLastAttempt = attempt >= RetryTotal - 1;
+            bool shouldRetry = transportException is not null ||
+                (response is not null && s_retriableStatusCodes.Contains(response.StatusCode));
             if (!shouldRetry || isLastAttempt)
             {
                 if (transportException is not null)
@@ -74,7 +81,7 @@ internal sealed class SearchRetryHandler : DelegatingHandler
                 return response!;
             }
 
-            var delay = ComputeDelay(attempt, response);
+            TimeSpan delay = ComputeDelay(attempt, response);
             response?.Dispose();
             await _delay(delay, cancellationToken).ConfigureAwait(false);
         }
@@ -88,14 +95,14 @@ internal sealed class SearchRetryHandler : DelegatingHandler
         }
         if (response?.Headers.RetryAfter?.Date is { } date)
         {
-            var fromNow = date - DateTimeOffset.UtcNow;
+            TimeSpan fromNow = date - DateTimeOffset.UtcNow;
             if (fromNow > TimeSpan.Zero)
             {
                 return fromNow;
             }
         }
 
-        var backoffSeconds = Math.Min(BackoffFactor * Math.Pow(2, attempt), BackoffMaxSeconds);
+        double backoffSeconds = Math.Min(BackoffFactor * Math.Pow(2, attempt), BackoffMaxSeconds);
         return TimeSpan.FromSeconds(backoffSeconds);
     }
 
@@ -107,14 +114,14 @@ internal sealed class SearchRetryHandler : DelegatingHandler
         var clone = new HttpRequestMessage(request.Method, request.RequestUri) { Version = request.Version };
         if (request.Content is not null)
         {
-            var bytes = await request.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+            byte[] bytes = await request.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
             clone.Content = new ByteArrayContent(bytes);
-            foreach (var header in request.Content.Headers)
+            foreach (KeyValuePair<string, IEnumerable<string>> header in request.Content.Headers)
             {
                 clone.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
             }
         }
-        foreach (var header in request.Headers)
+        foreach (KeyValuePair<string, IEnumerable<string>> header in request.Headers)
         {
             clone.Headers.TryAddWithoutValidation(header.Key, header.Value);
         }

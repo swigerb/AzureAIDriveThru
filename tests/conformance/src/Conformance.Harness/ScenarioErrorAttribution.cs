@@ -4,7 +4,7 @@ namespace Conformance.Harness;
 /// Attributes unhandled-backend-error counts to the scenario that actually caused them, even when
 /// the count only crosses because a stderr line lands asynchronously after that scenario's own
 /// post-body check already ran (PR #66 M1). Extracted out of
-/// <see cref="Conformance.Tests.ConformanceFixture.RunAsync(Func{Task}, int)"/> as a small, pure,
+/// <c>Conformance.Tests.ConformanceFixture.RunAsync(Func{Task}, int)</c> as a small, pure,
 /// independently-testable bookkeeping seam — everything it needs is passed in as plain ints and a
 /// name, so it never has to spin up (or race) a real backend process to be exercised
 /// deterministically.
@@ -38,7 +38,7 @@ namespace Conformance.Harness;
 public sealed class ScenarioErrorAttribution
 {
     /// <summary>
-    /// Pseudo-scenario name <see cref="Conformance.Tests.ConformanceFixture.InitializeAsync"/>
+    /// Pseudo-scenario name <c>Conformance.Tests.ConformanceFixture.InitializeAsync</c>
     /// seeds this attribution with, once, right after the shared backend process finishes
     /// starting and before any real scenario runs (PR #66 re-review, R1(c)) — so a stray error
     /// line landing in the narrow gap between backend-ready and the very first scenario's own
@@ -54,7 +54,7 @@ public sealed class ScenarioErrorAttribution
     /// <summary>
     /// Name used when a stranded error is charged against a scenario boundary that was never
     /// actually recorded by name — should not be reachable in production once
-    /// <see cref="Conformance.Tests.ConformanceFixture"/> always seeds via
+    /// <c>Conformance.Tests.ConformanceFixture</c> always seeds via
     /// <see cref="StartupScenarioName"/> before the first scenario runs, but kept as a defensive
     /// fallback for any other caller of this class that doesn't.
     /// </summary>
@@ -92,7 +92,7 @@ public sealed class ScenarioErrorAttribution
             return null;
         }
 
-        var stranded = currentCount - _lastCheckedCount;
+        int stranded = currentCount - _lastCheckedCount;
         if (stranded <= 0)
         {
             return null;
@@ -111,9 +111,9 @@ public sealed class ScenarioErrorAttribution
             return null;
         }
 
-        var absorbedByAllowance = _lastUnusedAllowance;
-        var unaccountedFor = stranded - absorbedByAllowance;
-        var previousScenario = _lastScenarioName ?? UnknownScenarioName;
+        int absorbedByAllowance = _lastUnusedAllowance;
+        int unaccountedFor = stranded - absorbedByAllowance;
+        string previousScenario = _lastScenarioName ?? UnknownScenarioName;
         _lastUnusedAllowance = 0;
         return $"{stranded} unhandled backend error(s) landed after scenario '{previousScenario}' " +
                $"finished its own check ({absorbedByAllowance} of its unused allowance covers some " +
@@ -152,7 +152,7 @@ public sealed class ScenarioErrorAttribution
     /// </summary>
     public (int Baseline, string? StrandedMessage) BeginScenario(Func<int> readUnhandledErrorCount)
     {
-        var currentCount = readUnhandledErrorCount();
+        int currentCount = readUnhandledErrorCount();
         return (currentCount, ChargeStrandedErrorsToPreviousScenario(currentCount));
     }
 
@@ -173,9 +173,9 @@ public sealed class ScenarioErrorAttribution
     public (int Actual, bool WithinBound) EndScenario(
         string scenarioName, Func<int> readUnhandledErrorCount, int baseline, int allowedNewBackendErrors)
     {
-        var actual = readUnhandledErrorCount();
-        var withinBound = actual <= baseline + allowedNewBackendErrors;
-        var unusedAllowance = withinBound ? allowedNewBackendErrors - (actual - baseline) : 0;
+        int actual = readUnhandledErrorCount();
+        bool withinBound = actual <= baseline + allowedNewBackendErrors;
+        int unusedAllowance = withinBound ? allowedNewBackendErrors - (actual - baseline) : 0;
         RecordScenarioChecked(scenarioName, actual, unusedAllowance);
         return (actual, withinBound);
     }
@@ -192,7 +192,7 @@ public sealed class ScenarioErrorAttribution
     /// </summary>
     public int RecordScenarioFailed(string scenarioName, Func<int> readUnhandledErrorCount)
     {
-        var countNow = readUnhandledErrorCount();
+        int countNow = readUnhandledErrorCount();
         RecordScenarioChecked(scenarioName, countNow, unusedAllowance: 0);
         return countNow;
     }

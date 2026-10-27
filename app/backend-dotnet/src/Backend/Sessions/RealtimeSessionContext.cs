@@ -1,12 +1,9 @@
 using System.Net.WebSockets;
 using System.Text.Json.Nodes;
-using Backend.Configuration;
 using Backend.Models;
 using Backend.Personas;
 using Backend.Prompts;
 using Backend.Realtime;
-using Backend.Shared;
-using Backend.Tools;
 
 namespace Backend.Sessions;
 
@@ -37,7 +34,7 @@ internal sealed class RealtimeSessionContext
     public required TimeProvider TimeProvider { get; init; }
     public required CancellationToken CancellationToken { get; init; }
 
-    public JsonObject BuildVoiceUpdateFrame(string newVoice) => new()
+    public static JsonObject BuildVoiceUpdateFrame(string newVoice) => new()
     {
         ["type"] = "session.update",
         ["event_id"] = EventIds.NewEventId("sonic_voice"),

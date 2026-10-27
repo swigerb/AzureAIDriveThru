@@ -40,31 +40,31 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
     [Trait("Dotnet", "ready")]
     public Task A_genuine_tool_exception_refreshes_the_guests_ticket() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        const string callId = "call_bad_quantity_ticket";
-        var browserWatermark = browser.ReceivedFrames.Count;
+        const string CallId = "call_bad_quantity_ticket";
+        int browserWatermark = browser.ReceivedFrames.Count;
 
         connection.Script.Enqueue(new ResponseScript([
-            new FunctionCallEvent(Name: "update_order", ArgumentsJson: BadQuantityArgs, CallId: callId),
+            new FunctionCallEvent(Name: "update_order", ArgumentsJson: BadQuantityArgs, CallId: CallId),
             new DoneEvent(),
         ]));
         await browser.SendResponseCreateAsync(ct);
 
-        var functionCallOutput = await connection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? functionCallOutput = await connection.ReceivedFrames.WaitForAsync(
             f => f.Type == "conversation.item.create" &&
-                 f.Json.TryGetProperty("item", out var item) &&
-                 item.TryGetProperty("type", out var itemType) &&
+                 f.Json.TryGetProperty("item", out JsonElement item) &&
+                 item.TryGetProperty("type", out JsonElement itemType) &&
                  itemType.GetString() == "function_call_output" &&
-                 item.TryGetProperty("call_id", out var respondedCallId) &&
-                 respondedCallId.GetString() == callId,
+                 item.TryGetProperty("call_id", out JsonElement respondedCallId) &&
+                 respondedCallId.GetString() == CallId,
             OrderScenarioHelpers.FrameTimeout, ct);
         Assert.True(functionCallOutput is not null,
             "Expected a graceful function_call_output for the bad-price call -- if this is null, " +
             "the tool exception killed the connection instead of producing a model-visible error.");
-        var outputText = functionCallOutput!.Json.GetProperty("item").GetProperty("output").GetString() ?? "";
+        string outputText = functionCallOutput!.Json.GetProperty("item").GetProperty("output").GetString() ?? "";
         Assert.False(OrderScenarioHelpers.LooksLikeOrderSummary(outputText),
             "function_call_output for the bad-price call parses as a JSON order-summary object, " +
             "but this call was scripted to raise inside the tool handler -- a genuine graceful " +
@@ -72,32 +72,32 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
 
         // Session survives: prove the connection is still usable for a further tool call, same
         // pattern as ToolErrorSessionSurvivesTests.
-        var nextRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+        RecordedFrame? nextRoundTrip = await browser.ReceivedFrames.WaitForAsync(
             f => f.Type == "extension.round_trip_token" &&
                  f.Json.GetProperty("roundTripIndex").GetInt32() > roundTripIndex,
             OrderScenarioHelpers.FrameTimeout, ct);
         Assert.True(nextRoundTrip is not null, "Round trip after the bad-price call never completed.");
-        var nextIndex = nextRoundTrip!.Json.GetProperty("roundTripIndex").GetInt32();
+        int nextIndex = nextRoundTrip!.Json.GetProperty("roundTripIndex").GetInt32();
 
         // No stray extension.middle_tier_tool_response tagged "update_order" -- the failed call's
         // own result never reaches the browser (checked after the round trip wait for the same
         // ordering reason as ToolErrorSessionSurvivesTests / OrderScenarioHelpers.CallToolAsync).
-        var strayToolResponse = browser.ReceivedFrames.Snapshot().Any(f =>
+        bool strayToolResponse = browser.ReceivedFrames.Snapshot().Any(f =>
             f.Sequence >= browserWatermark &&
             f.Type == "extension.middle_tier_tool_response" &&
-            f.Json.TryGetProperty("tool_name", out var strayToolNameProp) &&
+            f.Json.TryGetProperty("tool_name", out JsonElement strayToolNameProp) &&
             strayToolNameProp.GetString() == "update_order");
         Assert.False(strayToolResponse,
-            $"Expected no extension.middle_tier_tool_response for update_order (call_id={callId}) " +
+            $"Expected no extension.middle_tier_tool_response for update_order (call_id={CallId}) " +
             "to have reached the browser for this deliberately failing call.");
 
         // #36 S2: the ticket-refresh IS expected -- tagged tool_name="get_order" (a read, never
         // implying the failed mutation actually happened) rather than "update_order" (ruled out
         // immediately above).
-        var ticketRefresh = browser.ReceivedFrames.Snapshot().FirstOrDefault(f =>
+        RecordedFrame? ticketRefresh = browser.ReceivedFrames.Snapshot().FirstOrDefault(f =>
             f.Sequence >= browserWatermark &&
             f.Type == "extension.middle_tier_tool_response" &&
-            f.Json.TryGetProperty("tool_name", out var refreshToolNameProp) &&
+            f.Json.TryGetProperty("tool_name", out JsonElement refreshToolNameProp) &&
             refreshToolNameProp.GetString() == "get_order");
         Assert.True(ticketRefresh is not null,
             "Expected a get_order-tagged extension.middle_tier_tool_response (ticket refresh) to " +
@@ -108,11 +108,11 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
             "The ticket-refresh tool_result should be a genuine order-summary JSON object.");
         Assert.Null(browser.CloseStatus);
 
-        var next = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult next = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", "Tots", "medium", 1, 2.79m)],
             nextIndex, ct);
-        var order = JsonDocument.Parse(next.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(next.ToolResultJson!);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
     }, allowedNewBackendErrors: 1);
 
@@ -120,9 +120,9 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
     [Trait("Dotnet", "ready")]
     public Task Consecutive_tool_exceptions_suppress_the_auto_continue_at_the_cap() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
         // Two consecutive genuine tool exceptions (both a string "quantity", same shape as
         // A_genuine_tool_exception_refreshes_the_guests_ticket above), with no success in
@@ -144,20 +144,20 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
 
         await browser.SendResponseCreateAsync(ct); // manual trigger for round 1 (call_cap_a)
 
-        var callA = await connection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? callA = await connection.ReceivedFrames.WaitForAsync(
             f => f.Type == "conversation.item.create" &&
-                 f.Json.TryGetProperty("item", out var itemA) &&
-                 itemA.TryGetProperty("call_id", out var idA) && idA.GetString() == "call_cap_a",
+                 f.Json.TryGetProperty("item", out JsonElement itemA) &&
+                 itemA.TryGetProperty("call_id", out JsonElement idA) && idA.GetString() == "call_cap_a",
             OrderScenarioHelpers.FrameTimeout, ct);
         Assert.True(callA is not null, "call_cap_a's function_call_output never reached upstream.");
 
         // Round 2 (call_cap_b) must be triggered automatically by rtmt's own auto-continue after
         // round 1's failure -- the browser never sends a second response.create for it. This is
         // the "not yet at the cap" case: a single failure must still auto-continue as before.
-        var callB = await connection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? callB = await connection.ReceivedFrames.WaitForAsync(
             f => f.Type == "conversation.item.create" &&
-                 f.Json.TryGetProperty("item", out var itemB) &&
-                 itemB.TryGetProperty("call_id", out var idB) && idB.GetString() == "call_cap_b",
+                 f.Json.TryGetProperty("item", out JsonElement itemB) &&
+                 itemB.TryGetProperty("call_id", out JsonElement idB) && idB.GetString() == "call_cap_b",
             OrderScenarioHelpers.FrameTimeout, ct);
         Assert.True(callB is not null,
             "call_cap_b's function_call_output never reached upstream -- the auto-continue after " +
@@ -171,12 +171,12 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
         // still let the model falsely claim an item was added/changed in 2 of 3 runs; explicit
         // instructions saying nothing changed fixed it in 3 of 3 runs. The exact wording is a
         // brand-config concern (prompts/sonic/error_messages.yaml), not pinned here.
-        var capNotice = await connection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? capNotice = await connection.ReceivedFrames.WaitForAsync(
             f => f.Type == "response.create" && f.Sequence > callB!.Sequence &&
-                 f.Json.TryGetProperty("response", out var respObj) &&
-                 respObj.TryGetProperty("tool_choice", out var toolChoiceProp) &&
+                 f.Json.TryGetProperty("response", out JsonElement respObj) &&
+                 respObj.TryGetProperty("tool_choice", out JsonElement toolChoiceProp) &&
                  toolChoiceProp.GetString() == "none" &&
-                 respObj.TryGetProperty("instructions", out var instructionsProp) &&
+                 respObj.TryGetProperty("instructions", out JsonElement instructionsProp) &&
                  instructionsProp.ValueKind == JsonValueKind.String &&
                  !string.IsNullOrWhiteSpace(instructionsProp.GetString()),
             OrderScenarioHelpers.FrameTimeout, ct);
@@ -191,11 +191,11 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
         // to ResponseScript.Default (a plain audio reply, no tool call) -- proving the apology
         // itself doesn't re-open the tool-calling loop: no THIRD function_call_output ever
         // reaches upstream.
-        var thirdToolCall = connection.ReceivedFrames.Snapshot().Any(f =>
+        bool thirdToolCall = connection.ReceivedFrames.Snapshot().Any(f =>
             f.Sequence > capNotice!.Sequence &&
             f.Type == "conversation.item.create" &&
-            f.Json.TryGetProperty("item", out var item3) &&
-            item3.TryGetProperty("type", out var item3Type) &&
+            f.Json.TryGetProperty("item", out JsonElement item3) &&
+            item3.TryGetProperty("type", out JsonElement item3Type) &&
             item3Type.GetString() == "function_call_output");
         Assert.False(thirdToolCall,
             "A third function_call_output reached upstream after the cap notice -- the one-time " +
@@ -204,11 +204,11 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
 
         // The connection is still usable: the browser's own next action (not an auto-continue)
         // still produces a normal, successful tool call and round trip.
-        var next = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult next = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", "Tots", "medium", 1, 2.79m)],
             roundTripIndex, ct);
-        var order = JsonDocument.Parse(next.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(next.ToolResultJson!);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
     }, allowedNewBackendErrors: 2);
 
@@ -230,21 +230,23 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
     [Trait("Dotnet", "ready")]
     public Task Cap_is_not_reset_by_the_prescribed_get_order() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, _) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _b = browser;
-        foreach (var (name, args, id) in new[] {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int _) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _b = browser;
+        foreach ((string? name, string? args, string? id) in new[] {
             ("update_order", BadQuantityArgs, "f1"), ("get_order", "{}", "g1"),
             ("update_order", BadQuantityArgs, "f2"), ("get_order", "{}", "g2"),
             ("update_order", BadQuantityArgs, "f3"), ("get_order", "{}", "g3") })
+        {
             connection.Script.Enqueue(new ResponseScript([new FunctionCallEvent(name, args, id), new DoneEvent()]));
+        }
 
         await browser.SendResponseCreateAsync(ct);   // the only guest/browser action
 
-        var f3 = await connection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? f3 = await connection.ReceivedFrames.WaitForAsync(
             f => f.Type == "conversation.item.create" &&
-                 f.Json.TryGetProperty("item", out var it) &&
-                 it.TryGetProperty("call_id", out var cid) && cid.GetString() == "f3",
+                 f.Json.TryGetProperty("item", out JsonElement it) &&
+                 it.TryGetProperty("call_id", out JsonElement cid) && cid.GetString() == "f3",
             TimeSpan.FromSeconds(8), ct);
         Assert.True(f3 is null, "third failing update_order reached with no guest input -- cap never engaged");
         Assert.Null(browser.CloseStatus);
@@ -263,9 +265,9 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
     [Trait("Dotnet", "ready")]
     public Task Guest_speech_resets_the_failure_streak_after_the_cap() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
         connection.Script.Enqueue(new ResponseScript([
             new FunctionCallEvent(Name: "update_order", ArgumentsJson: BadQuantityArgs, CallId: "call_reset_a"),
@@ -277,16 +279,16 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
         ]));
         await browser.SendResponseCreateAsync(ct);
 
-        var callB = await connection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? callB = await connection.ReceivedFrames.WaitForAsync(
             f => f.Type == "conversation.item.create" &&
-                 f.Json.TryGetProperty("item", out var itemB) &&
-                 itemB.TryGetProperty("call_id", out var idB) && idB.GetString() == "call_reset_b",
+                 f.Json.TryGetProperty("item", out JsonElement itemB) &&
+                 itemB.TryGetProperty("call_id", out JsonElement idB) && idB.GetString() == "call_reset_b",
             OrderScenarioHelpers.FrameTimeout, ct);
         Assert.True(callB is not null, "call_reset_b's function_call_output never reached upstream.");
-        var capNotice = await connection.ReceivedFrames.WaitForAsync(
-            f => f.Type == "response.create" && f.Sequence > callB!.Sequence &&
-                 f.Json.TryGetProperty("response", out var respObj) &&
-                 respObj.TryGetProperty("tool_choice", out var toolChoiceProp) &&
+        RecordedFrame? capNotice = await connection.ReceivedFrames.WaitForAsync(
+            f => f.Type == "response.create" && f.Sequence > callB.Sequence &&
+                 f.Json.TryGetProperty("response", out JsonElement respObj) &&
+                 respObj.TryGetProperty("tool_choice", out JsonElement toolChoiceProp) &&
                  toolChoiceProp.GetString() == "none",
             OrderScenarioHelpers.FrameTimeout, ct);
         Assert.True(capNotice is not null, "Expected the one-time cap apology after the second failure.");
@@ -305,10 +307,10 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
         // otherwise-identical mic chunk) until the fake's VAD-default transcription-completed
         // reply shows up, bounded overall.
         RecordedFrame? transcriptionCompleted = null;
-        for (var attempt = 0; attempt < 8 && transcriptionCompleted is null; attempt++)
+        for (int attempt = 0; attempt < 8 && transcriptionCompleted is null; attempt++)
         {
             await Task.Delay(TimeSpan.FromSeconds(0.75), ct);
-            var browserWatermarkForAppend = browser.ReceivedFrames.Count;
+            int browserWatermarkForAppend = browser.ReceivedFrames.Count;
             await browser.SendInputAudioAppendAsync("dGVzdC1hdWRpby1jaHVuaw==", ct);
             transcriptionCompleted = await browser.ReceivedFrames.WaitForAsync(
                 f => f.Sequence >= browserWatermarkForAppend &&
@@ -322,17 +324,17 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
         // proving the streak was reset to zero, not left at the cap. Watermark on the upstream
         // connection's OWN log (transcriptionCompleted's Sequence is a browser-log sequence
         // number, not comparable to connection.ReceivedFrames' independent counter).
-        var connectionWatermarkForCallC = connection.ReceivedFrames.Count;
+        int connectionWatermarkForCallC = connection.ReceivedFrames.Count;
         connection.Script.Enqueue(new ResponseScript([
             new FunctionCallEvent(Name: "update_order", ArgumentsJson: BadQuantityArgs, CallId: "call_reset_c"),
             new DoneEvent(),
         ]));
         await browser.SendResponseCreateAsync(ct);
-        var callC = await connection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? callC = await connection.ReceivedFrames.WaitForAsync(
             f => f.Sequence >= connectionWatermarkForCallC &&
                  f.Type == "conversation.item.create" &&
-                 f.Json.TryGetProperty("item", out var itemC) &&
-                 itemC.TryGetProperty("call_id", out var idC) && idC.GetString() == "call_reset_c",
+                 f.Json.TryGetProperty("item", out JsonElement itemC) &&
+                 itemC.TryGetProperty("call_id", out JsonElement idC) && idC.GetString() == "call_reset_c",
             OrderScenarioHelpers.FrameTimeout, ct);
         Assert.True(callC is not null,
             "call_reset_c's function_call_output never reached upstream -- a single failure right " +
@@ -343,11 +345,11 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
         // one-shot check can race ahead of it (observed directly: callC arrived, but the bare
         // continuation was still ~2.5s away under a busy shared backend). WaitForAsync polls
         // with FrameTimeout instead of assuming it's already there.
-        var bareAutoContinue = await connection.ReceivedFrames.WaitForAsync(
-            f => f.Sequence > callC!.Sequence &&
+        RecordedFrame? bareAutoContinue = await connection.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > callC.Sequence &&
                  f.Type == "response.create" &&
-                 (!f.Json.TryGetProperty("response", out var respObj3) ||
-                  !respObj3.TryGetProperty("tool_choice", out var toolChoiceUnused3)),
+                 (!f.Json.TryGetProperty("response", out JsonElement respObj3) ||
+                  !respObj3.TryGetProperty("tool_choice", out JsonElement toolChoiceUnused3)),
             OrderScenarioHelpers.FrameTimeout, ct);
         Assert.True(bareAutoContinue is not null,
             "Expected a bare (no tool_choice override) auto-continue after the single post-reset " +
@@ -355,11 +357,11 @@ public sealed class ToolFailureCapAndTicketRefreshTests(ConformanceFixture fixtu
         // Now that the bare continuation has been positively observed, it's safe to check that no
         // tool_choice=none cap notice snuck in before it (a Snapshot() bounded by two confirmed
         // frames, not a race against an unconfirmed one).
-        var strayCapNotice = connection.ReceivedFrames.Snapshot().Any(f =>
-            f.Sequence > callC!.Sequence && f.Sequence < bareAutoContinue!.Sequence &&
+        bool strayCapNotice = connection.ReceivedFrames.Snapshot().Any(f =>
+            f.Sequence > callC.Sequence && f.Sequence < bareAutoContinue.Sequence &&
             f.Type == "response.create" &&
-            f.Json.TryGetProperty("response", out var respObj2) &&
-            respObj2.TryGetProperty("tool_choice", out var toolChoiceProp2) &&
+            f.Json.TryGetProperty("response", out JsonElement respObj2) &&
+            respObj2.TryGetProperty("tool_choice", out JsonElement toolChoiceProp2) &&
             toolChoiceProp2.GetString() == "none");
         Assert.False(strayCapNotice,
             "A tool_choice=none cap notice fired after only ONE failed round post-reset.");

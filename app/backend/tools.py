@@ -513,15 +513,24 @@ update_order_tool_schema = {
             "action": { 
                 "type": "string", 
                 "description": (
-                    "Action to perform: 'add', 'remove', or 'modify' (change an existing item's "
-                    "size in place, e.g. resizing a meal/combo from Medium to Large -- only offer "
-                    "'modify' if this persona's own tool instructions mention it)."
+                    "Use add for an extra item, remove to delete, modify to resize the same item, "
+                    "or replace to atomically swap one included combo side/drink. For replace use "
+                    "the NEW item_name and size, OLD original_item_name, and quantity 1."
                 ),
-                "enum": ["add", "remove", "modify"]
+                "enum": ["add", "remove", "modify", "replace"]
             },
             "item_name": { 
                 "type": "string", 
                 "description": "Name of the item to update, e.g., 'Cherry Limeade'."
+            },
+            "original_item_name": {
+                "type": "string",
+                "description": "Required for replace: exact existing included side/drink name from get_order. Replaces one matching combo slot, never a standalone item."
+            },
+            "combo_index": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "For replace when multiple combo lines contain the old item: zero-based items array index from get_order, after clarifying which meal the guest means."
             },
             "size": { 
                 "type": "string", 
@@ -599,7 +608,7 @@ async def update_order(args, session_id: str) -> ToolResult:
     #   (+ "available_sizes": [...] for size_not_available.)
     # ToolResult.to_text() already json.dumps()s a non-str `text` payload (rtmt.py), so passing a
     # dict here is exactly what every OTHER JSON-carrying ToolResult in this module does. ──
-    if args["action"] in ("add", "modify"):
+    if args["action"] in ("add", "modify", "replace"):
         menu_item = menu.resolve_menu_item(item_name)
         if menu_item is None:
             logger.info("Rejected off-menu item '%s' for session %s (not_on_menu)", item_name, session_id)
@@ -655,7 +664,7 @@ async def update_order(args, session_id: str) -> ToolResult:
         # no-op (returns True) for `active_mode=None` -- so this block never rejects anything for
         # those packs.
         menu_mode = order_state_singleton.get_menu_mode(session_id)
-        if args["action"] == "add" and not menu.item_available_now(item_name, menu_mode):
+        if args["action"] in ("add", "replace") and not menu.item_available_now(item_name, menu_mode):
             logger.info(
                 "Rejected out-of-mode item '%s' for session %s (item_out_of_mode; active_mode=%s, item_period=%s)",
                 item_name, session_id, menu_mode, menu_item.get("menuPeriod"),
@@ -767,7 +776,7 @@ async def update_order(args, session_id: str) -> ToolResult:
     # silently added while a real machine outage is in effect. `modify` never reaches this check
     # -- resizing an item already in the order doesn't newly require the machine it already
     # required when it was added.
-    if args["action"] == "add":
+    if args["action"] in ("add", "replace"):
         machine = menu.requires_machine(item_name)
         if machine and order_state_singleton.effective_machine_status(session_id, machine) == "down":
             machine_label = menu.machine_label(machine)
@@ -925,6 +934,11 @@ async def update_order(args, session_id: str) -> ToolResult:
         i.quantity for i in order_state_singleton.get_order_items(session_id)
         if i.item == item_name and i.size == menu.canonical_size_key(size)
     ) if menu.speech_style == "naturalDriveThru" and args["action"] == "remove" else 0
+    original_item_name = args.get("original_item_name")
+    if args["action"] == "replace" and isinstance(original_item_name, str):
+        original_menu_item = menu.resolve_menu_item(original_item_name)
+        if original_menu_item:
+            original_item_name, _ = _reattach_customization_suffix(original_item_name, original_menu_item["name"])
     result_info = order_state_singleton.handle_order_update(
         session_id,
         args["action"],
@@ -932,7 +946,22 @@ async def update_order(args, session_id: str) -> ToolResult:
         size,
         quantity,
         args.get("price", 0.0),
+        original_item_name=original_item_name,
+        combo_index=args.get("combo_index"),
     )
+    if result_info.get("replacement_rejected"):
+        reason = result_info["replacement_rejected"]
+        messages = {
+            "invalid_replacement": "Nothing changed. To replace one included side or drink, provide original_item_name and quantity 1.",
+            "incompatible_replacement": "Nothing changed. The replacement must be a menu item for the same included side or drink slot, not an extra.",
+            "replacement_target_not_found": "Nothing changed. That exact item is not filling a combo slot. Call get_order and clarify which included item to replace; do not add an extra item instead.",
+            "ambiguous_replacement": "Nothing changed. More than one combo contains that item. Call get_order, clarify which meal the guest means, then supply its zero-based ticket line as combo_index.",
+        }
+        logger.info("Rejected combo replacement for session %s: %s", session_id, reason)
+        return ToolResult({
+            "status": "rejected", "item_added": False, "reason": reason,
+            "item_name": item_name, "message": messages[reason],
+        }, ToolResultDirection.TO_SERVER)
 
     # PR #184 round 4 (Rick's review, item 3): a "wholeBundleSize" pack's `combo_component_
     # resize_rejected` flag means NOTHING was mutated (order_state.OrderState._fill_bundle_
@@ -1021,7 +1050,11 @@ async def update_order(args, session_id: str) -> ToolResult:
     # existing generic "Removed ..." wording below is already accurate for that case (the item
     # IS being removed from the guest's perspective), so no separate branch reads it here.
 
-    if absorbed:
+    if result_info.get("replaced_from_item"):
+        original_spoken = menu.spoken(result_info["replaced_from_item"])
+        upcharge_text = f" with a {component_upcharge_display} upcharge" if component_upcharge_display else ""
+        delta_text = f"Replaced {original_spoken} with {spoken_display_name} in your combo{upcharge_text} — your total is now {summary.finalTotalSpoken}"
+    elif absorbed:
         if component_upcharge_display:
             delta_text = f"{spoken_display_name} included with your combo with a {component_upcharge_display} upcharge — your total is {summary.finalTotalSpoken}"
         else:

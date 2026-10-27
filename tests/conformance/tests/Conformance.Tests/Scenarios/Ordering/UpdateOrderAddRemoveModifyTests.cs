@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 
@@ -21,17 +20,17 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Add_single_item_creates_one_line_with_correct_total() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", "Tots", "medium", 1, 2.79m)],
             roundTripIndex, ct);
 
         Assert.NotNull(result.ToolResultJson);
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(2.79m, order.GetProperty("total").GetDecimal());
     });
@@ -40,15 +39,15 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Adding_the_same_item_and_size_twice_merges_into_one_line_with_summed_quantity() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
         // Non-drink item deliberately: this class runs under the ambient ConformanceCollection
         // (real wall-clock time, see BackendProfiles.Default), so a drink item's price would be
         // non-deterministic depending on whether the suite happens to run during the real
         // 14:00-16:00 happy-hour window. Matches the same precedent as UpdateOrderToolCallTests.cs.
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [
                 ("add", "Tots", "medium", 1, 2.79m),
@@ -56,8 +55,8 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
             ],
             roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
-        var items = order.GetProperty("items");
+        var order = JsonElement.Parse(result.ToolResultJson!);
+        JsonElement items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Equal(3, items[0].GetProperty("quantity").GetInt32());
         OrderScenarioHelpers.AssertMoneyEqual(3 * 2.79m, order.GetProperty("total").GetDecimal());
@@ -67,11 +66,11 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Removing_part_of_a_quantity_decrements_the_line_instead_of_deleting_it() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [
                 ("add", "Tots", "medium", 3, 2.79m),
@@ -79,8 +78,8 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
             ],
             roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
-        var items = order.GetProperty("items");
+        var order = JsonElement.Parse(result.ToolResultJson!);
+        JsonElement items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Equal(2, items[0].GetProperty("quantity").GetInt32());
     });
@@ -89,11 +88,11 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Removing_the_full_quantity_clears_the_line_entirely() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [
                 ("add", "Tots", "medium", 1, 2.79m),
@@ -101,7 +100,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
             ],
             roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         Assert.Equal(0, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(0m, order.GetProperty("total").GetDecimal());
     });
@@ -110,16 +109,16 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Removing_an_item_that_was_never_added_is_a_safe_no_op() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("remove", "Onion Rings", "medium", 1, 3.89m)],
             roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         Assert.Equal(0, order.GetProperty("items").GetArrayLength());
     });
 
@@ -135,11 +134,11 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Modifying_an_item_that_is_not_in_the_order_is_rejected_and_changes_nothing() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var rejected = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult rejected = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
             JsonSerializer.Serialize(new
             {
@@ -155,12 +154,12 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
             rejected.FunctionCallOutputText, expectedReason: "not_in_order", expectedItemName: "Tots");
         using (var doc = JsonDocument.Parse(rejected.FunctionCallOutputText))
         {
-            var message = doc.RootElement.GetProperty("message").GetString()!;
+            string message = doc.RootElement.GetProperty("message").GetString()!;
             Assert.Contains("Tots", message);
             Assert.DoesNotContain("An error occurred", message);
         }
 
-        var result = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult result = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "get_order", "{}", "call_get_after_modify_missing", rejected.RoundTripIndex, ct);
         Assert.Equal(0, OrderScenarioHelpers.GetOrderItemCount(result.ToolResultJson!));
         OrderScenarioHelpers.AssertMoneyEqual(
@@ -197,17 +196,17 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     [InlineData("true")]
     public Task Adding_an_item_with_a_wrong_tool_call_price_is_charged_the_menu_price(string toolCallPriceJson) => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult result = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
             $$"""{"action":"add","item_name":"Tots","size":"medium","quantity":1,"price":{{toolCallPriceJson}}}""",
             "call_wrong_tool_price", roundTripIndex, ct);
 
         Assert.NotNull(result.ToolResultJson);
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(2.79m, order.GetProperty("total").GetDecimal(),
             $"A wrong tool-call price ({toolCallPriceJson}) must be ignored and 'Tots' (medium) charged " +
@@ -225,17 +224,17 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Adding_an_item_with_an_omitted_tool_call_price_is_charged_the_menu_price() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult result = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
             """{"action":"add","item_name":"Tots","size":"medium","quantity":1}""",
             "call_omitted_tool_price", roundTripIndex, ct);
 
         Assert.NotNull(result.ToolResultJson);
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(2.79m, order.GetProperty("total").GetDecimal(),
             "An omitted tool-call price must default harmlessly and 'Tots' (medium) still be " +
@@ -258,9 +257,9 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Adding_the_wrong_size_with_a_stale_price_carried_over_is_charged_the_new_size_menu_price() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
         await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
@@ -270,13 +269,13 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
             connection, browser, "update_order",
             """{"action":"remove","item_name":"Tots","size":"medium","quantity":1,"price":2.79}""",
             "call_remove_medium", roundTripIndex, ct);
-        var result = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult result = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
             """{"action":"add","item_name":"Tots","size":"large","quantity":1,"price":2.79}""",
             "call_add_large_stale_price", roundTripIndex, ct);
 
         Assert.NotNull(result.ToolResultJson);
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(3.49m, order.GetProperty("total").GetDecimal(),
             "A large re-add with the medium's stale tool-call price (2.79) carried over must be " +
@@ -288,21 +287,21 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     [MemberData(nameof(Route44AliasCases))]
     public Task Route_44_size_aliases_all_display_as_Route_44(string sizeAlias) => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var repoRoot = RepoPaths.FindRepoRoot();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string repoRoot = RepoPaths.FindRepoRoot();
         var golden = GoldenOrderPricingData.Load(repoRoot);
         Assert.Contains(sizeAlias, golden.Route44.Aliases);
 
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", "Cherry Limeade", sizeAlias, 1, 3.79m)],
             roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
-        var items = order.GetProperty("items");
+        var order = JsonElement.Parse(result.ToolResultJson!);
+        JsonElement items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Equal($"{golden.Route44.ExpectedDisplayPrefix} Cherry Limeade", items[0].GetProperty("display").GetString());
     });
@@ -315,7 +314,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     {
         var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
         var data = new TheoryData<string>();
-        foreach (var alias in golden.Route44.Aliases)
+        foreach (string alias in golden.Route44.Aliases)
         {
             data.Add(alias);
         }
@@ -326,14 +325,14 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Adding_the_same_drink_with_two_different_Route_44_aliases_merges_into_one_line() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
         // "rt44" and "route 44" are both in golden.Route44.Aliases and both normalise to the same
         // canonical Route 44 size -- see #40's acceptance criteria.
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [
                 ("add", "Cherry Limeade", "rt44", 1, 3.79m),
@@ -341,8 +340,8 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
             ],
             roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
-        var items = order.GetProperty("items");
+        var order = JsonElement.Parse(result.ToolResultJson!);
+        JsonElement items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Equal(2, items[0].GetProperty("quantity").GetInt32());
         Assert.Equal($"{golden.Route44.ExpectedDisplayPrefix} Cherry Limeade", items[0].GetProperty("display").GetString());
@@ -364,11 +363,11 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Adding_the_same_drink_with_L_and_large_merges_into_one_line() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [
                 ("add", "Tots", "l", 1, 3.49m),
@@ -376,8 +375,8 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
             ],
             roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
-        var items = order.GetProperty("items");
+        var order = JsonElement.Parse(result.ToolResultJson!);
+        JsonElement items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Equal(2, items[0].GetProperty("quantity").GetInt32());
         Assert.Equal("Large Tots", items[0].GetProperty("display").GetString());
@@ -387,11 +386,11 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Removing_a_Route_44_drink_with_a_different_alias_than_it_was_added_with_removes_it() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [
                 ("add", "Cherry Limeade", "rt44", 1, 3.79m),
@@ -399,7 +398,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
             ],
             roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         Assert.Equal(0, order.GetProperty("items").GetArrayLength());
     });
 
@@ -412,7 +411,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     {
         var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
         var data = new TheoryData<int>();
-        for (var i = 0; i < golden.SizeDisplayCases.Count; i++)
+        for (int i = 0; i < golden.SizeDisplayCases.Count; i++)
         {
             data.Add(i);
         }
@@ -424,25 +423,25 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     [MemberData(nameof(SizeDisplayCaseIndexes))]
     public Task Size_aliases_and_hidden_sizes_display_correctly(int caseIndex) => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var repoRoot = RepoPaths.FindRepoRoot();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string repoRoot = RepoPaths.FindRepoRoot();
         var golden = GoldenOrderPricingData.Load(repoRoot);
-        var sizeCase = golden.SizeDisplayCases[caseIndex];
+        SizeDisplayCase sizeCase = golden.SizeDisplayCases[caseIndex];
 
-        var mode = OrderScenarioHelpers.MenuModeForItem(repoRoot, sizeCase.Item);
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
-        await using var _ = browser;
+        string mode = OrderScenarioHelpers.MenuModeForItem(repoRoot, sizeCase.Item);
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
+        await using RealtimeBrowserClient _ = browser;
 
         // update_order's price is caller-supplied and never menu-validated (see
         // order_state.py::_handle_order_update), so an arbitrary placeholder price is fine here —
         // this Theory is only proving the `display` field, not pricing.
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", sizeCase.Item, sizeCase.Size, 1, 1.00m)],
             roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
-        var items = order.GetProperty("items");
+        var order = JsonElement.Parse(result.ToolResultJson!);
+        JsonElement items = order.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
         Assert.Equal(sizeCase.ExpectedDisplay, items[0].GetProperty("display").GetString());
     });
@@ -456,7 +455,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     {
         var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
         var data = new TheoryData<int>();
-        for (var i = 0; i < golden.SizeNotAvailableCases.Count; i++)
+        for (int i = 0; i < golden.SizeNotAvailableCases.Count; i++)
         {
             data.Add(i);
         }
@@ -468,14 +467,14 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     [MemberData(nameof(SizeNotAvailableCaseIndexes))]
     public Task Unavailable_size_is_rejected_with_the_items_real_available_sizes(int caseIndex) => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
-        var sizeCase = golden.SizeNotAvailableCases[caseIndex];
+        SizeNotAvailableCase sizeCase = golden.SizeNotAvailableCases[caseIndex];
 
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var rejected = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult rejected = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
             JsonSerializer.Serialize(new
             {
@@ -493,7 +492,7 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
             expectedItemName: sizeCase.ExpectedItemName,
             expectedAvailableSizes: sizeCase.ExpectedAvailableSizes);
 
-        var result = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult result = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "get_order", "{}", "call_get_after_reject_size", rejected.RoundTripIndex, ct);
         Assert.Equal(0, OrderScenarioHelpers.GetOrderItemCount(result.ToolResultJson!));
     });
@@ -502,31 +501,31 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Adding_up_to_the_per_item_quantity_limit_succeeds_but_one_more_is_rejected() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
-        var max = golden.QuantityLimits.MaxItemQuantity;
+        int max = golden.QuantityLimits.MaxItemQuantity;
 
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var atLimit = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult atLimit = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", "Tots", "medium", max, 2.79m)],
             roundTripIndex, ct);
-        var orderAtLimit = JsonDocument.Parse(atLimit.ToolResultJson!).RootElement;
+        var orderAtLimit = JsonElement.Parse(atLimit.ToolResultJson!);
         Assert.Equal(max, orderAtLimit.GetProperty("items")[0].GetProperty("quantity").GetInt32());
 
         // One more of the same item+size pushes the per-item total over MAX_QUANTITY_PER_ITEM —
         // tools.py rejects the whole call (TO_SERVER-only apology), so quantity must stay unchanged.
-        var overLimit = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult overLimit = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
             """{"action":"add","item_name":"Tots","size":"medium","quantity":1,"price":2.79}""",
             "call_over_item_limit", atLimit.RoundTripIndex, ct, toClient: false);
         Assert.Null(overLimit.ToolResultJson);
 
-        var result = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult result = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "get_order", "{}", "call_get_after_item_limit", overLimit.RoundTripIndex, ct);
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
         Assert.Equal(max, order.GetProperty("items")[0].GetProperty("quantity").GetInt32());
     });
@@ -535,21 +534,21 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Exceeding_the_whole_order_item_limit_is_rejected_while_staying_at_the_cap() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
-        var maxTotal = golden.QuantityLimits.MaxOrderItems;
-        var maxPerItem = golden.QuantityLimits.MaxItemQuantity;
+        int maxTotal = golden.QuantityLimits.MaxOrderItems;
+        int maxPerItem = golden.QuantityLimits.MaxItemQuantity;
         Assert.True(maxTotal > maxPerItem, "This scenario assumes the whole-order cap exceeds the per-item cap.");
 
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
         // Fill the order to exactly MAX_TOTAL_ITEMS using distinct item+size lines (so no single
         // line ever exceeds MAX_QUANTITY_PER_ITEM): maxPerItem + maxPerItem + remainder.
-        var remainder = maxTotal - (2 * maxPerItem);
+        int remainder = maxTotal - (2 * maxPerItem);
         Assert.True(remainder > 0 && remainder < maxPerItem, "Golden quantity limits changed shape; adjust this fill plan.");
 
-        var filled = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult filled = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [
                 ("add", "Tots", "medium", maxPerItem, 2.79m),
@@ -557,25 +556,25 @@ public sealed class UpdateOrderAddRemoveModifyTests(ConformanceFixture fixture)
                 ("add", "Groovy Fries", "medium", remainder, 2.79m),
             ],
             roundTripIndex, ct);
-        var orderFilled = JsonDocument.Parse(filled.ToolResultJson!).RootElement;
-        var totalQty = 0;
-        foreach (var item in orderFilled.GetProperty("items").EnumerateArray())
+        var orderFilled = JsonElement.Parse(filled.ToolResultJson!);
+        int totalQty = 0;
+        foreach (JsonElement item in orderFilled.GetProperty("items").EnumerateArray())
         {
             totalQty += item.GetProperty("quantity").GetInt32();
         }
         Assert.Equal(maxTotal, totalQty);
 
-        var overLimit = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult overLimit = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
             """{"action":"add","item_name":"Mozzarella Sticks","size":"medium","quantity":1,"price":4.29}""",
             "call_over_total_limit", filled.RoundTripIndex, ct, toClient: false);
         Assert.Null(overLimit.ToolResultJson);
 
-        var result = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult result = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "get_order", "{}", "call_get_after_total_limit", overLimit.RoundTripIndex, ct);
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
-        var finalQty = 0;
-        foreach (var item in order.GetProperty("items").EnumerateArray())
+        var order = JsonElement.Parse(result.ToolResultJson!);
+        int finalQty = 0;
+        foreach (JsonElement item in order.GetProperty("items").EnumerateArray())
         {
             finalQty += item.GetProperty("quantity").GetInt32();
         }

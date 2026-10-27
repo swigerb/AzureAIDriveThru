@@ -53,22 +53,21 @@ public sealed class ResumeCoordinatorTests
             NullLogger.Instance, CancellationToken.None);
 
     private static List<string> TextFrames(FakeWebSocket socket) =>
-        socket.SentMessages
+        [.. socket.SentMessages
             .Where(m => m.MessageType == WebSocketMessageType.Text)
-            .Select(m => System.Text.Encoding.UTF8.GetString(m.Data))
-            .ToList();
+            .Select(m => System.Text.Encoding.UTF8.GetString(m.Data))];
 
     [Fact]
     public async Task RejectLateResumeAsync_sends_resume_rejected_and_no_fresh_metadata_when_none_was_ever_announced()
     {
-        var state = NewState();
+        RealtimeProcessor.RealtimeSessionState state = NewState();
         var browser = new FakeWebSocket([]);
         var upstream = new FakeWebSocket([]);
-        var coordinator = NewCoordinator(browser, upstream, state, sessionManager: null);
+        ResumeCoordinator coordinator = NewCoordinator(browser, upstream, state, sessionManager: null);
 
         await coordinator.RejectLateResumeAsync("not this connection's first frame");
 
-        var frame = JsonNode.Parse(Assert.Single(TextFrames(browser)))!.AsObject();
+        JsonObject frame = JsonNode.Parse(Assert.Single(TextFrames(browser)))!.AsObject();
         Assert.Equal("extension.resume_rejected", (string?)frame["type"]);
         Assert.Equal("not_first_frame", (string?)frame["reason"]);
     }
@@ -76,16 +75,16 @@ public sealed class ResumeCoordinatorTests
     [Fact]
     public async Task RejectLateResumeAsync_re_announces_fresh_metadata_when_a_baton_was_already_held()
     {
-        var state = NewState();
+        RealtimeProcessor.RealtimeSessionState state = NewState();
         state.MetadataAnnounced = true;
         var browser = new FakeWebSocket([]);
         var upstream = new FakeWebSocket([]);
-        var sessionManager = NewSessionManager();
-        var coordinator = NewCoordinator(browser, upstream, state, sessionManager);
+        SessionManager sessionManager = NewSessionManager();
+        ResumeCoordinator coordinator = NewCoordinator(browser, upstream, state, sessionManager);
 
         await coordinator.RejectLateResumeAsync("first-frame timeout already decided");
 
-        var frames = TextFrames(browser);
+        List<string> frames = TextFrames(browser);
         Assert.Equal(2, frames.Count);
         Assert.Equal("extension.resume_rejected", (string?)JsonNode.Parse(frames[0])!["type"]);
         Assert.Equal("extension.session_metadata", (string?)JsonNode.Parse(frames[1])!["type"]);
@@ -94,16 +93,16 @@ public sealed class ResumeCoordinatorTests
     [Fact]
     public async Task AnnounceAfterFirstFrameDecisionAsync_sends_fresh_session_metadata_when_not_resumed()
     {
-        var state = NewState();
+        RealtimeProcessor.RealtimeSessionState state = NewState();
         state.FirstFrameDecision.TrySetResult(false);
         var browser = new FakeWebSocket([]);
         var upstream = new FakeWebSocket([]);
-        var sessionManager = NewSessionManager();
-        var coordinator = NewCoordinator(browser, upstream, state, sessionManager);
+        SessionManager sessionManager = NewSessionManager();
+        ResumeCoordinator coordinator = NewCoordinator(browser, upstream, state, sessionManager);
 
         await coordinator.AnnounceAfterFirstFrameDecisionAsync();
 
-        var frame = JsonNode.Parse(Assert.Single(TextFrames(browser)))!.AsObject();
+        JsonObject frame = JsonNode.Parse(Assert.Single(TextFrames(browser)))!.AsObject();
         Assert.Equal("extension.session_metadata", (string?)frame["type"]);
         Assert.True(state.MetadataAnnounced);
     }
@@ -111,16 +110,16 @@ public sealed class ResumeCoordinatorTests
     [Fact]
     public async Task AnnounceAfterFirstFrameDecisionAsync_announces_resume_without_rehydration_when_conversation_had_not_started()
     {
-        var state = NewState();
+        RealtimeProcessor.RealtimeSessionState state = NewState();
         state.ResumeAnnounce = new ResumeOutcome(Accepted: true, ResumeId: "resume-123", ConversationStarted: false);
         state.FirstFrameDecision.TrySetResult(true);
         var browser = new FakeWebSocket([]);
         var upstream = new FakeWebSocket([]);
-        var coordinator = NewCoordinator(browser, upstream, state, sessionManager: null);
+        ResumeCoordinator coordinator = NewCoordinator(browser, upstream, state, sessionManager: null);
 
         await coordinator.AnnounceAfterFirstFrameDecisionAsync();
 
-        var browserFrame = JsonNode.Parse(Assert.Single(TextFrames(browser)))!.AsObject();
+        JsonObject browserFrame = JsonNode.Parse(Assert.Single(TextFrames(browser)))!.AsObject();
         Assert.Equal("extension.session_resumed", (string?)browserFrame["type"]);
         Assert.Equal("resume-123", (string?)browserFrame["resume_id"]);
         Assert.True(state.MetadataAnnounced);
@@ -131,7 +130,7 @@ public sealed class ResumeCoordinatorTests
     [Fact]
     public async Task AnnounceAfterFirstFrameDecisionAsync_rehydrates_and_restores_voice_when_conversation_had_started()
     {
-        var state = NewState();
+        RealtimeProcessor.RealtimeSessionState state = NewState();
         state.Voice = "amuch";
         state.ResumeAnnounce = new ResumeOutcome(
             Accepted: true,
@@ -142,14 +141,14 @@ public sealed class ResumeCoordinatorTests
         state.FirstFrameDecision.TrySetResult(true);
         var browser = new FakeWebSocket([]);
         var upstream = new FakeWebSocket([]);
-        var coordinator = NewCoordinator(browser, upstream, state, sessionManager: null);
+        ResumeCoordinator coordinator = NewCoordinator(browser, upstream, state, sessionManager: null);
 
         await coordinator.AnnounceAfterFirstFrameDecisionAsync();
 
-        var upstreamFrames = TextFrames(upstream);
+        List<string> upstreamFrames = TextFrames(upstream);
         Assert.Equal(2, upstreamFrames.Count);
         Assert.Equal("conversation.item.create", (string?)JsonNode.Parse(upstreamFrames[0])!["type"]);
-        var voiceFrame = JsonNode.Parse(upstreamFrames[1])!.AsObject();
+        JsonObject voiceFrame = JsonNode.Parse(upstreamFrames[1])!.AsObject();
         Assert.Equal("session.update", (string?)voiceFrame["type"]);
         Assert.Equal("amuch", (string?)voiceFrame["session"]!["voice"]);
     }

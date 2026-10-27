@@ -1,5 +1,3 @@
-using UpdateMenuSizes;
-
 namespace UpdateMenuSizes.Tests;
 
 /// <summary>
@@ -14,7 +12,7 @@ public sealed class MenuSizeUpdaterTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var path in _tempFiles)
+        foreach (string path in _tempFiles)
         {
             if (File.Exists(path))
             {
@@ -25,7 +23,7 @@ public sealed class MenuSizeUpdaterTests : IDisposable
 
     private string WriteTempJson(string prefix, string json)
     {
-        var path = Path.Combine(Path.GetTempPath(), $"squanchy-update-menu-sizes-{prefix}-{Guid.NewGuid():n}.json");
+        string path = Path.Combine(Path.GetTempPath(), $"squanchy-update-menu-sizes-{prefix}-{Guid.NewGuid():n}.json");
         File.WriteAllText(path, json);
         _tempFiles.Add(path);
         return path;
@@ -54,7 +52,7 @@ public sealed class MenuSizeUpdaterTests : IDisposable
     [InlineData("RT 44\u00ae Cherry Limeade", "rt 44", "Cherry Limeade")]
     public void ExtractSize_MatchesKnownPrefixes(string displayName, string expectedSizeKey, string expectedBase)
     {
-        var (sizeKey, baseName) = MenuSizeUpdater.ExtractSize(displayName);
+        (string? sizeKey, string? baseName) = MenuSizeUpdater.ExtractSize(displayName);
 
         Assert.Equal(expectedSizeKey, sizeKey);
         Assert.Equal(expectedBase, baseName);
@@ -63,7 +61,7 @@ public sealed class MenuSizeUpdaterTests : IDisposable
     [Fact]
     public void ExtractSize_NoKnownPrefix_ReturnsNullKeyAndOriginalName()
     {
-        var (sizeKey, baseName) = MenuSizeUpdater.ExtractSize("Cherry Limeade");
+        (string? sizeKey, string? baseName) = MenuSizeUpdater.ExtractSize("Cherry Limeade");
 
         Assert.Null(sizeKey);
         Assert.Equal("Cherry Limeade", baseName);
@@ -76,7 +74,7 @@ public sealed class MenuSizeUpdaterTests : IDisposable
         // literal characters "RT 44\u00ae " (backslash, u, 0, 0, a, e), not the (R) symbol -- dead
         // code that can never match a real production displayName. This port must reproduce that
         // exactly (not "fix" it), so a real (R) name must still match via the NEXT prefix entry.
-        var (sizeKey, baseName) = MenuSizeUpdater.ExtractSize("RT 44\u00ae Blue Raspberry Slush");
+        (string? sizeKey, string? baseName) = MenuSizeUpdater.ExtractSize("RT 44\u00ae Blue Raspberry Slush");
 
         Assert.Equal("rt 44", sizeKey);
         Assert.Equal("Blue Raspberry Slush", baseName);
@@ -94,7 +92,7 @@ public sealed class MenuSizeUpdaterTests : IDisposable
             new("Large Cherry Limeade", 3.39m),
         ];
 
-        var sizes = MenuSizeUpdater.FindSizesForProduct(products, "Cherry Limeade");
+        Dictionary<string, MenuSizeUpdater.ProductEntry> sizes = MenuSizeUpdater.FindSizesForProduct(products, "Cherry Limeade");
 
         Assert.Equal(2.49m, sizes["small"].Price);
         Assert.Equal(3.39m, sizes["large"].Price);
@@ -109,7 +107,7 @@ public sealed class MenuSizeUpdaterTests : IDisposable
             new("Large Cherry Limeade", -1m),
         ];
 
-        var sizes = MenuSizeUpdater.FindSizesForProduct(products, "Cherry Limeade");
+        Dictionary<string, MenuSizeUpdater.ProductEntry> sizes = MenuSizeUpdater.FindSizesForProduct(products, "Cherry Limeade");
 
         Assert.Empty(sizes);
     }
@@ -124,9 +122,9 @@ public sealed class MenuSizeUpdaterTests : IDisposable
             new("Medium Diet Cherry Limeade", 1.99m),  // so a broken exclusion is actually visible
         ];
 
-        var sizes = MenuSizeUpdater.FindSizesForProduct(products, "Cherry Limeade");
+        Dictionary<string, MenuSizeUpdater.ProductEntry> sizes = MenuSizeUpdater.FindSizesForProduct(products, "Cherry Limeade");
 
-        var size = Assert.Single(sizes);
+        KeyValuePair<string, MenuSizeUpdater.ProductEntry> size = Assert.Single(sizes);
         Assert.Equal("small", size.Key);
         Assert.Equal(2.49m, size.Value.Price);
     }
@@ -145,9 +143,9 @@ public sealed class MenuSizeUpdaterTests : IDisposable
             new("Large Diet Ocean Water", 1.99m), // different size key, so a broken exclusion shows up
         ];
 
-        var sizes = MenuSizeUpdater.FindSizesForProduct(products, "Ocean Water");
+        Dictionary<string, MenuSizeUpdater.ProductEntry> sizes = MenuSizeUpdater.FindSizesForProduct(products, "Ocean Water");
 
-        var size = Assert.Single(sizes);
+        KeyValuePair<string, MenuSizeUpdater.ProductEntry> size = Assert.Single(sizes);
         Assert.Equal("small", size.Key);
     }
 
@@ -156,7 +154,7 @@ public sealed class MenuSizeUpdaterTests : IDisposable
     {
         List<MenuSizeUpdater.ProductEntry> products = [new("Small Blue Raspberry Slush", 2.19m)];
 
-        var sizes = MenuSizeUpdater.FindSizesForProduct(products, "Cherry Limeade");
+        Dictionary<string, MenuSizeUpdater.ProductEntry> sizes = MenuSizeUpdater.FindSizesForProduct(products, "Cherry Limeade");
 
         Assert.Empty(sizes);
     }
@@ -181,8 +179,8 @@ public sealed class MenuSizeUpdaterTests : IDisposable
     [Fact]
     public void UpdateMenu_AddsMissingSizes_AndPreservesOtherFields()
     {
-        var productionPath = WriteTempJson("prod", ProductionFixture);
-        var menuPath = WriteTempJson("menu", """
+        string productionPath = WriteTempJson("prod", ProductionFixture);
+        string menuPath = WriteTempJson("menu", """
             {
               "menuItems": [
                 {
@@ -199,10 +197,10 @@ public sealed class MenuSizeUpdaterTests : IDisposable
             }
             """);
 
-        var result = MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
+        MenuSizeUpdater.UpdateResult result = MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
 
         Assert.Equal(1, result.UpdatedCount);
-        var updatedJson = File.ReadAllText(menuPath);
+        string updatedJson = File.ReadAllText(menuPath);
         Assert.Contains("\"description\": \"unchanged description\"", updatedJson);
         Assert.Contains("\"mini\"", updatedJson);
         Assert.Contains("\"large\"", updatedJson);
@@ -211,8 +209,8 @@ public sealed class MenuSizeUpdaterTests : IDisposable
     [Fact]
     public void UpdateMenu_SkipsItemsNotInProductSearchMap()
     {
-        var productionPath = WriteTempJson("prod", ProductionFixture);
-        var menuPath = WriteTempJson("menu", """
+        string productionPath = WriteTempJson("prod", ProductionFixture);
+        string menuPath = WriteTempJson("menu", """
             {
               "menuItems": [
                 {
@@ -224,9 +222,9 @@ public sealed class MenuSizeUpdaterTests : IDisposable
               ]
             }
             """);
-        var before = File.ReadAllText(menuPath);
+        string before = File.ReadAllText(menuPath);
 
-        var result = MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
+        MenuSizeUpdater.UpdateResult result = MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
 
         Assert.Equal(0, result.UpdatedCount);
         // Untracked items must round-trip unchanged in content (formatting may differ).
@@ -237,8 +235,8 @@ public sealed class MenuSizeUpdaterTests : IDisposable
     [Fact]
     public void UpdateMenu_SkipsWhenNoProductionDataFound()
     {
-        var productionPath = WriteTempJson("prod", """{ "menus": { "menu-1": { "products": {} } } }""");
-        var menuPath = WriteTempJson("menu", """
+        string productionPath = WriteTempJson("prod", """{ "menus": { "menu-1": { "products": {} } } }""");
+        string menuPath = WriteTempJson("menu", """
             {
               "menuItems": [
                 {
@@ -251,7 +249,7 @@ public sealed class MenuSizeUpdaterTests : IDisposable
             }
             """);
 
-        var result = MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
+        MenuSizeUpdater.UpdateResult result = MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
 
         Assert.Equal(0, result.UpdatedCount);
         Assert.Contains(result.Log, line => line.Contains("SKIP Cherry Limeade: no production data found"));
@@ -260,8 +258,8 @@ public sealed class MenuSizeUpdaterTests : IDisposable
     [Fact]
     public void UpdateMenu_IsIdempotent_SecondRunReportsZeroUpdates()
     {
-        var productionPath = WriteTempJson("prod", ProductionFixture);
-        var menuPath = WriteTempJson("menu", """
+        string productionPath = WriteTempJson("prod", ProductionFixture);
+        string menuPath = WriteTempJson("menu", """
             {
               "menuItems": [
                 {
@@ -274,8 +272,8 @@ public sealed class MenuSizeUpdaterTests : IDisposable
             }
             """);
 
-        var first = MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
-        var second = MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
+        MenuSizeUpdater.UpdateResult first = MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
+        MenuSizeUpdater.UpdateResult second = MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
 
         Assert.Equal(1, first.UpdatedCount);
         Assert.Equal(0, second.UpdatedCount);
@@ -286,11 +284,11 @@ public sealed class MenuSizeUpdaterTests : IDisposable
     [Fact]
     public void LoadProductSearchMap_ParsesFlatJsonObject()
     {
-        var path = WriteTempJson("search-map", """
+        string path = WriteTempJson("search-map", """
             { "Cherry Limeade": "Cherry Limeade", "Ocean Water\u00ae": "Ocean Water" }
             """);
 
-        var map = MenuSizeUpdater.LoadProductSearchMap(path);
+        IReadOnlyDictionary<string, string> map = MenuSizeUpdater.LoadProductSearchMap(path);
 
         Assert.Equal("Cherry Limeade", map["Cherry Limeade"]);
         Assert.Equal("Ocean Water", map["Ocean Water\u00ae"]);
@@ -299,7 +297,7 @@ public sealed class MenuSizeUpdaterTests : IDisposable
     [Fact]
     public void LoadProductSearchMap_RejectsEmptyMap()
     {
-        var path = WriteTempJson("search-map", "{}");
+        string path = WriteTempJson("search-map", "{}");
 
         Assert.Throws<InvalidDataException>(() => MenuSizeUpdater.LoadProductSearchMap(path));
     }
@@ -314,9 +312,9 @@ public sealed class MenuSizeUpdaterTests : IDisposable
         // first in production order instead of visibly failing. Mutation check: reverting
         // LoadProductSearchMap's non-string branch back to `string.Empty` makes this assertion
         // fail (no exception thrown).
-        var path = WriteTempJson("search-map", """{ "Cherry Limeade": null }""");
+        string path = WriteTempJson("search-map", """{ "Cherry Limeade": null }""");
 
-        var ex = Assert.Throws<InvalidDataException>(() => MenuSizeUpdater.LoadProductSearchMap(path));
+        InvalidDataException ex = Assert.Throws<InvalidDataException>(() => MenuSizeUpdater.LoadProductSearchMap(path));
         Assert.Contains("Cherry Limeade", ex.Message);
     }
 
@@ -341,14 +339,14 @@ public sealed class MenuSizeUpdaterTests : IDisposable
         // same literal as the float 1.5, and json.dump then writes "1.5" -- not "1.50". Mutation
         // check: reverting MenuSizeUpdater.PythonFloatRepr (or the ["price"] = ... line back to
         // assigning the decimal directly) makes this assertion fail with "1.50" in the output.
-        var productionPath = WriteTempJson("prod", """
+        string productionPath = WriteTempJson("prod", """
             {
               "menus": { "menu-1": { "products": {
                 "p-small": { "displayName": "Small Cherry Limeade", "price": 1.50 }
               } } }
             }
             """);
-        var menuPath = WriteTempJson("menu", """
+        string menuPath = WriteTempJson("menu", """
             { "menuItems": [ { "name": "Drinks", "items": [
                 { "name": "Cherry Limeade", "sizes": [] }
             ] } ] }
@@ -356,7 +354,7 @@ public sealed class MenuSizeUpdaterTests : IDisposable
 
         MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
 
-        var updatedJson = File.ReadAllText(menuPath);
+        string updatedJson = File.ReadAllText(menuPath);
         Assert.Contains("\"price\": 1.5", updatedJson);
         Assert.DoesNotContain("1.50", updatedJson);
     }
@@ -371,14 +369,14 @@ public sealed class MenuSizeUpdaterTests : IDisposable
         // "price": 2.0 but wrong for "price": 2. Mutation check: reverting
         // MenuSizeUpdater.FormatPriceLikePython to always call PythonFloatRepr (the pre-fix
         // behavior) makes this assertion fail with "2.0" in the output.
-        var productionPath = WriteTempJson("prod", """
+        string productionPath = WriteTempJson("prod", """
             {
               "menus": { "menu-1": { "products": {
                 "p-small": { "displayName": "Small Cherry Limeade", "price": 2 }
               } } }
             }
             """);
-        var menuPath = WriteTempJson("menu", """
+        string menuPath = WriteTempJson("menu", """
             { "menuItems": [ { "name": "Drinks", "items": [
                 { "name": "Cherry Limeade", "sizes": [] }
             ] } ] }
@@ -386,7 +384,7 @@ public sealed class MenuSizeUpdaterTests : IDisposable
 
         MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
 
-        var updatedJson = File.ReadAllText(menuPath);
+        string updatedJson = File.ReadAllText(menuPath);
         Assert.Contains("\"price\": 2", updatedJson);
         Assert.DoesNotContain("2.0", updatedJson);
     }
@@ -406,7 +404,7 @@ public sealed class MenuSizeUpdaterTests : IDisposable
     [Fact]
     public void LoadProductionProducts_CapturesOriginalPriceTextForIntAndFloatLiterals()
     {
-        var productionPath = WriteTempJson("prod", """
+        string productionPath = WriteTempJson("prod", """
             {
               "menus": { "menu-1": { "products": {
                 "p-int": { "displayName": "Small Cherry Limeade", "price": 2 },
@@ -415,7 +413,7 @@ public sealed class MenuSizeUpdaterTests : IDisposable
             }
             """);
 
-        var products = MenuSizeUpdater.LoadProductionProducts(productionPath);
+        List<MenuSizeUpdater.ProductEntry> products = MenuSizeUpdater.LoadProductionProducts(productionPath);
 
         Assert.Equal("2", products.Single(p => p.DisplayName == "Small Cherry Limeade").PriceText);
         Assert.Equal("1.50", products.Single(p => p.DisplayName == "Large Cherry Limeade").PriceText);
@@ -426,14 +424,14 @@ public sealed class MenuSizeUpdaterTests : IDisposable
     {
         // Python's log line embeds `[s['size'] for s in new_sizes]`, i.e. Python's list repr:
         // ['small'], single-quoted -- not C#'s default [small].
-        var productionPath = WriteTempJson("prod", ProductionFixture);
-        var menuPath = WriteTempJson("menu", """
+        string productionPath = WriteTempJson("prod", ProductionFixture);
+        string menuPath = WriteTempJson("menu", """
             { "menuItems": [ { "name": "Drinks", "items": [
                 { "name": "Cherry Limeade", "sizes": [] }
             ] } ] }
             """);
 
-        var result = MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
+        MenuSizeUpdater.UpdateResult result = MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
 
         Assert.Contains(result.Log, line => line.Contains("['mini', 'small', 'large']"));
     }
@@ -445,8 +443,8 @@ public sealed class MenuSizeUpdaterTests : IDisposable
         // emoji and a registered-trademark sign) as raw UTF-8 bytes rather than \uXXXX escapes.
         // Mutation check: swapping PythonJsonEncoder back for JavaScriptEncoder.Default or
         // .UnsafeRelaxedJsonEscaping makes this assertion fail (both still escape these).
-        var productionPath = WriteTempJson("prod", ProductionFixture);
-        var menuPath = WriteTempJson("menu", """
+        string productionPath = WriteTempJson("prod", ProductionFixture);
+        string menuPath = WriteTempJson("menu", """
             { "menuItems": [ { "name": "Drinks", "items": [
                 { "name": "Cherry Limeade", "description": "Fan favorite \ud83d\ude00 Ocean Water\u00ae", "sizes": [] }
             ] } ] }
@@ -454,7 +452,7 @@ public sealed class MenuSizeUpdaterTests : IDisposable
 
         MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
 
-        var updatedJson = File.ReadAllText(menuPath);
+        string updatedJson = File.ReadAllText(menuPath);
         Assert.Contains("Fan favorite \U0001F600 Ocean Water\u00ae", updatedJson);
         Assert.DoesNotContain("\\u00ae", updatedJson);
         Assert.DoesNotContain("\\ud83d", updatedJson, StringComparison.OrdinalIgnoreCase);
@@ -468,8 +466,8 @@ public sealed class MenuSizeUpdaterTests : IDisposable
         // File.WriteAllText does not do this translation on its own -- MenuSizeUpdater must use
         // Environment.NewLine explicitly for the trailing newline (and configure
         // JsonSerializerOptions.NewLine the same way) to match.
-        var productionPath = WriteTempJson("prod", ProductionFixture);
-        var menuPath = WriteTempJson("menu", """
+        string productionPath = WriteTempJson("prod", ProductionFixture);
+        string menuPath = WriteTempJson("menu", """
             { "menuItems": [ { "name": "Drinks", "items": [
                 { "name": "Cherry Limeade", "sizes": [] }
             ] } ] }
@@ -477,8 +475,8 @@ public sealed class MenuSizeUpdaterTests : IDisposable
 
         MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
 
-        var bytes = File.ReadAllBytes(menuPath);
-        var expectedTrailer = System.Text.Encoding.UTF8.GetBytes(Environment.NewLine);
+        byte[] bytes = File.ReadAllBytes(menuPath);
+        byte[] expectedTrailer = System.Text.Encoding.UTF8.GetBytes(Environment.NewLine);
         Assert.Equal(expectedTrailer, bytes[^expectedTrailer.Length..]);
     }
 
@@ -492,8 +490,8 @@ public sealed class MenuSizeUpdaterTests : IDisposable
         // json.load/json.dump round-trip would rewrite it too. Mutation check: removing the
         // NormalizeNumberLiteralsLikePythonJsonDump call (or its whole-tree recursion into objects
         // it didn't directly construct) makes this assertion fail with "2.50" still present.
-        var productionPath = WriteTempJson("prod", ProductionFixture);
-        var menuPath = WriteTempJson("menu", """
+        string productionPath = WriteTempJson("prod", ProductionFixture);
+        string menuPath = WriteTempJson("menu", """
             {
               "menuItems": [
                 {
@@ -506,10 +504,10 @@ public sealed class MenuSizeUpdaterTests : IDisposable
             }
             """);
 
-        var result = MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
+        MenuSizeUpdater.UpdateResult result = MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
 
         Assert.Equal(0, result.UpdatedCount); // never touched by the reconciliation logic itself
-        var updatedJson = File.ReadAllText(menuPath);
+        string updatedJson = File.ReadAllText(menuPath);
         Assert.Contains("\"price\": 2.5", updatedJson);
         Assert.DoesNotContain("2.50", updatedJson);
     }
@@ -524,8 +522,8 @@ public sealed class MenuSizeUpdaterTests : IDisposable
         // PythonFloatRepr to every number regardless of its original token (dropping the
         // IndexOfAny('.', 'e', 'E') >= 0 guard in NormalizeChildInPlace) makes this assertion fail
         // by turning "quantity": 2 into "quantity": 2.0.
-        var productionPath = WriteTempJson("prod", ProductionFixture);
-        var menuPath = WriteTempJson("menu", """
+        string productionPath = WriteTempJson("prod", ProductionFixture);
+        string menuPath = WriteTempJson("menu", """
             {
               "menuItems": [
                 {
@@ -544,7 +542,7 @@ public sealed class MenuSizeUpdaterTests : IDisposable
 
         MenuSizeUpdater.UpdateMenu(productionPath, menuPath, WriteDefaultProductSearchMap());
 
-        var updatedJson = File.ReadAllText(menuPath);
+        string updatedJson = File.ReadAllText(menuPath);
         Assert.Contains("\"quantity\": 2,", updatedJson);
         Assert.DoesNotContain("\"quantity\": 2.0", updatedJson);
     }

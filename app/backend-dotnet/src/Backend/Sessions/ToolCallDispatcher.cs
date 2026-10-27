@@ -1,9 +1,10 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net.WebSockets;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Backend.Realtime;
+using Backend.Shared;
 using Backend.Tools;
-using Microsoft.Extensions.Logging;
 
 namespace Backend.Sessions;
 
@@ -27,18 +28,21 @@ internal sealed class ToolCallDispatcher(
     ILogger logger,
     CancellationToken ct)
 {
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Tool boundary: any tool or argument-parse failure is logged and still answered with a function_call_output so the upstream response can continue.")]
     public async Task HandleToolCallDoneAsync(JsonObject item)
     {
-        var callId = RealtimeProcessor.GetString(item, "call_id");
-        if (callId is null || !state.ToolsPending.TryGetValue(callId, out var previousItemId))
+        string? callId = RealtimeProcessor.GetString(item, "call_id");
+        if (callId is null || !state.ToolsPending.TryGetValue(callId, out string? previousItemId))
         {
-            logger?.ToolCallNotFoundInPending(callId, sessionId);
+            logger?.ToolCallNotFoundInPending(LogSanitizer.Sanitize(callId), sessionId);
             return;
         }
-        var toolName = RealtimeProcessor.GetString(item, "name") ?? "";
+        string toolName = RealtimeProcessor.GetString(item, "name") ?? "";
         if (!state.ToolExecutor.ToolNames.Contains(toolName))
         {
-            logger?.UnknownToolRequested(toolName, sessionId);
+            // Not yet checked against the registry, so the model chose this name: neutralise it.
+            logger?.UnknownToolRequested(LogSanitizer.Sanitize(toolName), sessionId);
             return;
         }
 
@@ -55,10 +59,10 @@ internal sealed class ToolCallDispatcher(
         string? clientText;
         try
         {
-            var argumentsJson = RealtimeProcessor.GetString(item, "arguments") ?? "{}";
+            string argumentsJson = RealtimeProcessor.GetString(item, "arguments") ?? "{}";
             using var argumentsDoc = JsonDocument.Parse(argumentsJson);
             logger?.ExecutingTool(toolName, sessionId);
-            var result = await state.ToolExecutor.ExecuteAsync(toolName, argumentsDoc.RootElement.Clone(), ct)
+            ToolResult result = await state.ToolExecutor.ExecuteAsync(toolName, argumentsDoc.RootElement.Clone(), ct)
                 .ConfigureAwait(false);
             logger?.ToolResultDirectionLogged(toolName, result.Destination, sessionId);
             outputText = result.Destination is ToolResultDirection.ToServer or ToolResultDirection.ToBoth
@@ -69,7 +73,7 @@ internal sealed class ToolCallDispatcher(
             // Issue #13 tail: track tool call args + result in the context window, mirroring
             // rtmt.py's ctx_monitor.add_content(item.get("arguments", "")) /
             // ctx_monitor.add_content(result.to_text()).
-            var ctxMonitorForTool = sessionManager?.GetContextMonitor(state.EffectiveSessionId);
+            ContextMonitor? ctxMonitorForTool = sessionManager?.GetContextMonitor(state.EffectiveSessionId);
             if (ctxMonitorForTool is not null)
             {
                 ctxMonitorForTool.AddContent(argumentsJson);
@@ -125,6 +129,8 @@ internal sealed class ToolCallDispatcher(
 
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Best-effort ticket read through IOrderTicketSource, whose implementations can fail in any way; the failure is logged and the refresh is skipped.")]
     private async Task RefreshTicketAsync(string previousItemId)
     {
         if (state.ToolExecutor is not IOrderTicketSource ticketSource)

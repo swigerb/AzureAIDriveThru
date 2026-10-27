@@ -1,4 +1,3 @@
-using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Conformance.Fakes;
@@ -27,29 +26,29 @@ namespace Conformance.Tests.Scenarios.Cascade;
 [Trait("Dotnet", "ready")]
 public sealed class CascadePronunciationLexiconConformanceTests(CascadeConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = CascadeScenarioHelpers.FrameTimeout;
+    private static readonly TimeSpan s_frameTimeout = CascadeScenarioHelpers.FrameTimeout;
 
     /// <summary>Reads every shipped pack's own persona.json (never a cached/typed model) and
     /// returns one (personaId, rawKey, spokenForm) row per declared <c>pronunciations</c> entry,
     /// across every pack -- mirrors <see cref="ConformancePersonas.DiscoverFromDisk()"/>'s own
     /// disk-discovery convention. Plain strings (not a custom record) so xunit's MemberData
     /// serialization needs nothing beyond its built-in support.</summary>
-    private static IReadOnlyList<(string PersonaId, string RawKey, string SpokenForm)> DiscoverPronunciationEntries()
+    private static List<(string PersonaId, string RawKey, string SpokenForm)> DiscoverPronunciationEntries()
     {
-        var personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
+        string personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
         var entries = new List<(string, string, string)>();
 
-        foreach (var personaId in ConformancePersonas.DiscoverFromDisk(personasDir))
+        foreach (string personaId in ConformancePersonas.DiscoverFromDisk(personasDir))
         {
-            var personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
+            string personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
             using var document = JsonDocument.Parse(File.ReadAllText(personaJsonPath));
-            if (!document.RootElement.TryGetProperty("pronunciations", out var pronunciations) ||
+            if (!document.RootElement.TryGetProperty("pronunciations", out JsonElement pronunciations) ||
                 pronunciations.ValueKind != JsonValueKind.Object)
             {
                 continue;
             }
 
-            foreach (var property in pronunciations.EnumerateObject())
+            foreach (JsonProperty property in pronunciations.EnumerateObject())
             {
                 entries.Add((personaId, property.Name, property.Value.GetString() ?? ""));
             }
@@ -58,8 +57,16 @@ public sealed class CascadePronunciationLexiconConformanceTests(CascadeConforman
         return entries;
     }
 
-    public static IEnumerable<object[]> PronunciationEntries() =>
-        DiscoverPronunciationEntries().Select(entry => new object[] { entry.PersonaId, entry.RawKey, entry.SpokenForm });
+    public static TheoryData<string, string, string> PronunciationEntries()
+    {
+        TheoryData<string, string, string> rows = [];
+        foreach ((string personaId, string rawKey, string spokenForm) in DiscoverPronunciationEntries())
+        {
+            rows.Add(personaId, rawKey, spokenForm);
+        }
+
+        return rows;
+    }
 
     [Fact]
     public void At_least_one_shipped_pack_declares_a_pronunciation_entry()
@@ -74,32 +81,33 @@ public sealed class CascadePronunciationLexiconConformanceTests(CascadeConforman
     [MemberData(nameof(PronunciationEntries))]
     public Task Cascade_tts_input_has_the_personas_pronunciation_lexicon_applied(string personaId, string rawKey, string spokenForm) => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        CascadeConnection connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(
             fixture, fixture.Chat, "gpt-5-mini", ct, persona: personaId);
-        await using var browser = connection.Browser;
+        await using RealtimeBrowserClient browser = connection.Browser;
 
         // The model's own final answer text deliberately uses the RAW, un-respelled key --
         // proving the substitution happens server-side in SpeakAsync, not something the chat
         // model was asked (or trusted) to spell phonetically itself.
-        var rawAnswerText = $"Great choice! Your {rawKey} order is on the way.";
+        string rawAnswerText = $"Great choice! Your {rawKey} order is on the way.";
         fixture.Chat.EnqueueMessage(new JsonObject { ["role"] = "assistant", ["content"] = rawAnswerText });
         fixture.Realtime.NextTranscript = $"I'll take the {rawKey}.";
 
         await CascadeScenarioHelpers.SendGuestTurnAsync(browser, ct);
 
-        var finalAnswer = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Sequence > connection.GreetingWatermark && f.Type == "response.audio_transcript.delta", FrameTimeout, ct);
+        RecordedFrame? finalAnswer = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > connection.GreetingWatermark && f.Type == "response.audio_transcript.delta", s_frameTimeout, ct);
         Assert.True(finalAnswer is not null, "Expected the model's final answer as response.audio_transcript.delta.");
         // The browser-visible transcript is the UNMODIFIED chat answer -- the lexicon never
         // touches what the guest reads/sees, only what gets synthesized to audio.
-        Assert.Equal(rawAnswerText, finalAnswer!.Json.GetProperty("delta").GetString());
+        Assert.Equal(rawAnswerText, finalAnswer.Json.GetProperty("delta").GetString());
 
-        var audioDelta = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Sequence > connection.GreetingWatermark && f.Type == "response.audio.delta", FrameTimeout, ct);
+        RecordedFrame? audioDelta = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > connection.GreetingWatermark && f.Type == "response.audio.delta", s_frameTimeout, ct);
         Assert.True(audioDelta is not null, "Expected at least one response.audio.delta chunk from cascade TTS.");
 
-        var ttsInput = fixture.Realtime.TtsRequestInputs.LastOrDefault();
+        IReadOnlyList<string> ttsInputs = fixture.Realtime.TtsRequestInputs;
+        string? ttsInput = ttsInputs.Count > 0 ? ttsInputs[^1] : null;
         Assert.NotNull(ttsInput);
         Assert.Contains(spokenForm, ttsInput);
         Assert.DoesNotContain(rawKey, ttsInput);

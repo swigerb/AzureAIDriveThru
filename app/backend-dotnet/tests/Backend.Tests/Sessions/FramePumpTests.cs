@@ -57,7 +57,7 @@ public sealed class FramePumpTests
     public async Task CloseIfOpenAsync_is_a_no_op_on_an_already_closed_socket()
     {
         var socket = new FakeWebSocket([]);
-        await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
+        await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, TestContext.Current.CancellationToken);
 
         // Reset the recorded flag so the second (expected no-op) call can be told apart from the
         // first real close above.
@@ -73,7 +73,7 @@ public sealed class FramePumpTests
         var socket = new FakeWebSocket([]);
 
         await FramePump.CloseOutputIfOpenAsync(
-            socket, WebSocketCloseStatus.NormalClosure, "superseded", CancellationToken.None);
+            socket, WebSocketCloseStatus.NormalClosure, "superseded", TestContext.Current.CancellationToken);
 
         Assert.True(socket.CloseOutputCalled);
         Assert.Equal(WebSocketCloseStatus.NormalClosure, socket.ClosedWithStatus);
@@ -98,7 +98,7 @@ public sealed class FramePumpTests
 
         await FramePump.SendTextAsync(socket, "hello", TestContext.Current.CancellationToken);
 
-        var sent = Assert.Single(socket.SentMessages);
+        (byte[] Data, WebSocketMessageType MessageType, bool EndOfMessage) sent = Assert.Single(socket.SentMessages);
         Assert.Equal("hello", System.Text.Encoding.UTF8.GetString(sent.Data));
         Assert.Equal(WebSocketMessageType.Text, sent.MessageType);
         Assert.True(sent.EndOfMessage);
@@ -108,7 +108,7 @@ public sealed class FramePumpTests
     public async Task SendTextAsync_is_a_no_op_on_a_closed_socket()
     {
         var socket = new FakeWebSocket([]);
-        await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
+        await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, TestContext.Current.CancellationToken);
 
         await FramePump.SendTextAsync(socket, "dropped", TestContext.Current.CancellationToken);
 
@@ -123,7 +123,7 @@ public sealed class FramePumpTests
 
         await FramePump.SendBytesAsync(socket, payload, TestContext.Current.CancellationToken);
 
-        var sent = Assert.Single(socket.SentMessages);
+        (byte[] Data, WebSocketMessageType MessageType, bool EndOfMessage) sent = Assert.Single(socket.SentMessages);
         Assert.Equal(payload, sent.Data);
     }
 
@@ -131,7 +131,7 @@ public sealed class FramePumpTests
     public async Task SendBytesAsync_is_a_no_op_on_a_closed_socket()
     {
         var socket = new FakeWebSocket([]);
-        await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None);
+        await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, TestContext.Current.CancellationToken);
 
         await FramePump.SendBytesAsync(socket, [1, 2, 3], TestContext.Current.CancellationToken);
 

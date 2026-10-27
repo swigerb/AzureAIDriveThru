@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Logging;
 using Backend.Tools;
 
 namespace Backend.Sessions;
@@ -7,7 +6,9 @@ namespace Backend.Sessions;
 /// Source-generated <see cref="ILogger"/> partial methods for <see cref="CascadeToolCallDispatcher"/>.
 /// EventIds 2007-2012 moved here verbatim from <c>CascadeProcessor.Log.cs</c> alongside issue
 /// #338's <see cref="CascadeToolCallDispatcher"/> extraction -- same EventId, template and level;
-/// the conformance suite matches on log text, so none of that may change.
+/// the conformance suite matches on log text, so none of that may change. EventId 10020 (from the
+/// sessions area's 10000-10999 range) was added later when an inline <c>LogWarning</c> call was
+/// converted verbatim.
 /// </summary>
 internal static partial class Log
 {
@@ -28,4 +29,7 @@ internal static partial class Log
 
     [LoggerMessage(EventId = 2012, Level = LogLevel.Warning, Message = "Cascade chat-tool loop hit its {MaxRounds}-round cap without a final answer (session={SessionId})")]
     public static partial void CascadeChatToolLoopCapped(this ILogger logger, int maxRounds, string sessionId);
+
+    [LoggerMessage(EventId = 10020, Level = LogLevel.Warning, Message = "Synthetic cascade diagnostics disabled: session binding changed.")]
+    public static partial void CascadeDiagnosticsDisabledSessionBindingChanged(this ILogger logger);
 }

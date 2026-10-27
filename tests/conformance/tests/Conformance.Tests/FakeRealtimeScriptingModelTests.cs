@@ -16,23 +16,23 @@ namespace Conformance.Tests;
 [Trait("Dotnet", "n/a-harness")] // Issue #21: backend-agnostic harness self-test, never exercises app/backend or app/backend-dotnet.
 public sealed class FakeRealtimeScriptingModelTests
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(10);
 
     /// <summary>
-    /// Bounds a single frame read to <see cref="FrameTimeout"/> so a scripting regression that
+    /// Bounds a single frame read to <see cref="s_frameTimeout"/> so a scripting regression that
     /// silently drops an expected frame fails the test cleanly instead of hanging the test host.
     /// </summary>
     private static async Task<JsonElement?> ReceiveJsonWithTimeoutAsync(WebSocket socket, CancellationToken cancellationToken)
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        cts.CancelAfter(FrameTimeout);
+        cts.CancelAfter(s_frameTimeout);
         try
         {
             return await WebSocketJson.ReceiveJsonAsync(socket, cts.Token);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new TimeoutException($"No frame received within {FrameTimeout}.");
+            throw new TimeoutException($"No frame received within {s_frameTimeout}.");
         }
     }
 
@@ -48,7 +48,7 @@ public sealed class FakeRealtimeScriptingModelTests
         using var socket = new ClientWebSocket();
         socket.Options.CollectHttpResponseDetails = true;
         var wsUri = new Uri($"ws://{fake.BaseUri.Host}:{fake.BaseUri.Port}/openai/v1/realtime?model=gpt-realtime-test");
-        var ex = await Assert.ThrowsAsync<WebSocketException>(
+        WebSocketException ex = await Assert.ThrowsAsync<WebSocketException>(
             () => socket.ConnectAsync(wsUri, TestContext.Current.CancellationToken));
 
         Assert.Equal((System.Net.HttpStatusCode)statusCode, socket.HttpStatusCode);
@@ -76,9 +76,9 @@ public sealed class FakeRealtimeScriptingModelTests
 
         // The second attempt must succeed -- the rejection queue is one-shot, not sticky.
         using var accepted = new ClientWebSocket();
-        var connectionTask = fake.WaitForNextConnectionAsync(FrameTimeout, TestContext.Current.CancellationToken);
+        Task<FakeRealtimeConnection?> connectionTask = fake.WaitForNextConnectionAsync(s_frameTimeout, TestContext.Current.CancellationToken);
         await accepted.ConnectAsync(wsUri, TestContext.Current.CancellationToken);
-        var connection = await connectionTask;
+        FakeRealtimeConnection? connection = await connectionTask;
         Assert.NotNull(connection);
         Assert.Equal(WebSocketState.Open, accepted.State);
 
@@ -108,7 +108,7 @@ public sealed class FakeRealtimeScriptingModelTests
 
         fake.RejectNextConnectionWith(401);
 
-        var ex = Assert.Throws<InvalidOperationException>(fake.AssertNoPendingOneShotSwitches);
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(fake.AssertNoPendingOneShotSwitches);
         Assert.Contains("RejectNextConnectionWith", ex.Message, StringComparison.Ordinal);
     }
 
@@ -120,7 +120,7 @@ public sealed class FakeRealtimeScriptingModelTests
 
         fake.SuppressSessionUpdatedOnNextConnection();
 
-        var ex = Assert.Throws<InvalidOperationException>(fake.AssertNoPendingOneShotSwitches);
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(fake.AssertNoPendingOneShotSwitches);
         Assert.Contains("SuppressSessionUpdatedOnNextConnection", ex.Message, StringComparison.Ordinal);
     }
 
@@ -166,7 +166,7 @@ public sealed class FakeRealtimeScriptingModelTests
 
         fake.ClearVadDefaultsOnNextConnection();
 
-        var ex = Assert.Throws<InvalidOperationException>(fake.AssertNoPendingOneShotSwitches);
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(fake.AssertNoPendingOneShotSwitches);
         Assert.Contains("ClearVadDefaultsOnNextConnection", ex.Message, StringComparison.Ordinal);
     }
 
@@ -208,9 +208,9 @@ public sealed class FakeRealtimeScriptingModelTests
 
         using var socket = new ClientWebSocket();
         var wsUri = new Uri($"ws://{fake.BaseUri.Host}:{fake.BaseUri.Port}/openai/v1/realtime?model=gpt-realtime-test");
-        var connectionTask = fake.WaitForNextConnectionAsync(FrameTimeout, TestContext.Current.CancellationToken);
+        Task<FakeRealtimeConnection?> connectionTask = fake.WaitForNextConnectionAsync(s_frameTimeout, TestContext.Current.CancellationToken);
         await socket.ConnectAsync(wsUri, TestContext.Current.CancellationToken);
-        var connection = await connectionTask;
+        FakeRealtimeConnection? connection = await connectionTask;
         Assert.NotNull(connection);
         Assert.NotNull(await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken)); // session.created
 
@@ -222,9 +222,9 @@ public sealed class FakeRealtimeScriptingModelTests
 
         // Prove the append was actually received (not just "nothing sent yet") before asserting
         // silence, so this can't pass for the wrong reason (e.g. the send itself failing).
-        var appendSeen = await UntilTrueAsync(
-            () => connection!.ReceivedFrames.Snapshot().Any(f => f.Type == "input_audio_buffer.append"),
-            FrameTimeout, TestContext.Current.CancellationToken);
+        bool appendSeen = await UntilTrueAsync(
+            () => connection.ReceivedFrames.Snapshot().Any(f => f.Type == "input_audio_buffer.append"),
+            s_frameTimeout, TestContext.Current.CancellationToken);
         Assert.True(appendSeen, "The fake never recorded the append we just sent.");
 
         // Cancelling a pending ReceiveAsync aborts the ManagedWebSocket (it moves to the
@@ -248,7 +248,7 @@ public sealed class FakeRealtimeScriptingModelTests
 
     private static async Task<bool> UntilTrueAsync(Func<bool> predicate, TimeSpan timeout, CancellationToken ct)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        DateTime deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline)
         {
             if (predicate())
@@ -269,9 +269,9 @@ public sealed class FakeRealtimeScriptingModelTests
 
         using var socket = new ClientWebSocket();
         var wsUri = new Uri($"ws://{fake.BaseUri.Host}:{fake.BaseUri.Port}/openai/v1/realtime?model=gpt-realtime-test");
-        var connectionTask = fake.WaitForNextConnectionAsync(FrameTimeout, TestContext.Current.CancellationToken);
+        Task<FakeRealtimeConnection?> connectionTask = fake.WaitForNextConnectionAsync(s_frameTimeout, TestContext.Current.CancellationToken);
         await socket.ConnectAsync(wsUri, TestContext.Current.CancellationToken);
-        var connection = await connectionTask;
+        FakeRealtimeConnection? connection = await connectionTask;
         Assert.NotNull(connection);
 
         Assert.NotNull(await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken)); // session.created
@@ -282,18 +282,18 @@ public sealed class FakeRealtimeScriptingModelTests
             ["audio"] = "dGVzdA==",
         }, TestContext.Current.CancellationToken);
 
-        var expectedOrder = new[]
-        {
+        string[] expectedOrder =
+        [
             "input_audio_buffer.speech_started",
             "input_audio_buffer.speech_stopped",
             "input_audio_buffer.committed",
             "conversation.item.input_audio_transcription.completed",
-        };
-        foreach (var expectedType in expectedOrder)
+        ];
+        foreach (string? expectedType in expectedOrder)
         {
-            var frame = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+            JsonElement? frame = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
             Assert.NotNull(frame);
-            Assert.Equal(expectedType, frame!.Value.GetProperty("type").GetString());
+            Assert.Equal(expectedType, frame.Value.GetProperty("type").GetString());
         }
 
         await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
@@ -307,9 +307,9 @@ public sealed class FakeRealtimeScriptingModelTests
 
         using var socket = new ClientWebSocket();
         var wsUri = new Uri($"ws://{fake.BaseUri.Host}:{fake.BaseUri.Port}/openai/v1/realtime?model=gpt-realtime-test");
-        var connectionTask = fake.WaitForNextConnectionAsync(FrameTimeout, TestContext.Current.CancellationToken);
+        Task<FakeRealtimeConnection?> connectionTask = fake.WaitForNextConnectionAsync(s_frameTimeout, TestContext.Current.CancellationToken);
         await socket.ConnectAsync(wsUri, TestContext.Current.CancellationToken);
-        var connection = await connectionTask;
+        FakeRealtimeConnection? connection = await connectionTask;
         Assert.NotNull(connection);
         Assert.NotNull(await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken)); // session.created
 
@@ -319,9 +319,9 @@ public sealed class FakeRealtimeScriptingModelTests
             ["item"] = new JsonObject { ["id"] = "item_test_1", ["type"] = "message", ["role"] = "user" },
         }, TestContext.Current.CancellationToken);
 
-        var added = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+        JsonElement? added = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
         Assert.NotNull(added);
-        Assert.Equal("conversation.item.added", added!.Value.GetProperty("type").GetString());
+        Assert.Equal("conversation.item.added", added.Value.GetProperty("type").GetString());
         Assert.Equal("item_test_1", added.Value.GetProperty("item").GetProperty("id").GetString());
 
         await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
@@ -337,11 +337,11 @@ public sealed class FakeRealtimeScriptingModelTests
         // Connection A: queue a failed response and clear its VAD-default rules.
         using (var socketA = new ClientWebSocket())
         {
-            var connectionTaskA = fake.WaitForNextConnectionAsync(FrameTimeout, TestContext.Current.CancellationToken);
+            Task<FakeRealtimeConnection?> connectionTaskA = fake.WaitForNextConnectionAsync(s_frameTimeout, TestContext.Current.CancellationToken);
             await socketA.ConnectAsync(wsUri, TestContext.Current.CancellationToken);
-            var connectionA = await connectionTaskA;
+            FakeRealtimeConnection? connectionA = await connectionTaskA;
             Assert.NotNull(connectionA);
-            connectionA!.Script.Enqueue(ResponseScript.Failed("connection A only"));
+            connectionA.Script.Enqueue(ResponseScript.Failed("connection A only"));
             connectionA.Script.ClearRules();
             await ReceiveJsonWithTimeoutAsync(socketA, TestContext.Current.CancellationToken); // session.created
             await socketA.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
@@ -351,11 +351,11 @@ public sealed class FakeRealtimeScriptingModelTests
         // from A) and ResponseScript.Default (not A's queued failure) since nothing was ever
         // queued on B's own Script.
         using var socketB = new ClientWebSocket();
-        var connectionTaskB = fake.WaitForNextConnectionAsync(FrameTimeout, TestContext.Current.CancellationToken);
+        Task<FakeRealtimeConnection?> connectionTaskB = fake.WaitForNextConnectionAsync(s_frameTimeout, TestContext.Current.CancellationToken);
         await socketB.ConnectAsync(wsUri, TestContext.Current.CancellationToken);
-        var connectionB = await connectionTaskB;
+        FakeRealtimeConnection? connectionB = await connectionTaskB;
         Assert.NotNull(connectionB);
-        Assert.NotEmpty(connectionB!.Script.Rules);
+        Assert.NotEmpty(connectionB.Script.Rules);
         Assert.Empty(connectionB.Script.QueuedResponses);
 
         await ReceiveJsonWithTimeoutAsync(socketB, TestContext.Current.CancellationToken); // session.created
@@ -365,9 +365,9 @@ public sealed class FakeRealtimeScriptingModelTests
         JsonElement? done = null;
         while (true)
         {
-            var frame = await ReceiveJsonWithTimeoutAsync(socketB, TestContext.Current.CancellationToken);
+            JsonElement? frame = await ReceiveJsonWithTimeoutAsync(socketB, TestContext.Current.CancellationToken);
             Assert.NotNull(frame);
-            if (frame!.Value.GetProperty("type").GetString() == "response.done")
+            if (frame.Value.GetProperty("type").GetString() == "response.done")
             {
                 done = frame;
                 break;
@@ -377,7 +377,7 @@ public sealed class FakeRealtimeScriptingModelTests
         Assert.NotNull(done);
         // ResponseScript.Default completes successfully; connection A's queued "Failed" script
         // must not have leaked onto connection B.
-        Assert.Equal("completed", done!.Value.GetProperty("response").GetProperty("status").GetString());
+        Assert.Equal("completed", done.Value.GetProperty("response").GetProperty("status").GetString());
 
         await socketB.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
     }
@@ -398,28 +398,28 @@ public sealed class FakeRealtimeScriptingModelTests
         await fake.StartAsync(TestContext.Current.CancellationToken);
         var wsUri = new Uri($"ws://{fake.BaseUri.Host}:{fake.BaseUri.Port}/openai/v1/realtime?model=gpt-realtime-test");
 
-        for (var i = 0; i < 100; i++)
+        for (int i = 0; i < 100; i++)
         {
             using var socket = new ClientWebSocket();
-            var connectionTask = fake.WaitForNextConnectionAsync(FrameTimeout, TestContext.Current.CancellationToken);
-            var connectTask = socket.ConnectAsync(wsUri, TestContext.Current.CancellationToken); // deliberately not awaited yet
+            Task<FakeRealtimeConnection?> connectionTask = fake.WaitForNextConnectionAsync(s_frameTimeout, TestContext.Current.CancellationToken);
+            Task connectTask = socket.ConnectAsync(wsUri, TestContext.Current.CancellationToken); // deliberately not awaited yet
 
-            var connection = await connectionTask;
+            FakeRealtimeConnection? connection = await connectionTask;
             Assert.NotNull(connection);
 
             var unsolicited = new JsonObject { ["type"] = "test.unsolicited", ["iteration"] = i };
-            await connection!.SendAsync(unsolicited, TestContext.Current.CancellationToken);
+            await connection.SendAsync(unsolicited, TestContext.Current.CancellationToken);
 
             await connectTask;
 
             // The handler's own session.created and our unsolicited send both go through the same
             // send lock -- either can win the race to be frame #1, so check both frames without
             // assuming an order.
-            var frame1 = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
-            var frame2 = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+            JsonElement? frame1 = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+            JsonElement? frame2 = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
             Assert.NotNull(frame1);
             Assert.NotNull(frame2);
-            var types = new[] { frame1!.Value.GetProperty("type").GetString(), frame2!.Value.GetProperty("type").GetString() };
+            string?[] types = [frame1.Value.GetProperty("type").GetString(), frame2.Value.GetProperty("type").GetString()];
             Assert.Contains("session.created", types);
             Assert.Contains("test.unsolicited", types);
 
@@ -435,17 +435,17 @@ public sealed class FakeRealtimeScriptingModelTests
         var wsUri = new Uri($"ws://{fake.BaseUri.Host}:{fake.BaseUri.Port}/openai/v1/realtime?model=gpt-realtime-test");
 
         using var socket = new ClientWebSocket();
-        var connectionTask = fake.WaitForNextConnectionAsync(FrameTimeout, TestContext.Current.CancellationToken);
+        Task<FakeRealtimeConnection?> connectionTask = fake.WaitForNextConnectionAsync(s_frameTimeout, TestContext.Current.CancellationToken);
         await socket.ConnectAsync(wsUri, TestContext.Current.CancellationToken);
-        var connection = await connectionTask;
+        FakeRealtimeConnection? connection = await connectionTask;
         Assert.NotNull(connection);
         Assert.NotNull(await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken)); // session.created
 
         await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
-        await fake.WaitForNoOpenConnectionsAsync(FrameTimeout, TestContext.Current.CancellationToken);
+        await fake.WaitForNoOpenConnectionsAsync(s_frameTimeout, TestContext.Current.CancellationToken);
 
-        var ex = await Assert.ThrowsAsync<FakeConnectionClosedException>(
-            () => connection!.SendAsync(new JsonObject { ["type"] = "test.after_close" }, TestContext.Current.CancellationToken));
+        FakeConnectionClosedException ex = await Assert.ThrowsAsync<FakeConnectionClosedException>(
+            () => connection.SendAsync(new JsonObject { ["type"] = "test.after_close" }, TestContext.Current.CancellationToken));
         Assert.Contains("not Open", ex.Message);
     }
 
@@ -459,9 +459,9 @@ public sealed class FakeRealtimeScriptingModelTests
         var wsUri = new Uri($"ws://{fake.BaseUri.Host}:{fake.BaseUri.Port}/openai/v1/realtime?model=gpt-realtime-test");
 
         using var socket = new ClientWebSocket();
-        var connectionTask = fake.WaitForNextConnectionAsync(FrameTimeout, TestContext.Current.CancellationToken);
+        Task<FakeRealtimeConnection?> connectionTask = fake.WaitForNextConnectionAsync(s_frameTimeout, TestContext.Current.CancellationToken);
         await socket.ConnectAsync(wsUri, TestContext.Current.CancellationToken);
-        var connection = await connectionTask;
+        FakeRealtimeConnection? connection = await connectionTask;
         Assert.NotNull(connection);
         Assert.NotNull(await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken)); // session.created
 
@@ -470,7 +470,7 @@ public sealed class FakeRealtimeScriptingModelTests
         // request pipeline, never visible to this test. AssertNoHandlerFaults must surface it here
         // instead, with the exact exception (message intact), even though the scenario itself never
         // asserted anything about the response and would otherwise have looked like it passed.
-        connection!.Script.ClearRules();
+        connection.Script.ClearRules();
         connection.Script.On(
             frame => frame.Type == "conversation.item.create",
             (_, _, _) => throw new InvalidOperationException("boom from a scripted rule"));
@@ -486,7 +486,7 @@ public sealed class FakeRealtimeScriptingModelTests
         // recorded the fault by the time we ask. AssertNoHandlerFaults is idempotent to call while
         // empty (it just returns), so retrying it is safe.
         InvalidOperationException? recorded = null;
-        var deadline = DateTime.UtcNow + FrameTimeout;
+        DateTime deadline = DateTime.UtcNow + s_frameTimeout;
         while (recorded is null && DateTime.UtcNow < deadline)
         {
             try
@@ -505,7 +505,7 @@ public sealed class FakeRealtimeScriptingModelTests
         }
 
         Assert.NotNull(recorded);
-        Assert.Equal("boom from a scripted rule", recorded!.Message);
+        Assert.Equal("boom from a scripted rule", recorded.Message);
 
         // Draining must actually clear the fault -- calling again must not re-throw the same one.
         fake.AssertNoHandlerFaults();
@@ -535,7 +535,7 @@ public sealed class FakeRealtimeScriptingModelTests
 
         Task WriterLoopAsync() => Task.Run(() =>
         {
-            var i = 0;
+            int i = 0;
             while (!cts.IsCancellationRequested)
             {
                 if (i++ % 2 == 0)
@@ -551,10 +551,10 @@ public sealed class FakeRealtimeScriptingModelTests
 
         Task ReaderLoopAsync() => Task.Run(() =>
         {
-            var dummyFrame = MakeDummyFrame();
+            RecordedFrame dummyFrame = MakeDummyFrame();
             while (!cts.IsCancellationRequested)
             {
-                foreach (var rule in script.Rules)
+                foreach (RealtimeScriptRule rule in script.Rules)
                 {
                     _ = rule.Predicate(dummyFrame);
                 }
@@ -563,8 +563,8 @@ public sealed class FakeRealtimeScriptingModelTests
 
         // Several of each so a single unlucky thread schedule isn't the only chance to hit the
         // race — this is what makes the mutation check reliable (near-100%) rather than flaky.
-        var writers = Enumerable.Range(0, 4).Select(_ => WriterLoopAsync()).ToArray();
-        var readers = Enumerable.Range(0, 4).Select(_ => ReaderLoopAsync()).ToArray();
+        Task[] writers = [.. Enumerable.Range(0, 4).Select(_ => WriterLoopAsync())];
+        Task[] readers = [.. Enumerable.Range(0, 4).Select(_ => ReaderLoopAsync())];
 
         // Task.WhenAll rethrows the first captured exception -- an InvalidOperationException from
         // any reader/writer task here is exactly the pre-fix failure mode this test targets.
@@ -573,7 +573,7 @@ public sealed class FakeRealtimeScriptingModelTests
 
     private static RecordedFrame MakeDummyFrame()
     {
-        var json = JsonDocument.Parse("""{"type":"input_audio_buffer.append","audio":"dGVzdA=="}""").RootElement;
+        var json = JsonElement.Parse("""{"type":"input_audio_buffer.append","audio":"dGVzdA=="}""");
         return new FrameLog().Add(json);
     }
 
@@ -602,10 +602,10 @@ public sealed class FakeRealtimeScriptingModelTests
             ["session"] = new JsonObject { ["instructions"] = "hello" },
         }, TestContext.Current.CancellationToken);
 
-        var error = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+        JsonElement? error = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
         Assert.NotNull(error);
-        Assert.Equal("error", error!.Value.GetProperty("type").GetString());
-        var errorBody = error.Value.GetProperty("error");
+        Assert.Equal("error", error.Value.GetProperty("type").GetString());
+        JsonElement errorBody = error.Value.GetProperty("error");
         Assert.Equal("missing_required_parameter", errorBody.GetProperty("code").GetString());
         Assert.Equal("session.type", errorBody.GetProperty("param").GetString());
         Assert.Equal("evt_missing_type", errorBody.GetProperty("event_id").GetString());
@@ -634,10 +634,10 @@ public sealed class FakeRealtimeScriptingModelTests
             ["session"] = new JsonObject { ["type"] = "realtime", ["totally_bogus_key"] = "x" },
         }, TestContext.Current.CancellationToken);
 
-        var error = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+        JsonElement? error = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
         Assert.NotNull(error);
-        Assert.Equal("error", error!.Value.GetProperty("type").GetString());
-        var errorBody = error.Value.GetProperty("error");
+        Assert.Equal("error", error.Value.GetProperty("type").GetString());
+        JsonElement errorBody = error.Value.GetProperty("error");
         Assert.Equal("unknown_parameter", errorBody.GetProperty("code").GetString());
         Assert.Equal("session.totally_bogus_key", errorBody.GetProperty("param").GetString());
         Assert.Equal("evt_unknown_top_level", errorBody.GetProperty("event_id").GetString());
@@ -669,9 +669,9 @@ public sealed class FakeRealtimeScriptingModelTests
             },
         }, TestContext.Current.CancellationToken);
 
-        var error = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+        JsonElement? error = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
         Assert.NotNull(error);
-        var errorBody = error!.Value.GetProperty("error");
+        JsonElement errorBody = error.Value.GetProperty("error");
         Assert.Equal("unknown_parameter", errorBody.GetProperty("code").GetString());
         Assert.Equal($"session.audio.{side}.{badKey}", errorBody.GetProperty("param").GetString());
 
@@ -713,9 +713,9 @@ public sealed class FakeRealtimeScriptingModelTests
             },
         }, TestContext.Current.CancellationToken);
 
-        var error = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+        JsonElement? error = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
         Assert.NotNull(error);
-        var errorBody = error!.Value.GetProperty("error");
+        JsonElement errorBody = error.Value.GetProperty("error");
         Assert.Equal("unknown_parameter", errorBody.GetProperty("code").GetString());
         Assert.Equal($"session.audio.input.{nestedObject}.{badKey}", errorBody.GetProperty("param").GetString());
 
@@ -776,9 +776,9 @@ public sealed class FakeRealtimeScriptingModelTests
             },
         }, TestContext.Current.CancellationToken);
 
-        var response = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+        JsonElement? response = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
         Assert.NotNull(response);
-        Assert.Equal("session.updated", response!.Value.GetProperty("type").GetString());
+        Assert.Equal("session.updated", response.Value.GetProperty("type").GetString());
 
         await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
     }
@@ -817,9 +817,9 @@ public sealed class FakeRealtimeScriptingModelTests
             },
         }, TestContext.Current.CancellationToken);
 
-        var response = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+        JsonElement? response = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
         Assert.NotNull(response);
-        Assert.Equal("session.updated", response!.Value.GetProperty("type").GetString());
+        Assert.Equal("session.updated", response.Value.GetProperty("type").GetString());
 
         await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
     }
@@ -877,9 +877,9 @@ public sealed class FakeRealtimeScriptingModelTests
             },
         }, TestContext.Current.CancellationToken);
 
-        var response = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+        JsonElement? response = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
         Assert.NotNull(response);
-        Assert.Equal("session.updated", response!.Value.GetProperty("type").GetString());
+        Assert.Equal("session.updated", response.Value.GetProperty("type").GetString());
 
         await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
     }
@@ -917,9 +917,9 @@ public sealed class FakeRealtimeScriptingModelTests
                 },
             },
         }, TestContext.Current.CancellationToken);
-        var firstResponse = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+        JsonElement? firstResponse = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
         Assert.NotNull(firstResponse);
-        Assert.Equal("session.updated", firstResponse!.Value.GetProperty("type").GetString());
+        Assert.Equal("session.updated", firstResponse.Value.GetProperty("type").GetString());
 
         await WebSocketJson.SendAsync(socket, new JsonObject
         {
@@ -938,9 +938,9 @@ public sealed class FakeRealtimeScriptingModelTests
             },
         }, TestContext.Current.CancellationToken);
 
-        var secondResponse = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+        JsonElement? secondResponse = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
         Assert.NotNull(secondResponse);
-        Assert.Equal("session.updated", secondResponse!.Value.GetProperty("type").GetString());
+        Assert.Equal("session.updated", secondResponse.Value.GetProperty("type").GetString());
 
         await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
     }
@@ -963,9 +963,9 @@ public sealed class FakeRealtimeScriptingModelTests
             ["event_id"] = "evt_leaked_extension_frame",
         }, TestContext.Current.CancellationToken);
 
-        var error = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+        JsonElement? error = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
         Assert.NotNull(error);
-        var errorBody = error!.Value.GetProperty("error");
+        JsonElement errorBody = error.Value.GetProperty("error");
         Assert.Equal("invalid_value", errorBody.GetProperty("code").GetString());
         Assert.Equal("type", errorBody.GetProperty("param").GetString());
         Assert.Equal("evt_leaked_extension_frame", errorBody.GetProperty("event_id").GetString());
@@ -1048,9 +1048,9 @@ public sealed class FakeRealtimeScriptingModelTests
                 ["audio"] = new JsonObject { ["output"] = new JsonObject { ["voice"] = "marin" } },
             },
         }, TestContext.Current.CancellationToken);
-        var firstUpdated = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+        JsonElement? firstUpdated = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
         Assert.NotNull(firstUpdated);
-        var firstSession = firstUpdated!.Value.GetProperty("session");
+        JsonElement firstSession = firstUpdated.Value.GetProperty("session");
         Assert.Equal("You are a drive-thru order taker.", firstSession.GetProperty("instructions").GetString());
         Assert.Equal("marin", firstSession.GetProperty("audio").GetProperty("output").GetProperty("voice").GetString());
 
@@ -1066,14 +1066,14 @@ public sealed class FakeRealtimeScriptingModelTests
                 ["audio"] = new JsonObject { ["input"] = new JsonObject { ["format"] = new JsonObject { ["type"] = "audio/pcm" } } },
             },
         }, TestContext.Current.CancellationToken);
-        var secondUpdated = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
+        JsonElement? secondUpdated = await ReceiveJsonWithTimeoutAsync(socket, TestContext.Current.CancellationToken);
         Assert.NotNull(secondUpdated);
-        var secondSession = secondUpdated!.Value.GetProperty("session");
+        JsonElement secondSession = secondUpdated.Value.GetProperty("session");
 
         Assert.Equal("You are a drive-thru order taker.", secondSession.GetProperty("instructions").GetString());
         Assert.Equal("auto", secondSession.GetProperty("tool_choice").GetString());
         Assert.Equal(1, secondSession.GetProperty("tools").GetArrayLength());
-        var audio = secondSession.GetProperty("audio");
+        JsonElement audio = secondSession.GetProperty("audio");
         Assert.Equal("marin", audio.GetProperty("output").GetProperty("voice").GetString());
         Assert.Equal("audio/pcm", audio.GetProperty("input").GetProperty("format").GetProperty("type").GetString());
         // Server-assigned fields are always present and reflect this connection.

@@ -45,7 +45,7 @@ public sealed class ScrollPositionBrowserTests(BrowserConformanceFixture fixture
     public static TheoryData<string> DiscoveredPersonaIds()
     {
         var data = new TheoryData<string>();
-        foreach (var id in ConformancePersonas.DiscoverFromDisk())
+        foreach (string id in ConformancePersonas.DiscoverFromDisk())
         {
             data.Add(id);
         }
@@ -57,15 +57,15 @@ public sealed class ScrollPositionBrowserTests(BrowserConformanceFixture fixture
     [MemberData(nameof(DiscoveredPersonaIds))]
     public Task Fresh_load_at_1440x900_never_scrolls_the_window(string personaId) => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var context = await fixture.Browser!.NewContextAsync(new BrowserNewContextOptions
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        IBrowserContext context = await fixture.Browser!.NewContextAsync(new BrowserNewContextOptions
         {
             ViewportSize = new ViewportSize { Width = 1440, Height = 900 }
         }).ConfigureAwait(false);
-        await using var _ = context;
-        var page = await context.NewPageAsync().ConfigureAwait(false);
+        await using IBrowserContext _ = context;
+        IPage page = await context.NewPageAsync().ConfigureAwait(false);
 
-        var url = new UriBuilder(fixture.Backend!.BaseUri) { Query = $"persona={personaId}" }.Uri;
+        Uri url = new UriBuilder(fixture.Backend!.BaseUri) { Query = $"persona={personaId}" }.Uri;
         await page.GotoAsync(url.ToString()).ConfigureAwait(false);
 
         // No in-page signal tells a black-box caller "layout has fully settled" (same rationale
@@ -74,7 +74,7 @@ public sealed class ScrollPositionBrowserTests(BrowserConformanceFixture fixture
         // effect (e.g. a resize handler, async font/layout shift) before asserting.
         await Task.Delay(500, ct).ConfigureAwait(false);
 
-        var scrollY = await page.EvaluateAsync<double>("window.scrollY").ConfigureAwait(false);
+        double scrollY = await page.EvaluateAsync<double>("window.scrollY").ConfigureAwait(false);
         Assert.Equal(0, scrollY);
     });
 
@@ -83,20 +83,20 @@ public sealed class ScrollPositionBrowserTests(BrowserConformanceFixture fixture
     public Task Mobile_transcript_sheet_shows_the_newest_entry_without_scrolling_the_window(string personaId) =>
         fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var context = await fixture.Browser!.NewContextAsync(new BrowserNewContextOptions
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        IBrowserContext context = await fixture.Browser!.NewContextAsync(new BrowserNewContextOptions
         {
             ViewportSize = new ViewportSize { Width = 390, Height = 844 }
         }).ConfigureAwait(false);
-        await using var _ = context;
+        await using IBrowserContext _ = context;
         // "mid-conversation" (per the review item) is simulated the same deterministic way the
         // frontend's own dummy-data toggle does (dummy-data-context.tsx reads this key from
         // localStorage at mount) -- an init script survives navigation, unlike a post-load
         // localStorage.setItem, which would race the very mount this test is proving out.
         await context.AddInitScriptAsync("window.localStorage.setItem('useDummyData', 'true');").ConfigureAwait(false);
-        var page = await context.NewPageAsync().ConfigureAwait(false);
+        IPage page = await context.NewPageAsync().ConfigureAwait(false);
 
-        var url = new UriBuilder(fixture.Backend!.BaseUri) { Query = $"persona={personaId}" }.Uri;
+        Uri url = new UriBuilder(fixture.Backend!.BaseUri) { Query = $"persona={personaId}" }.Uri;
         await page.GotoAsync(url.ToString()).ConfigureAwait(false);
 
         // Settle exactly like the sibling fresh-load test above, then confirm the premise: at
@@ -105,7 +105,7 @@ public sealed class ScrollPositionBrowserTests(BrowserConformanceFixture fixture
         await Task.Delay(500, ct).ConfigureAwait(false);
         Assert.Equal(0, await page.EvaluateAsync<double>("window.scrollY").ConfigureAwait(false));
 
-        var trigger = page.GetByRole(AriaRole.Button, new() { Name = "Transcript", Exact = true });
+        ILocator trigger = page.GetByRole(AriaRole.Button, new() { Name = "Transcript", Exact = true });
         // Playwright's own ClickAsync scrolls its target into view first if needed, and the
         // trigger sits well below the fold at this viewport height -- so DO that scroll-into-view
         // explicitly first and capture window.scrollY right after it, which per review item 3 is
@@ -123,14 +123,14 @@ public sealed class ScrollPositionBrowserTests(BrowserConformanceFixture fixture
             """).ConfigureAwait(false);
 
         await trigger.ClickAsync().ConfigureAwait(false);
-        var scrollYAfterTriggerScroll = await page.EvaluateAsync<double>(
+        double scrollYAfterTriggerScroll = await page.EvaluateAsync<double>(
             "window.__transcriptScrollYBeforeOpen").ConfigureAwait(false);
 
         // The sheet slides in as a dialog; scope the lookup to it (rather than a bare
         // ".overflow-auto" class selector) so this can never accidentally match the OTHER,
         // permanently-present-but-"hidden" desktop TranscriptPanel instance in the same DOM.
-        var dialog = page.GetByRole(AriaRole.Dialog);
-        var scrollContainer = dialog.Locator(".overflow-auto");
+        ILocator dialog = page.GetByRole(AriaRole.Dialog);
+        ILocator scrollContainer = dialog.Locator(".overflow-auto");
         await scrollContainer.WaitForAsync().ConfigureAwait(false);
         await dialog.EvaluateAsync("""
             async el => {
@@ -156,14 +156,14 @@ public sealed class ScrollPositionBrowserTests(BrowserConformanceFixture fixture
         // generically (scrollTop at its max, scrollHeight minus clientHeight) rather than against
         // any persona's hardcoded transcript text, so this covers every discovered persona pack
         // without being coupled to any one pack's demo copy.
-        var (scrollTop, maxScrollTop) = await scrollContainer.EvaluateAsync<double[]>(
+        (double scrollTop, double maxScrollTop) = await scrollContainer.EvaluateAsync<double[]>(
             "el => [el.scrollTop, el.scrollHeight - el.clientHeight]").ConfigureAwait(false) is { Length: 2 } pair
                 ? (pair[0], pair[1])
                 : throw new InvalidOperationException("Expected a 2-element [scrollTop, maxScrollTop] array.");
         Assert.True(
             Math.Abs(scrollTop - maxScrollTop) <= 1,
             $"Expected the mobile transcript sheet's container to be scrolled to the bottom (scrollTop {scrollTop} ~= max {maxScrollTop}).");
-        var newestEntryInView = await scrollContainer.EvaluateAsync<bool>("""
+        bool newestEntryInView = await scrollContainer.EvaluateAsync<bool>("""
             el => {
                 const newest = el.firstElementChild?.lastElementChild;
                 if (!newest) return false;
@@ -174,7 +174,7 @@ public sealed class ScrollPositionBrowserTests(BrowserConformanceFixture fixture
             """).ConfigureAwait(false);
         Assert.True(newestEntryInView, "The newest transcript entry must be visible inside the sheet.");
 
-        var scrollYAfterOpen = await page.EvaluateAsync<double>("window.scrollY").ConfigureAwait(false);
+        double scrollYAfterOpen = await page.EvaluateAsync<double>("window.scrollY").ConfigureAwait(false);
         Assert.Equal(scrollYAfterTriggerScroll, scrollYAfterOpen);
     });
 }

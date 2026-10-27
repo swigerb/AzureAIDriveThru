@@ -34,9 +34,9 @@ public static class ExternalModePortPolicy
     public static (int? RealtimePort, int? SearchPort) Resolve(
         string? backendUrl, string? realtimePortRaw, string? searchPortRaw)
     {
-        var isExternal = !string.IsNullOrWhiteSpace(backendUrl);
-        var realtimePort = ParsePort(realtimePortRaw, RealtimePortEnvVar, isExternal);
-        var searchPort = ParsePort(searchPortRaw, SearchPortEnvVar, isExternal);
+        bool isExternal = !string.IsNullOrWhiteSpace(backendUrl);
+        int? realtimePort = ParsePort(realtimePortRaw, RealtimePortEnvVar, isExternal);
+        int? searchPort = ParsePort(searchPortRaw, SearchPortEnvVar, isExternal);
         return (realtimePort, searchPort);
     }
 
@@ -56,7 +56,7 @@ public static class ExternalModePortPolicy
             return null;
         }
 
-        if (!int.TryParse(raw.Trim(), out var port) || port is < 1 or > 65535)
+        if (!int.TryParse(raw.Trim(), out int port) || port is < 1 or > 65535)
         {
             throw new InvalidOperationException(
                 $"{envVarName}='{raw}' is not a valid TCP port number (expected an integer 1-65535).");

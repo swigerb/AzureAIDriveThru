@@ -28,10 +28,14 @@ namespace Conformance.Harness;
 /// cancelled shared task, so a build that failed -- or was ever left cancelled -- is retried by the
 /// next caller instead of wedging the rest of the run.
 /// </summary>
-internal sealed class DotnetBackendBuildGate(Func<string, CancellationToken, Task> runBuild)
+internal sealed class DotnetBackendBuildGate(Func<string, CancellationToken, Task> runBuild) : IDisposable
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
     private Task<string>? _buildTask;
+
+    /// <summary>Releases <see cref="_gate"/>. The launcher's shared instance lives for the whole
+    /// process; this exists so test-owned instances can be scoped with <c>using</c>.</summary>
+    public void Dispose() => _gate.Dispose();
 
     /// <summary>
     /// Builds Backend.csproj EXACTLY ONCE for the lifetime of this gate instance -- never
@@ -46,7 +50,7 @@ internal sealed class DotnetBackendBuildGate(Func<string, CancellationToken, Tas
     /// </summary>
     public async Task<string> EnsureBuiltAsync(string csprojPath, CancellationToken cancellationToken)
     {
-        var current = _buildTask;
+        Task<string>? current = _buildTask;
         if (current is { IsCompletedSuccessfully: true })
         {
             return await current.ConfigureAwait(false);
@@ -85,7 +89,7 @@ internal sealed class DotnetBackendBuildGate(Func<string, CancellationToken, Tas
         // trigger it (or any single caller waiting on it) -- see this type's own doc comment (R2).
         await runBuild(csprojPath, CancellationToken.None).ConfigureAwait(false);
 
-        var dllPath = DotnetBackendLauncher.ResolveDllPath(csprojPath);
+        string dllPath = DotnetBackendLauncher.ResolveDllPath(csprojPath);
         if (!File.Exists(dllPath))
         {
             throw new InvalidOperationException(

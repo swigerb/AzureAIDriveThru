@@ -8,8 +8,25 @@
     <WarningsAsErrors />
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <AnalysisLevel>latest</AnalysisLevel>
+    <!--
+      Every rule in the Security, Reliability, Performance, and Usage categories is a build warning
+      (most are off by default at AnalysisLevel=latest); .editorconfig opts out of the few that
+      don't fit this codebase.
+    -->
+    <AnalysisModeSecurity>All</AnalysisModeSecurity>
+    <AnalysisModeReliability>All</AnalysisModeReliability>
+    <AnalysisModePerformance>All</AnalysisModePerformance>
+    <AnalysisModeUsage>All</AnalysisModeUsage>
+    <!--
+      Enforce .editorconfig code style (IDE rules) at build time, not just in the IDE. IDE0005
+      (unused usings) additionally needs the compiler's documentation pass, which also validates
+      every XML doc comment (crefs, param tags); CS1591 is suppressed because these are
+      applications and test suites, not published libraries, so not every public member needs one.
+    -->
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <InvariantGlobalization>false</InvariantGlobalization>
-    <NoWarn>$(NoWarn);CA1848;CA2007</NoWarn>
+    <NoWarn>$(NoWarn);CS1591;CA1848</NoWarn>
     <!-- issue #24 (CI hardening): pins the exact resolved dependency graph (including
          transitives) into a committed packages.lock.json per project, so a same-versions-on-paper
          restore can never silently pull a different transitive graph between a contributor's

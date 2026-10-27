@@ -1,7 +1,7 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Primitives;
 
 namespace Conformance.Fakes;
 
@@ -10,7 +10,7 @@ namespace Conformance.Fakes;
 /// (`POST {endpoint}/chat/completions`), issue #82's cascade pipeline. `CascadeProcessor`
 /// (app/backend/cascade_processor.py) posts one request per tool-calling round via
 /// `azure.ai.inference.aio.ChatCompletionsClient.complete(messages=, model=, tools=)`, which
-/// serialises to a plain `{"messages": [...], "model": "<deployment>", "tools": [...]}` JSON
+/// serialises to a plain `{"messages": [...], "model": "&lt;deployment&gt;", "tools": [...]}` JSON
 /// body against `/chat/completions?api-version=...`, authenticated with a bearer token from
 /// `DefaultAzureCredential` (real deployments) or the conformance harness's own fake credential
 /// (see `conformance_hooks.py`'s `cascade_credential()` / `CONFORMANCE_CASCADE_FAKE_TOKEN`).
@@ -42,7 +42,7 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
     /// held turn before releasing/aborting it or scripting another).</summary>
     private TaskCompletionSource? _pendingResponseGate;
 
-    private static readonly JsonObject DefaultMessage = new()
+    private static readonly JsonObject s_defaultMessage = new()
     {
         ["role"] = "assistant",
         ["content"] = "All set.",
@@ -94,7 +94,7 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
     /// "function":{"name":"...","arguments":"...json string..."}}]}</c> for a tool-calling round)
     /// returned for the NEXT `/chat/completions` call. FIFO across multiple calls, shared with
     /// <see cref="EnqueueErrorStatus"/> -- one scripted response consumed per request. Once the
-    /// queue is empty, every further request gets <see cref="DefaultMessage"/> (a harmless,
+    /// queue is empty, every further request gets <see cref="s_defaultMessage"/> (a harmless,
     /// tool-call-free canned reply) rather than an error, so a scenario that only cares about
     /// the first N rounds doesn't need to script every single one all the way to the model's own
     /// round cap.
@@ -153,7 +153,7 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
     /// </summary>
     public async Task<bool> WaitForRequestCountAsync(int count, TimeSpan timeout, CancellationToken cancellationToken = default)
     {
-        var deadline = _timeProvider.GetUtcNow() + timeout;
+        DateTimeOffset deadline = _timeProvider.GetUtcNow() + timeout;
         while (true)
         {
             Task signalTask;
@@ -166,7 +166,7 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
                 signalTask = _requestSignal.Task;
             }
 
-            var remaining = deadline - _timeProvider.GetUtcNow();
+            TimeSpan remaining = deadline - _timeProvider.GetUtcNow();
             if (remaining <= TimeSpan.Zero)
             {
                 return false;
@@ -174,7 +174,7 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
 
             cancellationToken.ThrowIfCancellationRequested();
             var delayTask = Task.Delay(remaining, _timeProvider, cancellationToken);
-            var completed = await Task.WhenAny(signalTask, delayTask).ConfigureAwait(false);
+            Task completed = await Task.WhenAny(signalTask, delayTask).ConfigureAwait(false);
             if (completed != signalTask)
             {
                 return false;
@@ -197,7 +197,7 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
     /// that the underlying HTTP connection itself is NOT corrupted by this -- the bug is purely
     /// this stale FIFO entry, not connection-pooling/keep-alive state.
     ///
-    /// Tests never call this directly: <see cref="ConformanceFixture.AssertNoPendingExtraFakeState"/>
+    /// Tests never call this directly: <c>ConformanceFixture.AssertNoPendingExtraFakeState</c>
     /// (overridden by the cascade fixtures to call this method) calls it automatically AFTER every
     /// scenario's body returns (see <c>ConformanceFixture.RunAsync</c>'s own call site) -- not
     /// before the NEXT scenario's body runs, the way <see cref="FakeRealtimeUpstreamServer
@@ -213,7 +213,7 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
     /// check is self-healing: the scenario that actually caused the leak still fails (the
     /// `InvalidOperationException` below), but the queue is empty again by the time this method
     /// returns, so the NEXT scenario starts clean regardless of whether this one's caller observes
-    /// the exception. See <see cref="ConformanceFixture.RunAsync"/>'s own
+    /// the exception. See <c>ConformanceFixture.RunAsync</c>'s own
     /// <c>ResetExtraFakeState</c> finally-block call for the complementary fix: a scenario body
     /// that THROWS before ever reaching this method (the likeliest way a leak happens in the
     /// first place -- see this class's own doc comment above) used to leave the leftover
@@ -249,7 +249,7 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
 
         if (pending > 0 || leakedGate is not null)
         {
-            var what = pending > 0 && leakedGate is not null
+            string what = pending > 0 && leakedGate is not null
                 ? $"{pending} scripted /chat/completions response(s) and an armed HoldNextResponse() gate were"
                 : pending > 0
                     ? $"{pending} scripted /chat/completions response(s) were"
@@ -300,12 +300,14 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
         gate?.TrySetResult();
     }
 
-    public async Task StartAsync(CancellationToken cancellationToken = default, int? fixedPort = null)
+    public Task StartAsync(CancellationToken cancellationToken = default) => StartAsync(fixedPort: null, cancellationToken);
+
+    public async Task StartAsync(int? fixedPort, CancellationToken cancellationToken = default)
     {
-        var builder = WebApplication.CreateBuilder();
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
-        builder.WebHost.UseUrls($"http://127.0.0.1:{fixedPort?.ToString() ?? "0"}");
-        var app = builder.Build();
+        builder.WebHost.UseUrls($"http://127.0.0.1:{fixedPort?.ToString(CultureInfo.InvariantCulture) ?? "0"}");
+        WebApplication app = builder.Build();
         app.MapGet("/", () => Results.Ok());
         app.MapPost("/chat/completions", HandleCompletionAsync);
 
@@ -327,7 +329,7 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
     {
         if (ExpectedBearerToken is not null)
         {
-            var header = context.Request.Headers.Authorization.ToString();
+            string header = context.Request.Headers.Authorization.ToString();
             if (!string.Equals(header, $"Bearer {ExpectedBearerToken}", StringComparison.Ordinal))
             {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
@@ -341,19 +343,19 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
         // fake must enforce the same contract so a regression (the client forgetting the query
         // parameter again) fails a conformance run instead of silently passing against a fake
         // that's more lenient than the real service.
-        if (!context.Request.Query.TryGetValue("api-version", out var apiVersion) || apiVersion.Count == 0 || string.IsNullOrEmpty(apiVersion[0]))
+        if (!context.Request.Query.TryGetValue("api-version", out StringValues apiVersion) || apiVersion.Count == 0 || string.IsNullOrEmpty(apiVersion[0]))
         {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
             return;
         }
 
-        using var document = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted).ConfigureAwait(false);
-        var root = document.RootElement;
-        var model = root.TryGetProperty("model", out var modelProp) ? modelProp.GetString() ?? "" : "";
-        var messageCount = root.TryGetProperty("messages", out var messagesProp)
+        using JsonDocument document = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted).ConfigureAwait(false);
+        JsonElement root = document.RootElement;
+        string model = root.TryGetProperty("model", out JsonElement modelProp) ? modelProp.GetString() ?? "" : "";
+        int messageCount = root.TryGetProperty("messages", out JsonElement messagesProp)
             && messagesProp.ValueKind == JsonValueKind.Array
             ? messagesProp.GetArrayLength() : 0;
-        var hasTools = root.TryGetProperty("tools", out var toolsProp)
+        bool hasTools = root.TryGetProperty("tools", out JsonElement toolsProp)
             && toolsProp.ValueKind == JsonValueKind.Array && toolsProp.GetArrayLength() > 0;
 
         var recorded = new ChatCompletionsRequest(model, messageCount, hasTools, root.Clone());
@@ -369,7 +371,7 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
             gate = _pendingResponseGate;
             _pendingResponseGate = null;
 
-            scripted = _scriptedResponses.TryDequeue(out var next) ? next : new ScriptedResponse((JsonObject)DefaultMessage.DeepClone(), StatusCode: null, RetryAfterSeconds: null);
+            scripted = _scriptedResponses.TryDequeue(out ScriptedResponse? next) ? next : new ScriptedResponse((JsonObject)s_defaultMessage.DeepClone(), StatusCode: null, RetryAfterSeconds: null);
         }
         released.TrySetResult();
 
@@ -394,13 +396,13 @@ public sealed class FakeChatCompletionsServer : IAsyncDisposable
         {
             if (scripted.RetryAfterSeconds is int retryAfterSeconds)
             {
-                context.Response.Headers.RetryAfter = retryAfterSeconds.ToString();
+                context.Response.Headers.RetryAfter = retryAfterSeconds.ToString(CultureInfo.InvariantCulture);
             }
             context.Response.StatusCode = statusCode;
             return;
         }
 
-        var message = scripted.Message!;
+        JsonObject message = scripted.Message!;
         var responseBody = new JsonObject
         {
             ["id"] = "fake-cascade-completion",

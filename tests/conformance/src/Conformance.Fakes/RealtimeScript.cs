@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 
 namespace Conformance.Fakes;
 
@@ -12,7 +13,7 @@ namespace Conformance.Fakes;
 /// Thread-safety (PR #22 review item N1): a test's own task and the connection's frame-dispatch
 /// loop (<see cref="FakeRealtimeUpstreamServer.HandleFrameAsync"/>, running off the non-blocking
 /// receive loop per item 8) can legitimately touch this object at the same time — e.g. a test
-/// arms a new <see cref="On"/> rule right after sending a frame that's still being dispatched.
+/// arms a new <c>On</c> rule right after sending a frame that's still being dispatched.
 /// Before this, <c>Rules</c> was a plain unsynchronized <see cref="List{T}"/> and
 /// <c>QueuedResponses</c> a plain unsynchronized <see cref="Queue{T}"/>; a concurrent
 /// add/clear during enumeration could throw "Collection was modified" (or silently corrupt
@@ -46,7 +47,7 @@ public sealed class RealtimeScript
     /// behaviour can call <see cref="ClearRules"/> and add their own.
     ///
     /// Reading this property takes a defensive snapshot under <see cref="_rulesGate"/> — the same
-    /// lock <see cref="On"/> and <see cref="ClearRules"/> mutate under — so
+    /// lock <c>On</c> and <see cref="ClearRules"/> mutate under — so
     /// <c>FakeRealtimeUpstreamServer.HandleFrameAsync</c>'s <c>foreach (var rule in
     /// connection.Script.Rules)</c> always enumerates a stable copy, never the live list, no
     /// matter what else is mutating it concurrently.
@@ -57,7 +58,7 @@ public sealed class RealtimeScript
         {
             lock (_rulesGate)
             {
-                return _rules.ToArray();
+                return [.. _rules];
             }
         }
     }
@@ -76,7 +77,7 @@ public sealed class RealtimeScript
     }
 
     /// <summary>Removes every currently-registered rule (e.g. to opt out of the VAD-like
-    /// defaults). Thread-safe, same as <see cref="On"/> — replaces the old
+    /// defaults). Thread-safe, same as <c>On</c> — replaces the old
     /// <c>Rules.Clear()</c> call pattern now that <see cref="Rules"/> returns a read-only
     /// snapshot rather than the live, mutable list.</summary>
     public void ClearRules()
@@ -105,7 +106,7 @@ public sealed class RealtimeScript
     /// middle-tier-authored item (e.g. the rehydration item) got acknowledged, without that being
     /// the point of the switch at all. Removes only the tagged speech-default rule; any other
     /// rule (including the item-create ack default, and anything a test added itself via
-    /// <see cref="On"/>) is left in place.
+    /// <c>On</c>) is left in place.
     /// </summary>
     public void RemoveVadSpeechDefaultRule()
     {
@@ -134,7 +135,7 @@ public sealed class RealtimeScript
             frame => frame.Type == "input_audio_buffer.append",
             async (connection, frame, ct) =>
             {
-                var itemId = $"item_{Guid.NewGuid():N}";
+                string itemId = $"item_{Guid.NewGuid():N}";
                 await connection.SendAsync(new System.Text.Json.Nodes.JsonObject
                 {
                     ["type"] = "input_audio_buffer.speech_started",
@@ -170,11 +171,11 @@ public sealed class RealtimeScript
             frame => frame.Type == "conversation.item.create",
             async (connection, frame, ct) =>
             {
-                if (!frame.Json.TryGetProperty("item", out var item))
+                if (!frame.Json.TryGetProperty("item", out JsonElement item))
                 {
                     return;
                 }
-                var itemId = item.TryGetProperty("id", out var idProp) && idProp.ValueKind == System.Text.Json.JsonValueKind.String
+                string? itemId = item.TryGetProperty("id", out JsonElement idProp) && idProp.ValueKind == System.Text.Json.JsonValueKind.String
                     ? idProp.GetString()
                     : null;
 
@@ -200,7 +201,7 @@ public sealed class RealtimeScript
                 // part 2: previously LastConversationItemId was never updated for a client-created
                 // item at all, so a subsequent server-generated item's own previous_item_id could
                 // point at a stale predecessor instead of the client item that actually came last).
-                var previousItemId = connection.SessionState.LastConversationItemId;
+                string? previousItemId = connection.SessionState.LastConversationItemId;
                 var itemNode = System.Text.Json.Nodes.JsonNode.Parse(item.GetRawText());
                 if (itemId is not null && itemNode is System.Text.Json.Nodes.JsonObject itemObject)
                 {
@@ -240,7 +241,7 @@ public sealed class RealtimeScript
 /// <summary>One rule: fires <see cref="Handler"/> for every received frame matching <see cref="Predicate"/>.
 /// <paramref name="Kind"/> optionally tags a rule so it can be selectively removed later (e.g.
 /// <see cref="RealtimeScript.RemoveVadSpeechDefaultRule"/>) without disturbing other rules --
-/// null for any rule a test adds itself via <see cref="RealtimeScript.On"/>.</summary>
+/// null for any rule a test adds itself via <c>RealtimeScript.On</c>.</summary>
 public sealed record RealtimeScriptRule(
     Func<RecordedFrame, bool> Predicate,
     Func<FakeRealtimeConnection, RecordedFrame, CancellationToken, Task> Handler,

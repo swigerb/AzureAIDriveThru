@@ -76,14 +76,14 @@ public sealed class TwoPersonaHappyHourOutsideWindowCollection : ICollectionFixt
 /// </summary>
 internal static class HappyHourPersonasDirOverride
 {
-    private static readonly Lazy<string> LazyDirectory = new(Build);
+    private static readonly Lazy<string> s_lazyDirectory = new(Build);
 
-    public static string Directory => LazyDirectory.Value;
+    public static string Directory => s_lazyDirectory.Value;
 
     private static string Build()
     {
-        var sourceRoot = RepoPaths.FixturePersonasDirectory(RepoPaths.FindRepoRoot());
-        var targetRoot = Path.Combine(
+        string sourceRoot = RepoPaths.FixturePersonasDirectory(RepoPaths.FindRepoRoot());
+        string targetRoot = Path.Combine(
             Path.GetTempPath(), "conformance-happy-hour-personas-" + Guid.NewGuid());
         System.IO.Directory.CreateDirectory(targetRoot);
 
@@ -116,10 +116,10 @@ internal static class HappyHourPersonasDirOverride
     private static void CopyDirectory(string sourceDir, string targetDir)
     {
         System.IO.Directory.CreateDirectory(targetDir);
-        foreach (var filePath in System.IO.Directory.EnumerateFiles(sourceDir, "*", SearchOption.AllDirectories))
+        foreach (string filePath in System.IO.Directory.EnumerateFiles(sourceDir, "*", SearchOption.AllDirectories))
         {
-            var relativePath = Path.GetRelativePath(sourceDir, filePath);
-            var destinationPath = Path.Combine(targetDir, relativePath);
+            string relativePath = Path.GetRelativePath(sourceDir, filePath);
+            string destinationPath = Path.Combine(targetDir, relativePath);
             System.IO.Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
             File.Copy(filePath, destinationPath, overwrite: true);
         }
@@ -127,7 +127,7 @@ internal static class HappyHourPersonasDirOverride
 
     private static void SetSodaMachineOperational(string personaJsonPath)
     {
-        var json = JsonNode.Parse(File.ReadAllText(personaJsonPath))!.AsObject();
+        JsonObject json = JsonNode.Parse(File.ReadAllText(personaJsonPath))!.AsObject();
         json["machines"]!["soda_machine"]!["status"] = "operational";
         json["machines"]!["soda_machine"]!["label"] = "Our soda machine is up and running";
         File.WriteAllText(personaJsonPath, json.ToJsonString());

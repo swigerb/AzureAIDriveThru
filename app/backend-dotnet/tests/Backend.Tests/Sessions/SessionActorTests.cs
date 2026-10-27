@@ -23,7 +23,7 @@ internal sealed class RecordingProcessor : IPipelineProcessor
 
     public async Task ProcessAsync(SessionEvent sessionEvent, CancellationToken cancellationToken)
     {
-        var current = Interlocked.Increment(ref _concurrentCallCount);
+        int current = Interlocked.Increment(ref _concurrentCallCount);
         MaxObservedConcurrency = Math.Max(MaxObservedConcurrency, current);
         await Task.Delay(10, cancellationToken);
         if (sessionEvent is NumberedEvent numbered)
@@ -46,7 +46,7 @@ public sealed class SessionActorTests
         var processor = new RecordingProcessor();
         var actor = new SessionActor("session-1", processor);
 
-        for (var i = 0; i < 20; i++)
+        for (int i = 0; i < 20; i++)
         {
             Assert.True(actor.Post(new NumberedEvent(i)));
         }
@@ -85,8 +85,8 @@ public sealed class SessionRegistryTests
     {
         var registry = new SessionRegistry();
 
-        var first = registry.GetOrAdd("s1", id => new SessionActor(id));
-        var second = registry.GetOrAdd("s1", id => new SessionActor(id));
+        SessionActor first = registry.GetOrAdd("s1", id => new SessionActor(id));
+        SessionActor second = registry.GetOrAdd("s1", id => new SessionActor(id));
 
         Assert.Same(first, second);
         Assert.Equal(1, registry.Count);
@@ -98,7 +98,7 @@ public sealed class SessionRegistryTests
         var registry = new SessionRegistry();
         registry.GetOrAdd("s1", id => new SessionActor(id));
 
-        var removed = await registry.RemoveAsync("s1");
+        bool removed = await registry.RemoveAsync("s1");
 
         Assert.True(removed);
         Assert.False(registry.TryGet("s1", out _));

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
@@ -38,16 +39,16 @@ namespace Conformance.Tests.Scenarios.Security;
 [Trait("Dotnet", "ready")]
 public sealed class ResponseCreateHooksGateTests(HooksOffConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
     public Task Browser_sent_response_create_never_reaches_upstream_when_hooks_are_disabled() =>
         fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
         Assert.True(connection is not null, "No upstream connection was accepted for the browser socket.");
 
         // The browser's own session.update handshake (useRealtime.tsx's startSession()) is what
@@ -55,14 +56,14 @@ public sealed class ResponseCreateHooksGateTests(HooksOffConformanceFixture fixt
         // send_greeting_once/"client-session.update" trigger -- exactly as it does under every
         // other (hooks-on) profile; the hooks gate has no bearing on this trigger path.
         await browser.SendStartSessionAsync(cancellationToken: ct);
-        var sessionUpdate = await connection!.ReceivedFrames.WaitForAsync(
-            f => f.Sequence > 0 && f.Type == "session.update", FrameTimeout, ct);
+        RecordedFrame? sessionUpdate = await connection!.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > 0 && f.Type == "session.update", s_frameTimeout, ct);
         Assert.True(sessionUpdate is not null, "The browser's own session.update must still reach the fake upstream.");
 
         // The server's OWN greeting response.create -- legitimate, unrelated to the client
         // allow-list gate under test. Captured as the baseline sequence number below.
-        var serverGreeting = await connection.ReceivedFrames.WaitForAsync(
-            f => f.Type == "response.create", FrameTimeout, ct);
+        RecordedFrame? serverGreeting = await connection.ReceivedFrames.WaitForAsync(
+            f => f.Type == "response.create", s_frameTimeout, ct);
         Assert.True(serverGreeting is not null,
             "Expected the backend's own greeting response.create to reach the fake upstream " +
             "(hooks-off must not disable the server's OWN greeting trigger -- only the client " +
@@ -71,8 +72,8 @@ public sealed class ResponseCreateHooksGateTests(HooksOffConformanceFixture fixt
         // Let the greeting's round trip fully finish before the browser sends its own
         // response.create -- same reasoning as ClientToServerAllowListTests' identical wait:
         // avoids racing the still-streaming greeting's echo-suppression cooldown.
-        var greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        RecordedFrame? greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token", s_frameTimeout, ct);
         Assert.True(greetingRoundTrip is not null, "Greeting round trip never completed.");
 
         // Now the browser sends its OWN response.create -- exactly what a real frontend never
@@ -83,13 +84,13 @@ public sealed class ResponseCreateHooksGateTests(HooksOffConformanceFixture fixt
         // proving the response.create above was dropped rather than having crashed the
         // connection handler or closed the socket.
         await browser.SendInputAudioClearAsync(ct);
-        var clear = await connection.ReceivedFrames.WaitForAsync(
-            f => f.Type == "input_audio_buffer.clear" && f.Sequence > serverGreeting!.Sequence, FrameTimeout, ct);
+        RecordedFrame? clear = await connection.ReceivedFrames.WaitForAsync(
+            f => f.Type == "input_audio_buffer.clear" && f.Sequence > serverGreeting!.Sequence, s_frameTimeout, ct);
         Assert.True(clear is not null, "Expected input_audio_buffer.clear to still reach the fake upstream.");
 
         // The core assertion: no response.create frame arrives AFTER the server's own greeting
         // one -- the browser's attempt must never have reached upstream at all.
-        foreach (var frame in connection.ReceivedFrames.Snapshot())
+        foreach (RecordedFrame frame in connection.ReceivedFrames.Snapshot())
         {
             if (frame.Sequence > serverGreeting!.Sequence)
             {
@@ -104,15 +105,15 @@ public sealed class ResponseCreateHooksGateTests(HooksOffConformanceFixture fixt
         // Sanity companion to the test above: hooks-off must not break ordinary traffic. Mirrors
         // ClientToServerAllowListTests.Legitimate_frontend_traffic_still_flows (minus
         // response.create, already exercised via the greeting/round-trip in the sibling test).
-        var ct = TestContext.Current.CancellationToken;
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
         Assert.True(connection is not null, "No upstream connection was accepted for the browser socket.");
 
         await browser.SendStartSessionAsync(cancellationToken: ct);
-        var sessionUpdate = await connection!.ReceivedFrames.WaitForAsync(
-            f => f.Sequence > 0 && f.Type == "session.update", FrameTimeout, ct);
+        RecordedFrame? sessionUpdate = await connection!.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > 0 && f.Type == "session.update", s_frameTimeout, ct);
         Assert.True(sessionUpdate is not null, "The browser's own session.update must still reach the fake upstream.");
 
         // Wait for the greeting's own round trip to fully finish before touching mic audio --
@@ -120,8 +121,8 @@ public sealed class ResponseCreateHooksGateTests(HooksOffConformanceFixture fixt
         // unrelated to #31), so mic audio sent inside that window is silently dropped regardless
         // of the allow-list. See ClientToServerAllowListTests.Legitimate_frontend_traffic_still_flows
         // for identical reasoning/precedent.
-        var greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        RecordedFrame? greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token", s_frameTimeout, ct);
         Assert.True(greetingRoundTrip is not null, "Greeting round trip never completed.");
 
         // response.cancel: the greeting response already completed, so the fake upstream
@@ -129,25 +130,25 @@ public sealed class ResponseCreateHooksGateTests(HooksOffConformanceFixture fixt
         // allowedNewBackendErrors: 1 below) -- sent purely to reset the post-greeting echo
         // cooldown via on_barge_in() so the mic audio sent next isn't suppressed by it.
         await browser.SendResponseCancelAsync(ct);
-        var cancel = await connection.ReceivedFrames.WaitForAsync(f => f.Type == "response.cancel", FrameTimeout, ct);
+        RecordedFrame? cancel = await connection.ReceivedFrames.WaitForAsync(f => f.Type == "response.cancel", s_frameTimeout, ct);
         Assert.True(cancel is not null, "response.cancel must still reach the fake upstream.");
 
-        const string micAudioMarker = "ZmFrZS1taWMtYXVkaW8tbWFya2VyLWJhc2U2NA==";
-        await browser.SendInputAudioAppendAsync(micAudioMarker, ct);
-        var audioAppend = await connection.ReceivedFrames.WaitForAsync(
+        const string MicAudioMarker = "ZmFrZS1taWMtYXVkaW8tbWFya2VyLWJhc2U2NA==";
+        await browser.SendInputAudioAppendAsync(MicAudioMarker, ct);
+        RecordedFrame? audioAppend = await connection.ReceivedFrames.WaitForAsync(
             f => f.Type == "input_audio_buffer.append" &&
-                 f.Json.TryGetProperty("audio", out var audio) && audio.GetString() == micAudioMarker,
-            FrameTimeout, ct);
+                 f.Json.TryGetProperty("audio", out JsonElement audio) && audio.GetString() == MicAudioMarker,
+            s_frameTimeout, ct);
         Assert.True(audioAppend is not null, "Mic audio (input_audio_buffer.append) must still reach the fake upstream.");
 
         await browser.SendExtensionSetVoiceAsync("marin", ct);
-        var voiceUpdate = await connection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? voiceUpdate = await connection.ReceivedFrames.WaitForAsync(
             f => f.Type == "session.update" &&
-                 f.Json.GetProperty("session").TryGetProperty("audio", out var audio2) &&
-                 audio2.TryGetProperty("output", out var output) &&
-                 output.TryGetProperty("voice", out var voice) &&
+                 f.Json.GetProperty("session").TryGetProperty("audio", out JsonElement audio2) &&
+                 audio2.TryGetProperty("output", out JsonElement output) &&
+                 output.TryGetProperty("voice", out JsonElement voice) &&
                  voice.GetString() == "marin",
-            FrameTimeout, ct);
+            s_frameTimeout, ct);
         Assert.True(voiceUpdate is not null, "extension.set_voice must still result in a voice session.update reaching the fake upstream.");
     }, allowedNewBackendErrors: 1);
 }

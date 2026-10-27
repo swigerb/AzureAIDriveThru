@@ -30,7 +30,7 @@ public sealed class ProductionExportLocatorTests : IDisposable
     /// real persona-pack layout ProductionExportLocator globs for.</summary>
     private void CreatePersona(string personaId)
     {
-        var sourceDir = Path.Combine(_repoRoot, "personas", personaId, "menu", "source");
+        string sourceDir = Path.Combine(_repoRoot, "personas", personaId, "menu", "source");
         Directory.CreateDirectory(sourceDir);
         File.WriteAllText(Path.Combine(sourceDir, $"{personaId}-menu-items.json"), "{}");
     }
@@ -40,7 +40,7 @@ public sealed class ProductionExportLocatorTests : IDisposable
     {
         Directory.CreateDirectory(Path.Combine(_repoRoot, "personas"));
 
-        var ex = Assert.Throws<InvalidOperationException>(() => ProductionExportLocator.Locate(_repoRoot));
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => ProductionExportLocator.Locate(_repoRoot));
 
         Assert.Contains("No persona production export matched", ex.Message);
     }
@@ -48,7 +48,7 @@ public sealed class ProductionExportLocatorTests : IDisposable
     [Fact]
     public void Locate_ThrowsCleanError_WhenPersonasDirectoryDoesNotExistAtAll()
     {
-        var ex = Assert.Throws<InvalidOperationException>(() => ProductionExportLocator.Locate(_repoRoot));
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => ProductionExportLocator.Locate(_repoRoot));
 
         Assert.Contains("No persona production export matched", ex.Message);
     }
@@ -60,7 +60,7 @@ public sealed class ProductionExportLocatorTests : IDisposable
         // pack(s) happen to be checked into the repo.
         CreatePersona("acme");
 
-        var discovery = ProductionExportLocator.Locate(_repoRoot);
+        ProductionExportLocator.Discovery discovery = ProductionExportLocator.Locate(_repoRoot);
 
         Assert.Equal("acme", discovery.PersonaId);
         Assert.Equal(
@@ -80,7 +80,7 @@ public sealed class ProductionExportLocatorTests : IDisposable
         CreatePersona("acme");
         CreatePersona("globex");
 
-        var ex = Assert.Throws<InvalidOperationException>(() => ProductionExportLocator.Locate(_repoRoot));
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => ProductionExportLocator.Locate(_repoRoot));
 
         Assert.Contains("More than one persona has a production export", ex.Message);
     }
@@ -91,12 +91,12 @@ public sealed class ProductionExportLocatorTests : IDisposable
         // A persona pack that exists but has no menu/source/*-menu-items.json at all (e.g. a UI-
         // only persona pack with just a menuItems.json) must not count as a candidate and must not
         // make an otherwise-unambiguous discovery fail.
-        var uiOnlyMenuDir = Path.Combine(_repoRoot, "personas", "ui-only", "menu");
+        string uiOnlyMenuDir = Path.Combine(_repoRoot, "personas", "ui-only", "menu");
         Directory.CreateDirectory(uiOnlyMenuDir);
         File.WriteAllText(Path.Combine(uiOnlyMenuDir, "menuItems.json"), "{}");
         CreatePersona("acme");
 
-        var discovery = ProductionExportLocator.Locate(_repoRoot);
+        ProductionExportLocator.Discovery discovery = ProductionExportLocator.Locate(_repoRoot);
 
         Assert.Equal("acme", discovery.PersonaId);
     }

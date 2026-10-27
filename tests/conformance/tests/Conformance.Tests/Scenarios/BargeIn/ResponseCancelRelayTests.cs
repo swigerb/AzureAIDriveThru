@@ -17,29 +17,29 @@ namespace Conformance.Tests;
 [Collection(ConformanceCollection.Name)]
 public sealed class ResponseCancelRelayTests(ConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Browser_response_cancel_mid_stream_is_relayed_and_cancelled_status_is_handled_cleanly() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        bool noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(s_frameTimeout, ct);
         Assert.True(noneOpen, $"Expected no open upstream connections at test start, but " +
             $"{fixture.Realtime.OpenConnectionCount} are still open — a previous test leaked a connection.");
 
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
         await browser.SendStartSessionAsync(cancellationToken: ct);
 
         // Let the greeting's own response.create/response.done round trip fully complete first --
         // enqueuing our script any earlier would let the automatic greeting consume it instead of
         // the turn we script and cancel below.
-        var greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        RecordedFrame? greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token", s_frameTimeout, ct);
         Assert.True(greetingRoundTrip is not null, "Greeting round trip never completed.");
 
         // First delta arrives immediately (so the browser can observe genuine mid-stream state);
@@ -60,16 +60,16 @@ public sealed class ResponseCancelRelayTests(ConformanceFixture fixture)
         // "response.output_audio.delta" -> "response.audio.delta"), so the browser -- unlike a
         // client that talks directly to the fake upstream, see ResponseCancelTests -- observes
         // the legacy name here.
-        var firstDelta = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Sequence > greetingRoundTrip!.Sequence && f.Type == "response.audio.delta", FrameTimeout, ct);
+        RecordedFrame? firstDelta = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > greetingRoundTrip!.Sequence && f.Type == "response.audio.delta", s_frameTimeout, ct);
         Assert.True(firstDelta is not null, "Expected the first response.audio.delta to reach the browser (genuinely mid-stream) before cancelling.");
 
         // The barge-in itself: the browser sends response.cancel with the response still active --
         // rtmt.py relays it upstream with no special handling of its own.
         await browser.SendResponseCancelAsync(ct);
 
-        var done = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "response.done" && f.Sequence > firstDelta!.Sequence, FrameTimeout, ct);
+        RecordedFrame? done = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "response.done" && f.Sequence > firstDelta!.Sequence, s_frameTimeout, ct);
         Assert.True(done is not null, "Expected a response.done to reach the browser after response.cancel.");
         Assert.Equal("cancelled", done!.Json.GetProperty("response").GetProperty("status").GetString());
 
@@ -83,17 +83,17 @@ public sealed class ResponseCancelRelayTests(ConformanceFixture fixture)
         // its caller, which only then relays response.done itself -- so on the wire the token
         // genuinely arrives before response.done for the same turn. Both are therefore bounded
         // independently off firstDelta rather than chained off each other.
-        var cancelledRoundTrip = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token" && f.Sequence > firstDelta!.Sequence, FrameTimeout, ct);
+        RecordedFrame? cancelledRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token" && f.Sequence > firstDelta!.Sequence, s_frameTimeout, ct);
         Assert.True(cancelledRoundTrip is not null,
             "Expected extension.round_trip_token for the cancelled turn -- the round trip must continue normally, not be dropped or crash the connection.");
 
         Assert.Null(browser.CloseStatus);
 
         await browser.SendResponseCreateAsync(ct);
-        var lastSeenSequence = Math.Max(done!.Sequence, cancelledRoundTrip!.Sequence);
-        var nextRoundTrip = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token" && f.Sequence > lastSeenSequence, FrameTimeout, ct);
+        int lastSeenSequence = Math.Max(done!.Sequence, cancelledRoundTrip!.Sequence);
+        RecordedFrame? nextRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token" && f.Sequence > lastSeenSequence, s_frameTimeout, ct);
         Assert.True(nextRoundTrip is not null,
             "Expected the session to remain fully usable for a further turn after the barge-in.");
 
@@ -117,15 +117,15 @@ public sealed class ResponseCancelRelayTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Browser_response_cancel_after_the_response_already_finished_is_not_a_backend_error() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        bool noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(s_frameTimeout, ct);
         Assert.True(noneOpen, $"Expected no open upstream connections at test start, but " +
             $"{fixture.Realtime.OpenConnectionCount} are still open — a previous test leaked a connection.");
 
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
         await browser.SendStartSessionAsync(cancellationToken: ct);
 
@@ -133,14 +133,14 @@ public sealed class ResponseCancelRelayTests(ConformanceFixture fixture)
         // more turn to completion with ResponseScript.Default's unpaced (immediate) delta+done --
         // by the time the browser observes response.done, ActiveResponseId is already cleared
         // upstream, so a cancel sent afterward is guaranteed racy/late rather than mid-stream.
-        var greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        RecordedFrame? greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token", s_frameTimeout, ct);
         Assert.True(greetingRoundTrip is not null, "Greeting round trip never completed.");
 
         connection!.Script.Enqueue(ResponseScript.Default);
         await browser.SendResponseCreateAsync(ct);
-        var done = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "response.done" && f.Sequence > greetingRoundTrip!.Sequence, FrameTimeout, ct);
+        RecordedFrame? done = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "response.done" && f.Sequence > greetingRoundTrip!.Sequence, s_frameTimeout, ct);
         Assert.True(done is not null, "Expected the scripted turn's response.done to reach the browser before cancelling.");
         Assert.Equal("completed", done!.Json.GetProperty("response").GetProperty("status").GetString());
 
@@ -149,16 +149,16 @@ public sealed class ResponseCancelRelayTests(ConformanceFixture fixture)
         // response.cancel -- it relays straight through, same as the mid-stream case above.
         await browser.SendResponseCancelAsync(ct);
 
-        var error = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "error" && f.Sequence > done!.Sequence, FrameTimeout, ct);
+        RecordedFrame? error = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "error" && f.Sequence > done!.Sequence, s_frameTimeout, ct);
         Assert.True(error is not null, "Expected the fake upstream's rejection to reach the browser.");
         Assert.Equal("response_cancel_not_active", error!.Json.GetProperty("error").GetProperty("code").GetString());
 
         // The connection must stay open and usable -- a benign, expected rejection, not a fault.
         Assert.Null(browser.CloseStatus);
         await browser.SendResponseCreateAsync(ct);
-        var nextRoundTrip = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token" && f.Sequence > error!.Sequence, FrameTimeout, ct);
+        RecordedFrame? nextRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token" && f.Sequence > error!.Sequence, s_frameTimeout, ct);
         Assert.True(nextRoundTrip is not null,
             "Expected the session to remain fully usable for a further turn after the benign cancel rejection.");
 

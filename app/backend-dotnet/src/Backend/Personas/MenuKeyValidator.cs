@@ -25,11 +25,12 @@ namespace Backend.Personas;
 /// per-session <c>MenuCatalog</c>-equivalent in the C# backend yet for it to also guard, so a
 /// single call site is correct here (unlike Python's "belt and suspenders" two call sites).
 /// </summary>
-internal static class MenuKeyValidator
+internal static partial class MenuKeyValidator
 {
     // Strips a parenthesized customization suffix, e.g. "Tots (Extra Crispy)" -> "Tots".
     // Mirrors menu_utils.py's _MODIFIER_SUFFIX_RE exactly (r"\s*\([^)]*\)\s*").
-    private static readonly Regex ModifierSuffixRegex = new(@"\s*\([^)]*\)\s*", RegexOptions.Compiled);
+    [GeneratedRegex(@"\s*\([^)]*\)\s*")]
+    private static partial Regex ModifierSuffixRegex();
 
     /// <summary>Mirrors menu_utils.py's <c>strip_modifiers</c>: strips every parenthesized
     /// customization group anywhere in the string (not just a trailing one), collapsing the
@@ -37,8 +38,8 @@ internal static class MenuKeyValidator
     /// <c>str.split()</c>).</summary>
     public static string StripModifiers(string? itemName)
     {
-        var collapsed = ModifierSuffixRegex.Replace(itemName ?? "", " ");
-        var parts = collapsed.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        string collapsed = ModifierSuffixRegex().Replace(itemName ?? "", " ");
+        string[] parts = collapsed.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
         return string.Join(" ", parts);
     }
 
@@ -63,22 +64,22 @@ internal static class MenuKeyValidator
     /// item's own key is still caught, regardless of file order.</summary>
     public static void ValidateNoCollisions(PersonaMenu menu, string personaId, string menuPath)
     {
-        var locationSuffix = string.IsNullOrEmpty(menuPath) ? "" : $" in {menuPath}";
+        string locationSuffix = string.IsNullOrEmpty(menuPath) ? "" : $" in {menuPath}";
         var itemNamesByKey = new Dictionary<string, string>();
         var orderedItems = new List<(string Name, List<string> Aliases)>();
 
-        foreach (var category in menu.MenuItems)
+        foreach (PersonaMenuCategory category in menu.MenuItems)
         {
-            foreach (var item in category.Items)
+            foreach (PersonaMenuItem item in category.Items)
             {
-                var name = item.Name;
+                string name = item.Name;
                 if (string.IsNullOrEmpty(name))
                 {
                     continue;
                 }
 
-                var key = MenuKey(name);
-                if (itemNamesByKey.TryGetValue(key, out var existingName))
+                string key = MenuKey(name);
+                if (itemNamesByKey.TryGetValue(key, out string? existingName))
                 {
                     throw new PersonaValidationException(
                         $"Persona '{personaId}': menu items '{existingName}' and '{name}' both " +
@@ -92,17 +93,17 @@ internal static class MenuKeyValidator
         }
 
         var aliasOwner = new Dictionary<string, string>();
-        foreach (var (name, aliases) in orderedItems)
+        foreach ((string? name, List<string>? aliases) in orderedItems)
         {
-            foreach (var alias in aliases)
+            foreach (string alias in aliases)
             {
-                var aliasKey = MenuKey(alias);
+                string aliasKey = MenuKey(alias);
                 if (string.IsNullOrEmpty(aliasKey))
                 {
                     continue;
                 }
 
-                if (itemNamesByKey.TryGetValue(aliasKey, out var ownerName) && ownerName != name)
+                if (itemNamesByKey.TryGetValue(aliasKey, out string? ownerName) && ownerName != name)
                 {
                     throw new PersonaValidationException(
                         $"Persona '{personaId}': alias '{alias}' on item '{name}' normalizes to " +
@@ -111,7 +112,7 @@ internal static class MenuKeyValidator
                         "(design doc section 6).");
                 }
 
-                if (aliasOwner.TryGetValue(aliasKey, out var aliasOwnerName) && aliasOwnerName != name)
+                if (aliasOwner.TryGetValue(aliasKey, out string? aliasOwnerName) && aliasOwnerName != name)
                 {
                     throw new PersonaValidationException(
                         $"Persona '{personaId}': alias '{alias}' (normalized '{aliasKey}') is " +

@@ -31,7 +31,7 @@ public sealed class OriginValidationTests(ConformanceFixture fixture)
         using var socket = new ClientWebSocket();
         socket.Options.CollectHttpResponseDetails = true;
         socket.Options.SetRequestHeader("Origin", origin);
-        var wsUri = await RealtimeUris.WithDefaultCredentialsAsync(backendBaseUri, cancellationToken: ct);
+        Uri wsUri = await RealtimeUris.WithDefaultCredentialsAsync(backendBaseUri, cancellationToken: ct);
         try
         {
             await socket.ConnectAsync(wsUri, ct);
@@ -53,17 +53,17 @@ public sealed class OriginValidationTests(ConformanceFixture fixture)
     [Fact]
     public Task Exact_host_origin_is_accepted() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var origin = $"{fixture.Backend!.BaseUri.Scheme}://{fixture.Backend.BaseUri.Authority}";
-        var (connected, _) = await TryConnectWithOriginAsync(fixture.Backend.BaseUri, origin, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string origin = $"{fixture.Backend!.BaseUri.Scheme}://{fixture.Backend.BaseUri.Authority}";
+        (bool connected, HttpStatusCode? _) = await TryConnectWithOriginAsync(fixture.Backend.BaseUri, origin, ct);
         Assert.True(connected, "A same-origin (exact Host match) handshake must be accepted.");
     });
 
     [Fact]
     public Task Unrelated_foreign_origin_is_rejected_with_403() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (connected, statusCode) = await TryConnectWithOriginAsync(fixture.Backend!.BaseUri, "https://evil.com", ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (bool connected, HttpStatusCode? statusCode) = await TryConnectWithOriginAsync(fixture.Backend!.BaseUri, "https://evil.com", ct);
         Assert.False(connected, "A completely unrelated Origin must be rejected.");
         Assert.Equal(HttpStatusCode.Forbidden, statusCode);
     });
@@ -71,10 +71,10 @@ public sealed class OriginValidationTests(ConformanceFixture fixture)
     [Fact]
     public Task Lookalike_suffix_origin_is_rejected() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var host = fixture.Backend!.BaseUri.Authority; // e.g. "127.0.0.1:54321"
-        var lookalikeOrigin = $"http://evil-lookalike-{host}";
-        var (connected, statusCode) = await TryConnectWithOriginAsync(fixture.Backend.BaseUri, lookalikeOrigin, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string host = fixture.Backend!.BaseUri.Authority; // e.g. "127.0.0.1:54321"
+        string lookalikeOrigin = $"http://evil-lookalike-{host}";
+        (bool connected, HttpStatusCode? statusCode) = await TryConnectWithOriginAsync(fixture.Backend.BaseUri, lookalikeOrigin, ct);
         Assert.False(connected, $"Origin '{lookalikeOrigin}' is not same-origin with Host '{host}' and must be rejected.");
         Assert.Equal(HttpStatusCode.Forbidden, statusCode);
     });

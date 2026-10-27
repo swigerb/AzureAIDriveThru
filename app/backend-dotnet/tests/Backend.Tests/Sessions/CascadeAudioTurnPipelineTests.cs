@@ -1,3 +1,4 @@
+using System.Net.WebSockets;
 using System.Text.Json.Nodes;
 using Backend.Cascade;
 using Backend.Configuration;
@@ -58,10 +59,10 @@ public sealed class CascadeAudioTurnPipelineTests
     [Fact]
     public async Task TranscribeAsync_ReturnsTranscriptTextFromResponse()
     {
-        var handler = new RoutingFoundryHandler().EnqueueTranscript("I'd like fries");
-        var pipeline = NewPipeline(handler, new FakeWebSocket([]), NewState());
+        RoutingFoundryHandler handler = new RoutingFoundryHandler().EnqueueTranscript("I'd like fries");
+        CascadeAudioTurnPipeline pipeline = NewPipeline(handler, new FakeWebSocket([]), NewState());
 
-        var text = await pipeline.TranscribeAsync([1, 2, 3, 4], CancellationToken.None);
+        string text = await pipeline.TranscribeAsync([1, 2, 3, 4], TestContext.Current.CancellationToken);
 
         Assert.Equal("I'd like fries", text);
         Assert.Equal(1, handler.TranscribeRequestCount);
@@ -70,18 +71,18 @@ public sealed class CascadeAudioTurnPipelineTests
     [Fact]
     public async Task SpeakAsync_SendsAudioDeltaFramesChunkedToTheClient()
     {
-        var pcm = new byte[CascadeProcessor.TtsChunkBytes + 100];
-        var handler = new RoutingFoundryHandler().EnqueueSpeech(pcm);
+        byte[] pcm = new byte[CascadeProcessor.TtsChunkBytes + 100];
+        RoutingFoundryHandler handler = new RoutingFoundryHandler().EnqueueSpeech(pcm);
         var socket = new FakeWebSocket([]);
-        var pipeline = NewPipeline(handler, socket, NewState());
+        CascadeAudioTurnPipeline pipeline = NewPipeline(handler, socket, NewState());
 
-        await pipeline.SpeakAsync("Coming right up", "resp_1", CancellationToken.None);
+        await pipeline.SpeakAsync("Coming right up", "resp_1", TestContext.Current.CancellationToken);
 
         // Two chunks: one full CascadeProcessor.TtsChunkBytes-sized delta, one 100-byte remainder.
         Assert.Equal(2, socket.SentMessages.Count);
-        foreach (var sent in socket.SentMessages)
+        foreach ((byte[] Data, WebSocketMessageType MessageType, bool EndOfMessage) sent in socket.SentMessages)
         {
-            var frame = JsonNode.Parse(sent.Data)!.AsObject();
+            JsonObject frame = JsonNode.Parse(sent.Data)!.AsObject();
             Assert.Equal("response.audio.delta", frame["type"]!.GetValue<string>());
             // Realtime API delta shape: each chunk names the response it belongs to.
             Assert.Equal("resp_1", frame["response_id"]!.GetValue<string>());
@@ -91,24 +92,24 @@ public sealed class CascadeAudioTurnPipelineTests
     [Fact]
     public async Task SpeakAsync_WithEchoCooldown_ArmsTheTurnDetector()
     {
-        var pcm = new byte[24000]; // 0.5s of 24kHz mono PCM16
-        var handler = new RoutingFoundryHandler().EnqueueSpeech(pcm);
+        byte[] pcm = new byte[24000]; // 0.5s of 24kHz mono PCM16
+        RoutingFoundryHandler handler = new RoutingFoundryHandler().EnqueueSpeech(pcm);
         var detector = new TurnDetector(0.5, 500, 24000);
-        var pipeline = NewPipeline(handler, new FakeWebSocket([]), NewState(), detector, echoCooldownSeconds: 0.2);
+        CascadeAudioTurnPipeline pipeline = NewPipeline(handler, new FakeWebSocket([]), NewState(), detector, echoCooldownSeconds: 0.2);
 
-        await pipeline.SpeakAsync("Coming right up", "resp_1", CancellationToken.None);
+        await pipeline.SpeakAsync("Coming right up", "resp_1", TestContext.Current.CancellationToken);
 
         // 0.5s audio + 0.2s cooldown starting at nowSeconds()=0 means a 0.0 timestamp is still
         // inside the cooldown window -- Feed() with LOUD audio at that timestamp still returns
         // null (dropped as echo) only because the cooldown check runs before the RMS/threshold
         // check; an un-armed detector would instead report "speech_started" for audio this loud.
-        var loudPcm = new byte[3200];
-        for (var i = 0; i < loudPcm.Length; i += 2)
+        byte[] loudPcm = new byte[3200];
+        for (int i = 0; i < loudPcm.Length; i += 2)
         {
             loudPcm[i] = 0xFF;
             loudPcm[i + 1] = 0x7F; // short.MaxValue, little-endian
         }
-        var result = detector.Feed(loudPcm, now: 0.0);
+        string? result = detector.Feed(loudPcm, now: 0.0);
         Assert.Null(result);
     }
 
@@ -116,16 +117,16 @@ public sealed class CascadeAudioTurnPipelineTests
     public async Task SendFailedResponseDoneAsync_SendsErrorThenFailedResponseDone()
     {
         var socket = new FakeWebSocket([]);
-        var pipeline = NewPipeline(new RoutingFoundryHandler(), socket, NewState());
+        CascadeAudioTurnPipeline pipeline = NewPipeline(new RoutingFoundryHandler(), socket, NewState());
 
-        await pipeline.SendFailedResponseDoneAsync("resp-1", "boom", CancellationToken.None);
+        await pipeline.SendFailedResponseDoneAsync("resp-1", "boom", TestContext.Current.CancellationToken);
 
         Assert.Equal(2, socket.SentMessages.Count);
-        var errorFrame = JsonNode.Parse(socket.SentMessages[0].Data)!.AsObject();
+        JsonObject errorFrame = JsonNode.Parse(socket.SentMessages[0].Data)!.AsObject();
         Assert.Equal("error", errorFrame["type"]!.GetValue<string>());
         Assert.Equal("boom", errorFrame["error"]!["message"]!.GetValue<string>());
 
-        var doneFrame = JsonNode.Parse(socket.SentMessages[1].Data)!.AsObject();
+        JsonObject doneFrame = JsonNode.Parse(socket.SentMessages[1].Data)!.AsObject();
         Assert.Equal("response.done", doneFrame["type"]!.GetValue<string>());
         Assert.Equal("failed", doneFrame["response"]!["status"]!.GetValue<string>());
         Assert.Equal("resp-1", doneFrame["response"]!["id"]!.GetValue<string>());

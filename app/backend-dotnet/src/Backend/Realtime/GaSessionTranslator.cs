@@ -27,7 +27,7 @@ internal static class GaSessionTranslator
     /// <summary>Legacy audio formats were bare strings ("pcm16"); GA expects an object.</summary>
     private static JsonObject GaAudioFormat(JsonNode? value)
     {
-        if (value is JsonValue v && v.TryGetValue<string>(out var s))
+        if (value is JsonValue v && v.TryGetValue<string>(out string? s))
         {
             return s switch
             {
@@ -53,9 +53,9 @@ internal static class GaSessionTranslator
         // Deep-clone the audio sub-objects (rather than reusing ga's own child references) so
         // removing/reassigning "audio"/"input"/"output" below never fights System.Text.Json's
         // single-parent-per-node rule.
-        var audio = ga["audio"] is JsonObject existingAudio ? (JsonObject)existingAudio.DeepClone() : new JsonObject();
-        var audioIn = audio["input"] is JsonObject existingIn ? (JsonObject)existingIn.DeepClone() : new JsonObject();
-        var audioOut = audio["output"] is JsonObject existingOut ? (JsonObject)existingOut.DeepClone() : new JsonObject();
+        JsonObject audio = ga["audio"] is JsonObject existingAudio ? (JsonObject)existingAudio.DeepClone() : [];
+        JsonObject audioIn = audio["input"] is JsonObject existingIn ? (JsonObject)existingIn.DeepClone() : [];
+        JsonObject audioOut = audio["output"] is JsonObject existingOut ? (JsonObject)existingOut.DeepClone() : [];
         ga.Remove("audio");
 
         // input side
@@ -119,7 +119,7 @@ internal static class GaSessionTranslator
 
         ga["type"] = "realtime";
 
-        foreach (var key in ga.Select(kvp => kvp.Key).Where(k => !GaSessionTopLevel.Contains(k)).ToList())
+        foreach (string? key in ga.Select(kvp => kvp.Key).Where(k => !GaSessionTopLevel.Contains(k)).ToList())
         {
             ga.Remove(key);
         }
@@ -132,7 +132,7 @@ internal static class GaSessionTranslator
     /// `_to_ga_session` (`if (x := ga.pop(...)) is not None:`).</summary>
     private static JsonNode? Pop(JsonObject obj, string key)
     {
-        if (!obj.TryGetPropertyValue(key, out var value) || value is null)
+        if (!obj.TryGetPropertyValue(key, out JsonNode? value) || value is null)
         {
             obj.Remove(key);
             return null;

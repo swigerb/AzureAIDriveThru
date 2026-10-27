@@ -31,11 +31,11 @@ public sealed class OrderToolExecutorUpsellHintTests
 
     private static OrderToolExecutor NewExecutor()
     {
-        var personasDir = Path.Combine(RepoRootLocator.Find(), "personas");
+        string personasDir = Path.Combine(RepoRootLocator.Find(), "personas");
         var catalog = PersonaCatalog.Load(personasDir: personasDir, personasEnv: PersonaId, defaultPersonaEnv: PersonaId);
-        var persona = catalog.Get(PersonaId);
-        var order = PersonaOrderFactory.CreateOrderState(persona);
-        var menu = PersonaOrderFactory.GetMenuCatalog(persona);
+        Persona persona = catalog.Get(PersonaId);
+        OrderState order = PersonaOrderFactory.CreateOrderState(persona);
+        MenuCatalog menu = PersonaOrderFactory.GetMenuCatalog(persona);
         var promptLoader = new PromptLoader(personasDir, PersonaId);
         return new OrderToolExecutor(order, menu, promptLoader, MaxItemQuantity, MaxOrderItems);
     }
@@ -53,14 +53,14 @@ public sealed class OrderToolExecutorUpsellHintTests
     [Fact]
     public async Task ExtraAfterDrink_DoesNotTriggerSideHint()
     {
-        var executor = NewExecutor();
+        OrderToolExecutor executor = NewExecutor();
         await executor.ExecuteAsync(
             "update_order", Args("add", "Cherry Limeade", "medium", 1, 2.89m), TestContext.Current.CancellationToken);
 
-        var result = await executor.ExecuteAsync(
+        ToolResult result = await executor.ExecuteAsync(
             "update_order", Args("add", "Flavor Add-In", "standard", 1, 0.3m), TestContext.Current.CancellationToken);
 
-        var text = result.ToText().ToLowerInvariant();
+        string text = result.ToText().ToLowerInvariant();
         Assert.DoesNotContain("complete their meal", text);
         Assert.Contains("add anything else", text);
     }
@@ -68,11 +68,11 @@ public sealed class OrderToolExecutorUpsellHintTests
     [Fact]
     public async Task RealSideInSharedExtrasCategory_StillTriggersSideHint()
     {
-        var executor = NewExecutor();
-        var result = await executor.ExecuteAsync(
+        OrderToolExecutor executor = NewExecutor();
+        ToolResult result = await executor.ExecuteAsync(
             "update_order", Args("add", "Cheese Tots", "medium", 1, 3.39m), TestContext.Current.CancellationToken);
 
-        var text = result.ToText().ToLowerInvariant();
+        string text = result.ToText().ToLowerInvariant();
         Assert.Contains("complete their meal", text);
     }
 }

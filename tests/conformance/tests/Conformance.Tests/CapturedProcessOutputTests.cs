@@ -5,7 +5,7 @@ using Xunit;
 namespace Conformance.Tests;
 
 /// <summary>
-/// Pure unit tests for <see cref="CapturedProcessOutput.CountUnhandledErrors"/> (PR #22 review
+/// Pure unit tests for <see cref="CapturedProcessOutput.CountUnhandledErrors()"/> (PR #22 review
 /// item N5) — drives a real short-lived Python process (the venv interpreter this suite already
 /// depends on, via -c) that prints known stderr content, so the test exercises the actual
 /// stdout/stderr capture wiring (<see cref="CapturedProcessOutput.Attach"/>,
@@ -22,7 +22,7 @@ public sealed class CapturedProcessOutputTests
         // read by independent async readers into one shared queue with no guaranteed cross-stream
         // interleave order, which would make the exact line order (and so the state machine's
         // count) non-deterministic. A single stream's own order is always preserved.
-        const string script =
+        const string Script =
             "import sys\n" +
             "print('ERROR:sonic-drive-in:boom', file=sys.stderr)\n" +
             "print('Traceback (most recent call last):', file=sys.stderr)\n" +
@@ -31,7 +31,7 @@ public sealed class CapturedProcessOutputTests
             "print('ERROR:asyncio:unrelated bare error with no traceback', file=sys.stderr)\n" +
             "print('a plain diagnostic line, not an error', file=sys.stderr)\n";
 
-        var count = await RunAndCountAsync(script);
+        int count = await RunAndCountAsync(Script);
 
         // Incident 1: the ERROR: line plus its attached Traceback/frame/summary lines (4 physical
         // lines, one incident). Incident 2: the bare ERROR: line with nothing attached. The plain
@@ -42,12 +42,12 @@ public sealed class CapturedProcessOutputTests
     [Fact]
     public async Task CountUnhandledErrors_is_zero_for_ordinary_stderr_output()
     {
-        const string script =
+        const string Script =
             "import sys\n" +
             "print('INFO:sonic-drive-in:server started', file=sys.stderr)\n" +
             "print('some ordinary diagnostic text', file=sys.stderr)\n";
 
-        Assert.Equal(0, await RunAndCountAsync(script));
+        Assert.Equal(0, await RunAndCountAsync(Script));
     }
 
     /// The exact two-incident stderr shape captured live from a real flaked run (a real browser
@@ -84,7 +84,7 @@ public sealed class CapturedProcessOutputTests
     [Fact]
     public async Task CountUnhandledErrors_filtered_overload_discards_the_known_benign_proactor_teardown_incident()
     {
-        var (raw, filtered) = await RunAndCountBothAsync(
+        (int raw, int filtered) = await RunAndCountBothAsync(
             ProactorTeardownScript, Scenarios.Browser.BrowserConformanceFixture.MatchesProactorTeardownIncident);
 
         Assert.Equal(2, raw);
@@ -94,15 +94,15 @@ public sealed class CapturedProcessOutputTests
     [Fact]
     public async Task CountUnhandledErrors_filtered_overload_still_counts_an_unrelated_real_error()
     {
-        const string script =
+        const string Script =
             "import sys\n" +
             "print('ERROR:sonic-drive-in:a genuine application bug', file=sys.stderr)\n" +
             "print('Traceback (most recent call last):', file=sys.stderr)\n" +
             "print('  File \"rtmt.py\", line 42, in handle', file=sys.stderr)\n" +
             "print(\"KeyError: 'oops'\", file=sys.stderr)\n";
 
-        var (raw, filtered) = await RunAndCountBothAsync(
-            script, Scenarios.Browser.BrowserConformanceFixture.MatchesProactorTeardownIncident);
+        (int raw, int filtered) = await RunAndCountBothAsync(
+            Script, Scenarios.Browser.BrowserConformanceFixture.MatchesProactorTeardownIncident);
 
         Assert.Equal(1, raw);
         Assert.Equal(1, filtered);
@@ -117,7 +117,7 @@ public sealed class CapturedProcessOutputTests
     [Fact]
     public async Task IsBenignProactorTeardownIncident_gate_discards_the_incident_when_isWindows_is_true()
     {
-        var (raw, filtered) = await RunAndCountBothAsync(
+        (int raw, int filtered) = await RunAndCountBothAsync(
             ProactorTeardownScript,
             lines => Scenarios.Browser.BrowserConformanceFixture.IsBenignProactorTeardownIncident(
                 lines, isWindows: true));
@@ -137,7 +137,7 @@ public sealed class CapturedProcessOutputTests
     [Fact]
     public async Task IsBenignProactorTeardownIncident_gate_discards_nothing_when_isWindows_is_false()
     {
-        var (raw, filtered) = await RunAndCountBothAsync(
+        (int raw, int filtered) = await RunAndCountBothAsync(
             ProactorTeardownScript,
             lines => Scenarios.Browser.BrowserConformanceFixture.IsBenignProactorTeardownIncident(
                 lines, isWindows: false));
@@ -149,8 +149,8 @@ public sealed class CapturedProcessOutputTests
     private static async Task<(int Raw, int Filtered)> RunAndCountBothAsync(
         string pythonScript, Func<IReadOnlyList<string>, bool> isBenignIncident)
     {
-        var repoRoot = RepoPaths.FindRepoRoot();
-        var pythonExe = RepoPaths.PythonExecutable(repoRoot);
+        string repoRoot = RepoPaths.FindRepoRoot();
+        string pythonExe = RepoPaths.PythonExecutable(repoRoot);
         var startInfo = new ProcessStartInfo(pythonExe)
         {
             RedirectStandardOutput = true,
@@ -187,11 +187,11 @@ public sealed class CapturedProcessOutputTests
     [Fact]
     public async Task CountUnhandledErrors_survives_the_dump_buffer_wrapping_around_it()
     {
-        const int linesAfterTheIncident = 4500; // comfortably past the 4000-line dump buffer cap
-        var script =
+        const int LinesAfterTheIncident = 4500; // comfortably past the 4000-line dump buffer cap
+        string script =
             "import sys\n" +
             "print('ERROR:sonic-drive-in:boom before the wrap', file=sys.stderr)\n" +
-            $"for i in range({linesAfterTheIncident}):\n" +
+            $"for i in range({LinesAfterTheIncident}):\n" +
             "    print(f'ordinary diagnostic line {i}', file=sys.stderr)\n";
 
         Assert.Equal(1, await RunAndCountAsync(script));
@@ -199,8 +199,8 @@ public sealed class CapturedProcessOutputTests
 
     private static async Task<int> RunAndCountAsync(string pythonScript)
     {
-        var repoRoot = RepoPaths.FindRepoRoot();
-        var pythonExe = RepoPaths.PythonExecutable(repoRoot);
+        string repoRoot = RepoPaths.FindRepoRoot();
+        string pythonExe = RepoPaths.PythonExecutable(repoRoot);
         var startInfo = new ProcessStartInfo(pythonExe)
         {
             RedirectStandardOutput = true,

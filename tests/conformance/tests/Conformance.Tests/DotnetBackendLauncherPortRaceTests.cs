@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using Conformance.Harness;
@@ -39,8 +40,8 @@ public sealed class DotnetBackendLauncherPortRaceTests
     // check config presence/format, never live reachability, so nothing needs to actually be
     // listening at these URIs for the launched backend to report healthy. Same pattern as
     // Scenarios/Auth/AuthModeLaunchTests.cs's own NeverDialedRealtime/NeverDialedSearch.
-    private static readonly Uri NeverDialedRealtime = new("http://127.0.0.1:1/");
-    private static readonly Uri NeverDialedSearch = new("http://127.0.0.1:1/");
+    private static readonly Uri s_neverDialedRealtime = new("http://127.0.0.1:1/");
+    private static readonly Uri s_neverDialedSearch = new("http://127.0.0.1:1/");
 
     /// <summary>
     /// Mutation check: revert the retry loop in <see cref="DotnetBackendLauncher.StartAsync"/>
@@ -52,14 +53,14 @@ public sealed class DotnetBackendLauncherPortRaceTests
     [Fact]
     public async Task StartAsync_recovers_when_the_assigned_port_is_already_bound_by_someone_else()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var occupiedPort = NetworkUtils.GetFreeTcpPort();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        int occupiedPort = NetworkUtils.GetFreeTcpPort();
 
         using var occupyingListener = new TcpListener(IPAddress.Loopback, occupiedPort);
         occupyingListener.Start();
         try
         {
-            var contract = BackendContract.ForPort(NeverDialedRealtime, NeverDialedSearch, occupiedPort);
+            var contract = BackendContract.ForPort(s_neverDialedRealtime, s_neverDialedSearch, occupiedPort);
 
             // #226 round 3 / #249 CI failure (run 37256187043): a bare DotnetBackendOptions() sets
             // no AUTH_MODE and DotnetBackendEnvironment.Build pins ASPNETCORE_ENVIRONMENT/
@@ -79,7 +80,7 @@ public sealed class DotnetBackendLauncherPortRaceTests
                 ExtraEnvironment = BackendProfiles.DevelopmentPassThrough.ExtraEnvironment,
             };
 
-            await using var backend = await DotnetBackendLauncher.StartAsync(
+            await using IBackendUnderTest backend = await DotnetBackendLauncher.StartAsync(
                 contract, options, ct);
 
             // The real backend can never have bound the port this test is still holding open --
@@ -88,7 +89,7 @@ public sealed class DotnetBackendLauncherPortRaceTests
             Assert.NotEqual(occupiedPort, backend.BaseUri.Port);
 
             using var http = new HttpClient();
-            using var response = await http.GetAsync(new Uri(backend.BaseUri, "/health"), ct);
+            using HttpResponseMessage response = await http.GetAsync(new Uri(backend.BaseUri, "/health"), ct);
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }
         finally
@@ -115,23 +116,24 @@ public sealed class DotnetBackendLauncherPortRaceTests
     [Fact]
     public async Task StartAsync_every_retry_requests_port_0_even_though_the_first_attempt_used_an_explicit_port()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var occupiedPort = NetworkUtils.GetFreeTcpPort();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        int occupiedPort = NetworkUtils.GetFreeTcpPort();
 
         using var occupyingListener = new TcpListener(IPAddress.Loopback, occupiedPort);
         occupyingListener.Start();
 
         var observedPorts = new List<string?>();
+        var observedPortsGate = new Lock();
         DotnetBackendLauncher.TestOnlyProcessStartInfoObserver = startInfo =>
         {
-            lock (observedPorts)
+            lock (observedPortsGate)
             {
-                observedPorts.Add(startInfo.Environment.TryGetValue("PORT", out var port) ? port : null);
+                observedPorts.Add(startInfo.Environment.TryGetValue("PORT", out string? port) ? port : null);
             }
         };
         try
         {
-            var contract = BackendContract.ForPort(NeverDialedRealtime, NeverDialedSearch, occupiedPort);
+            var contract = BackendContract.ForPort(s_neverDialedRealtime, s_neverDialedSearch, occupiedPort);
 
             // #226 round 4 / #267 CI failure: see the comment on the sibling test above
             // (StartAsync_recovers_when_the_assigned_port_is_already_bound_by_someone_else) --
@@ -142,7 +144,7 @@ public sealed class DotnetBackendLauncherPortRaceTests
                 ExtraEnvironment = BackendProfiles.DevelopmentPassThrough.ExtraEnvironment,
             };
 
-            await using var backend = await DotnetBackendLauncher.StartAsync(
+            await using IBackendUnderTest backend = await DotnetBackendLauncher.StartAsync(
                 contract, options, ct);
 
             Assert.True(
@@ -151,10 +153,10 @@ public sealed class DotnetBackendLauncherPortRaceTests
                 $"{observedPorts.Count} attempt(s): {string.Join(", ", observedPorts)}.");
 
             // First attempt: whatever the caller explicitly requested (the occupied port, here).
-            Assert.Equal(occupiedPort.ToString(), observedPorts[0]);
+            Assert.Equal(occupiedPort.ToString(CultureInfo.InvariantCulture), observedPorts[0]);
 
             // Every retry (everything after the first attempt) must always request port 0.
-            for (var i = 1; i < observedPorts.Count; i++)
+            for (int i = 1; i < observedPorts.Count; i++)
             {
                 Assert.Equal("0", observedPorts[i]);
             }

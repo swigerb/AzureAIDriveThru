@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Globalization;
 using System.Text.RegularExpressions;
 using YamlDotNet.Core;
@@ -21,7 +22,7 @@ internal sealed class PromptLoadException(string message) : Exception(message);
 /// full Jinja2-equivalent engine, since every real persona pack's templates (verified against
 /// the default pack) only ever use plain variable interpolation, never control flow.
 /// </summary>
-internal sealed class PromptLoader
+internal sealed partial class PromptLoader
 {
     // Plain (unquoted) scalars are typed per YAML's core schema -- `false` -> bool, `3` -> int --
     // exactly as PyYAML's safe_load does for the Python backend. Without this, tool_schemas.yaml's
@@ -62,7 +63,7 @@ internal sealed class PromptLoader
     public PromptLoader(string personasDir, string personaId)
     {
         PersonaId = personaId;
-        var promptsDir = Path.Combine(personasDir, personaId, "prompts");
+        string promptsDir = Path.Combine(personasDir, personaId, "prompts");
         if (!Directory.Exists(promptsDir))
         {
             throw new PromptLoadException(
@@ -70,16 +71,16 @@ internal sealed class PromptLoader
                 $"personas/{personaId}/prompts/ (PERSONAS_DIR={personasDir}).");
         }
 
-        var systemPromptData = LoadYaml(promptsDir, "system_prompt.yaml");
+        IReadOnlyDictionary<object, object> systemPromptData = LoadYaml(promptsDir, "system_prompt.yaml");
         SystemPrompt = AssembleSystemPrompt(systemPromptData);
 
-        var greetingData = LoadYaml(promptsDir, "greeting.yaml");
+        IReadOnlyDictionary<object, object> greetingData = LoadYaml(promptsDir, "greeting.yaml");
         Greeting = ValidateGreeting(greetingData);
 
-        var toolSchemasData = LoadYaml(promptsDir, "tool_schemas.yaml");
+        IReadOnlyDictionary<object, object> toolSchemasData = LoadYaml(promptsDir, "tool_schemas.yaml");
         ToolSchemas = ValidateToolSchemas(toolSchemasData);
 
-        var errorMessagesData = LoadYaml(promptsDir, "error_messages.yaml");
+        IReadOnlyDictionary<object, object> errorMessagesData = LoadYaml(promptsDir, "error_messages.yaml");
         ErrorMessages = (IReadOnlyDictionary<object, object>?)GetMapping(errorMessagesData, "messages")
             ?? new Dictionary<object, object>();
         ValidateErrorMessages(ErrorMessages);
@@ -92,7 +93,8 @@ internal sealed class PromptLoader
     // conditionals, filters, or loops -- so this single-pass token substitution is a byte-for-byte
     // behavioral match for Python's `_jinja_env.from_string(template_str).render(**kwargs)` for
     // every template that actually ships, without pulling in a full template-engine dependency.
-    private static readonly Regex TemplateToken = new(@"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}", RegexOptions.Compiled);
+    [GeneratedRegex(@"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")]
+    private static partial Regex TemplateTokenRegex();
 
     /// <summary>Renders error_messages.yaml's <paramref name="key"/> template with
     /// <paramref name="variables"/> substituted in for every <c>{{name}}</c> token. Mirrors
@@ -103,7 +105,7 @@ internal sealed class PromptLoader
     /// half-substituted string.</summary>
     public string RenderError(string key, IReadOnlyDictionary<string, object?>? variables = null)
     {
-        if (!ErrorMessages.TryGetValue(key, out var raw) || raw is not string template)
+        if (!ErrorMessages.TryGetValue(key, out object? raw) || raw is not string template)
         {
             return $"An error occurred ({key}).";
         }
@@ -117,17 +119,17 @@ internal sealed class PromptLoader
     /// throwing.</summary>
     public static string RenderTemplate(string template, IReadOnlyDictionary<string, object?>? variables = null)
     {
-        variables ??= new Dictionary<string, object?>();
-        var missing = TemplateToken.Matches(template)
+        variables ??= FrozenDictionary<string, object?>.Empty;
+        bool missing = TemplateTokenRegex().Matches(template)
             .Select(m => m.Groups[1].Value)
             .Any(name => !variables.ContainsKey(name));
         if (missing)
         {
             return template;
         }
-        return TemplateToken.Replace(template, m =>
+        return TemplateTokenRegex().Replace(template, m =>
         {
-            var value = variables[m.Groups[1].Value];
+            object? value = variables[m.Groups[1].Value];
             return value switch
             {
                 null => "",
@@ -143,7 +145,7 @@ internal sealed class PromptLoader
     /// prompt_loader.py's <c>get_delta_template</c>.</summary>
     public string GetDeltaTemplate(string action)
     {
-        var templates = GetHintsSection("delta_templates");
+        IDictionary<object, object> templates = GetHintsSection("delta_templates");
         return action switch
         {
             "add" => GetString(templates, "item_added",
@@ -164,23 +166,23 @@ internal sealed class PromptLoader
     /// the Python control flow rather than relying on that data-shape assumption.</summary>
     public string GetUpsellHint(string category)
     {
-        if (Hints.TryGetValue("upsell_hints", out var upsellRaw) && upsellRaw is IDictionary<object, object> upsellHints)
+        if (Hints.TryGetValue("upsell_hints", out object? upsellRaw) && upsellRaw is IDictionary<object, object> upsellHints)
         {
-            foreach (var entry in upsellHints)
+            foreach (KeyValuePair<object, object> entry in upsellHints)
             {
                 if (entry.Value is IDictionary<object, object> info &&
-                    info.TryGetValue("trigger_categories", out var triggersRaw) &&
+                    info.TryGetValue("trigger_categories", out object? triggersRaw) &&
                     triggersRaw is IEnumerable<object> triggers &&
                     triggers.Any(t => string.Equals(t?.ToString(), category, StringComparison.Ordinal)))
                 {
-                    return info.TryGetValue("hint", out var hint) && hint is string hintText
+                    return info.TryGetValue("hint", out object? hint) && hint is string hintText
                         ? $" ({hintText})"
                         : "";
                 }
             }
-            if (upsellHints.TryGetValue("generic", out var genericRaw) &&
+            if (upsellHints.TryGetValue("generic", out object? genericRaw) &&
                 genericRaw is IDictionary<object, object> genericInfo &&
-                genericInfo.TryGetValue("hint", out var genericHint) && genericHint is string genericText &&
+                genericInfo.TryGetValue("hint", out object? genericHint) && genericHint is string genericText &&
                 genericText.Length > 0)
             {
                 return $" ({genericText})";
@@ -190,16 +192,16 @@ internal sealed class PromptLoader
     }
 
     private IDictionary<object, object> GetHintsSection(string key) =>
-        Hints.TryGetValue(key, out var value) && value is IDictionary<object, object> mapping
+        Hints.TryGetValue(key, out object? value) && value is IDictionary<object, object> mapping
             ? mapping
             : new Dictionary<object, object>();
 
     private static string GetString(IDictionary<object, object> mapping, string key, string fallback) =>
-        mapping.TryGetValue(key, out var value) && value is string s ? s : fallback;
+        mapping.TryGetValue(key, out object? value) && value is string s ? s : fallback;
 
     private IReadOnlyDictionary<object, object> LoadYaml(string promptsDir, string fileName)
     {
-        var path = Path.Combine(promptsDir, fileName);
+        string path = Path.Combine(promptsDir, fileName);
         if (!File.Exists(path))
         {
             throw new PromptLoadException($"Prompt file not found: {fileName} (persona '{PersonaId}').");
@@ -226,18 +228,18 @@ internal sealed class PromptLoader
 
     private string AssembleSystemPrompt(IReadOnlyDictionary<object, object> data)
     {
-        if (!data.TryGetValue("sections", out var sectionsRaw) || sectionsRaw is not IEnumerable<object> sections)
+        if (!data.TryGetValue("sections", out object? sectionsRaw) || sectionsRaw is not IEnumerable<object> sections)
         {
             throw new PromptLoadException(
                 $"system_prompt.yaml must have a 'sections' list (persona '{PersonaId}').");
         }
 
-        var ordered = sections
+        IOrderedEnumerable<IDictionary<object, object>> ordered = sections
             .OfType<IDictionary<object, object>>()
-            .OrderBy(section => section.TryGetValue("priority", out var p) ? ParsePriority(p) : 999);
+            .OrderBy(section => section.TryGetValue("priority", out object? p) ? ParsePriority(p) : 999);
 
         var parts = ordered
-            .Select(section => section.TryGetValue("content", out var c) ? c?.ToString()?.Trim() : null)
+            .Select(section => section.TryGetValue("content", out object? c) ? c?.ToString()?.Trim() : null)
             .Where(content => !string.IsNullOrEmpty(content))
             .ToList();
 
@@ -257,31 +259,27 @@ internal sealed class PromptLoader
     private static int ParsePriority(object? value) => value switch
     {
         byte or sbyte or short or ushort or int or uint or long => Convert.ToInt32(value, CultureInfo.InvariantCulture),
-        string s when int.TryParse(s, out var parsed) => parsed,
+        string s when int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) => parsed,
         _ => 999,
     };
 
     private IReadOnlyDictionary<object, object> ValidateGreeting(IReadOnlyDictionary<object, object> data)
     {
-        var greeting = GetMapping(data, "greeting");
-        if (greeting is null)
-        {
-            throw new PromptLoadException($"greeting.yaml must have a 'greeting' key (persona '{PersonaId}').");
-        }
+        IDictionary<object, object> greeting = GetMapping(data, "greeting") ?? throw new PromptLoadException($"greeting.yaml must have a 'greeting' key (persona '{PersonaId}').");
         if (!greeting.ContainsKey("type"))
         {
             throw new PromptLoadException($"greeting must have a 'type' field (persona '{PersonaId}').");
         }
         if (greeting["type"] is "response.create")
         {
-            var response = greeting.TryGetValue("response", out var rawResponse)
+            IDictionary<object, object>? response = greeting.TryGetValue("response", out object? rawResponse)
                 ? rawResponse as IDictionary<object, object> : null;
             if (greeting.Count != 2 || response is null || response.Count != 4
-                || !response.TryGetValue("instructions", out var instructions)
+                || !response.TryGetValue("instructions", out object? instructions)
                 || instructions is not string text || string.IsNullOrWhiteSpace(text)
-                || !response.TryGetValue("input", out var input) || input is not IList<object> { Count: 0 }
-                || !response.TryGetValue("tools", out var tools) || tools is not IList<object> { Count: 0 }
-                || !response.TryGetValue("tool_choice", out var choice) || choice is not "none")
+                || !response.TryGetValue("input", out object? input) || input is not IList<object> { Count: 0 }
+                || !response.TryGetValue("tools", out object? tools) || tools is not IList<object> { Count: 0 }
+                || !response.TryGetValue("tool_choice", out object? choice) || choice is not "none")
             {
                 throw new PromptLoadException(
                     "response.create greeting requires nonempty instructions, empty input/tools and tool_choice none");
@@ -292,7 +290,7 @@ internal sealed class PromptLoader
 
     private List<IReadOnlyDictionary<object, object>> ValidateToolSchemas(IReadOnlyDictionary<object, object> data)
     {
-        if (!data.TryGetValue("tools", out var toolsRaw) || toolsRaw is not IEnumerable<object> toolsEnumerable)
+        if (!data.TryGetValue("tools", out object? toolsRaw) || toolsRaw is not IEnumerable<object> toolsEnumerable)
         {
             throw new PromptLoadException(
                 $"tool_schemas.yaml must have a non-empty 'tools' list (persona '{PersonaId}').");
@@ -305,7 +303,7 @@ internal sealed class PromptLoader
                 $"tool_schemas.yaml must have a non-empty 'tools' list (persona '{PersonaId}').");
         }
 
-        for (var i = 0; i < tools.Count; i++)
+        for (int i = 0; i < tools.Count; i++)
         {
             if (!tools[i].ContainsKey("name"))
             {
@@ -317,7 +315,7 @@ internal sealed class PromptLoader
             }
         }
 
-        return tools.Select(t => (IReadOnlyDictionary<object, object>)t).ToList();
+        return [.. tools.Select(t => (IReadOnlyDictionary<object, object>)t)];
     }
 
     /// <summary>#125 (fail-fast follow-up to #116): every key in RequiredErrorMessageKeys must be
@@ -335,5 +333,5 @@ internal sealed class PromptLoader
     }
 
     private static IDictionary<object, object>? GetMapping(IReadOnlyDictionary<object, object> data, string key) =>
-        data.TryGetValue(key, out var value) ? value as IDictionary<object, object> : null;
+        data.TryGetValue(key, out object? value) ? value as IDictionary<object, object> : null;
 }

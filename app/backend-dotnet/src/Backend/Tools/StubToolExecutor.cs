@@ -17,7 +17,7 @@ internal sealed class StubToolExecutor : IToolExecutor
 
     public StubToolExecutor(IEnumerable<string> toolNames)
     {
-        ToolNames = toolNames.Distinct().ToList();
+        ToolNames = [.. toolNames.Distinct()];
     }
 
     public Task<ToolResult> ExecuteAsync(string toolName, JsonElement args, CancellationToken ct = default)

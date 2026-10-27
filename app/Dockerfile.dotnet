@@ -7,9 +7,9 @@
 # relative); the build context is still the repo root, so no COPY paths change with the rename.
 #
 # Image tags pin the exact SDK/runtime band app/backend-dotnet/global.json requires
-# (11.0.100-rc.2.26504.105, rollForward: latestPatch) -- mcr.microsoft.com/dotnet/sdk publishes an
-# unsuffixed manifest list per feature band (11.0.100-rc.2) and mcr.microsoft.com/dotnet/aspnet
-# publishes one per patch version without the SDK's three-digit feature band (11.0.0-rc.2); both
+# (11.0.100-rc.3.26522.148, rollForward: latestPatch) -- mcr.microsoft.com/dotnet/sdk publishes an
+# unsuffixed manifest list per feature band (11.0.100-rc.3) and mcr.microsoft.com/dotnet/aspnet
+# publishes one per patch version without the SDK's three-digit feature band (11.0.0-rc.3); both
 # are the default (non-alpine, non-chiseled) Debian-based variant, required because
 # Directory.Build.props sets InvariantGlobalization=false (full ICU) and PublishAot=false
 # (Beth's charter: Azure SDK trimming warnings rule out Native AOT for now -- plain JIT publish;
@@ -54,7 +54,7 @@ RUN npm run build
 # ---------------------------------------------------------------------------
 # Stage 2: Restore and publish the .NET backend
 # ---------------------------------------------------------------------------
-FROM mcr.microsoft.com/dotnet/sdk:11.0.100-rc.2 AS dotnet-build-stage
+FROM mcr.microsoft.com/dotnet/sdk:11.0.100-rc.3 AS dotnet-build-stage
 
 WORKDIR /src
 
@@ -76,7 +76,12 @@ RUN --mount=type=secret,id=nuget_config,target=/root/.nuget/NuGet/NuGet.Config \
     dotnet restore app/backend-dotnet/src/Backend/Backend.csproj --locked-mode \
       --ignore-failed-sources -p:WarningsNotAsErrors=NU1801
 
-# Copy the remaining backend source (changes more often than deps) and publish.
+# Copy the remaining backend source (changes more often than deps) and publish. The .editorconfig
+# is a build input too: it carries the analyzer severities and style settings the warnings-as-
+# errors build enforces (CA2007 off, scoped CA1031/CA1849 settings, ...), so without it the
+# container's Release publish fails on diagnostics the dev/CI builds never see. It is copied after
+# the restore step so editing it does not invalidate the cached restore layer.
+COPY app/backend-dotnet/.editorconfig app/backend-dotnet/
 COPY app/backend-dotnet/src/Backend/ app/backend-dotnet/src/Backend/
 
 # Portable, framework-dependent publish (matches Directory.Build.props's PublishAot=false -- no
@@ -94,7 +99,7 @@ RUN dotnet publish app/backend-dotnet/src/Backend/Backend.csproj \
 # ---------------------------------------------------------------------------
 # Stage 3: Production ASP.NET Core runtime
 # ---------------------------------------------------------------------------
-FROM mcr.microsoft.com/dotnet/aspnet:11.0.0-rc.2 AS production-stage
+FROM mcr.microsoft.com/dotnet/aspnet:11.0.0-rc.3 AS production-stage
 
 WORKDIR /app
 
@@ -124,6 +129,11 @@ ENV HOST=0.0.0.0
 ENV PORT=8000
 
 EXPOSE 8000
+
+# Run as the non-root `app` user the .NET 8+ aspnet images provide ($APP_UID). The backend only
+# reads from /app (publish output, personas/, config.yaml, static/ -- all world-readable) and
+# listens on unprivileged port 8000, so it needs no root privileges.
+USER $APP_UID
 
 # No Docker-level HEALTHCHECK: the minimal aspnet runtime image ships no HTTP client tool (curl/
 # wget), and adding one just for this would mean an extra apt-get layer. Azure Container Apps'

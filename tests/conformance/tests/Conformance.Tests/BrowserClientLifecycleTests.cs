@@ -1,8 +1,9 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
-using Xunit;
+using Conformance.Fakes;
 using Conformance.Harness;
+using Xunit;
 
 namespace Conformance.Tests;
 
@@ -19,26 +20,26 @@ namespace Conformance.Tests;
 [Trait("Dotnet", "ready")]
 public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
     public Task Graceful_close_is_answered_by_the_backend_and_observed_via_WaitForCloseAsync() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
         await browser.SendStartSessionAsync(cancellationToken: ct);
 
         // Let the connection go fully live (greeting round trip complete) before tearing it down,
         // so the close we're observing is a real client-initiated close, not just an early abort
         // of a connection that never finished handshaking application-level state.
-        var greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        RecordedFrame? greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token", s_frameTimeout, ct);
         Assert.True(greetingRoundTrip is not null, "Greeting round trip never completed.");
 
         Assert.Null(browser.CloseStatus);
 
         await browser.CloseAsync(WebSocketCloseStatus.NormalClosure, "test requested close", ct);
-        await browser.WaitForCloseAsync(FrameTimeout, ct);
+        await browser.WaitForCloseAsync(s_frameTimeout, ct);
 
         // aiohttp's WebSocketResponse auto-answers an incoming close frame with a matching close
         // frame (autoclose, the default) — rtmt.py's from_client_to_server loop just breaks on
@@ -58,16 +59,16 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
     [Fact]
     public Task Graceful_close_observes_CloseStatus_reliably_across_50_connections() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         var failures = new List<string>();
 
-        for (var i = 0; i < 50; i++)
+        for (int i = 0; i < 50; i++)
         {
-            await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+            await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
             await browser.SendStartSessionAsync(cancellationToken: ct);
 
-            var greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
-                f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+            RecordedFrame? greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+                f => f.Type == "extension.round_trip_token", s_frameTimeout, ct);
             if (greetingRoundTrip is null)
             {
                 failures.Add($"iteration {i}: greeting round trip never completed.");
@@ -75,7 +76,7 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
             }
 
             await browser.CloseAsync(WebSocketCloseStatus.NormalClosure, "stress test close", ct);
-            await browser.WaitForCloseAsync(FrameTimeout, ct);
+            await browser.WaitForCloseAsync(s_frameTimeout, ct);
 
             if (browser.CloseStatus != WebSocketCloseStatus.NormalClosure)
             {
@@ -94,7 +95,7 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
     /// <see cref="RealtimeBrowserClient.WaitForCloseAsync"/>, as the two tests above do) always
     /// produced that same abrupt-drop signature, whether or not the scenario cared.
     /// <para/>
-    /// Deliberately does <em>not</em> run against the real backend (<see cref="fixture"/>): a real
+    /// Deliberately does <em>not</em> run against the real backend (<c>fixture</c>): a real
     /// backend answers a close near-instantly, which races the reader loop's own cancellation —
     /// mutation-testing this against it caught a reverted fix only 3-4 times out of 5 (confirmed
     /// while writing this test). <see cref="DelayedCloseFakeBackend"/> instead answers the client's
@@ -107,9 +108,9 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
     [Fact]
     public async Task Plain_disposal_defaults_to_a_graceful_close_not_an_abort()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         await using var fakeBackend = new DelayedCloseFakeBackend(closeReplyDelay: TimeSpan.FromMilliseconds(300));
-        var browser = await RealtimeBrowserClient.ConnectAsync(fakeBackend.BaseUri, cancellationToken: ct);
+        RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fakeBackend.BaseUri, cancellationToken: ct);
 
         await browser.DisposeAsync();
 
@@ -127,12 +128,12 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
     [Fact]
     public Task AbortAsync_still_reaches_the_aborted_socket_state() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
         await browser.SendStartSessionAsync(cancellationToken: ct);
 
-        var greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        RecordedFrame? greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token", s_frameTimeout, ct);
         Assert.True(greetingRoundTrip is not null, "Greeting round trip never completed.");
 
         await browser.AbortAsync();
@@ -209,9 +210,9 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
     [Fact]
     public async Task Explicit_close_does_not_throw_when_the_peer_aborts_first()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         await using var fakeBackend = new AbruptPeerFakeBackend(abortDelay: TimeSpan.Zero);
-        var browser = await RealtimeBrowserClient.ConnectAsync(fakeBackend.BaseUri, cancellationToken: ct);
+        RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fakeBackend.BaseUri, cancellationToken: ct);
 
         await browser.CloseAsync(cancellationToken: ct);
 
@@ -289,14 +290,14 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
     /// <summary>
     /// #28 flake hunt (post-#54-merge, run 16/25 on <c>ResumeRehydrationAndNudgeTests</c>):
     /// deterministic, zero-timing proof of the exact gap that failure exposed --
-    /// <see cref="AbortAsync"/> awaiting its reader task when that task's in-flight
+    /// <see cref="RealtimeBrowserClient.AbortAsync"/> awaiting its reader task when that task's in-flight
     /// <c>ReceiveAsync</c> observed the just-aborted socket as an <see cref="ObjectDisposedException"/>
     /// rather than the two shapes already handled (<see cref="OperationCanceledException"/>,
     /// <see cref="WebSocketException"/>). <see cref="ThrowingReceiveFakeSocket"/>'s
     /// <c>ReceiveAsync</c> throws synchronously on its very first call, so this needs no real
     /// abort race at all -- <see cref="RealtimeBrowserClient.StartReaderLoopForTesting"/> starts the
     /// same reader loop <see cref="RealtimeBrowserClient.ConnectAsync"/> would, and whichever
-    /// exception the fake throws is what the loop -- and then <see cref="AbortAsync"/>'s await of
+    /// exception the fake throws is what the loop -- and then <see cref="RealtimeBrowserClient.AbortAsync"/>'s await of
     /// it -- has to tolerate.
     ///
     /// Mutation-check: removing <c>WebSocketJson.ReceiveJsonOrCloseAsync</c>'s new
@@ -320,7 +321,7 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
 
     /// <summary>
     /// Companion to <see cref="AbortAsync_does_not_throw_when_the_reader_observes_a_disposed_socket"/>:
-    /// the first of the two shapes <see cref="AbortAsync"/> already handled before the ODE fix,
+    /// the first of the two shapes <see cref="RealtimeBrowserClient.AbortAsync"/> already handled before the ODE fix,
     /// exercised through the exact same deterministic seam so all three shapes are pinned the same
     /// way instead of only the new one having a test.
     /// </summary>
@@ -338,7 +339,7 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
 
     /// <summary>
     /// Companion to <see cref="AbortAsync_does_not_throw_when_the_reader_observes_a_disposed_socket"/>:
-    /// the second of the two shapes <see cref="AbortAsync"/> already handled before the ODE fix.
+    /// the second of the two shapes <see cref="RealtimeBrowserClient.AbortAsync"/> already handled before the ODE fix.
     /// </summary>
     [Fact]
     public async Task AbortAsync_does_not_throw_when_the_reader_observes_a_fault()
@@ -355,8 +356,8 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
     /// <summary>
     /// PR #52 CI follow-up (swigerb/SonicAIDriveThru#28 N10 aftermath, CI runs 36085091969):
     /// deterministic proof of the exact failure -- and exact fix -- for the resume scenarios'
-    /// keepalive loops (<see cref="ResumeRehydrationClientVisibilityTests"/>,
-    /// <see cref="WholeSessionLeakTests"/>). <see cref="AbruptPeerFakeBackend"/> reliably confirms
+    /// keepalive loops (<see cref="Scenarios.Security.ResumeRehydrationClientVisibilityTests"/>,
+    /// <see cref="Scenarios.Security.WholeSessionLeakTests"/>). <see cref="AbruptPeerFakeBackend"/> reliably confirms
     /// (see this test's own mutation-check below) that a send on a socket that has settled into
     /// <see cref="WebSocketState.Aborted"/> throws exactly a <see cref="WebSocketException"/> ("The
     /// WebSocket is in an invalid state ('Aborted') for this operation") -- the same exception type
@@ -364,12 +365,12 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
     /// and the type <see cref="Conformance.Harness.KeepAlive.RunAsync"/> now also catches alongside
     /// <see cref="OperationCanceledException"/>. This reproduces that class of failure without
     /// needing the real Python backend's idle-sweep timing to cooperate (which, per
-    /// <see cref="ResumeMarginRegressionTests"/>'s own doc comment, could not be forced reliably
+    /// <see cref="Scenarios.Security.ResumeMarginRegressionTests"/>'s own doc comment, could not be forced reliably
     /// via wall-clock delay on this machine for a *send* specifically, only for the *resume
     /// rejection* Fix A addresses).
     ///
-    /// Round 5 (Rick's PR #52 review, S2): this test, <see cref="ResumeRehydrationClientVisibilityTests"/>,
-    /// and <see cref="WholeSessionLeakTests"/> previously each had their own hand-copied keepalive
+    /// Round 5 (Rick's PR #52 review, S2): this test, <see cref="Scenarios.Security.ResumeRehydrationClientVisibilityTests"/>,
+    /// and <see cref="Scenarios.Security.WholeSessionLeakTests"/> previously each had their own hand-copied keepalive
     /// loop with its own <c>catch</c> clauses -- so this self-test's own copy passing proved
     /// nothing about whether either scenario's *separate* copy still had the fix applied. Now all
     /// three call the same <see cref="Conformance.Harness.KeepAlive.RunAsync"/> helper, so there is
@@ -377,21 +378,21 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
     ///
     /// Mutation-check: removing <c>KeepAlive.RunAsync</c>'s <c>catch (WebSocketException)</c> turns
     /// this test red with exactly the exception type above, AND turns
-    /// <see cref="ResumeRehydrationClientVisibilityTests"/>/<see cref="WholeSessionLeakTests"/> red
+    /// <see cref="Scenarios.Security.ResumeRehydrationClientVisibilityTests"/>/<see cref="Scenarios.Security.WholeSessionLeakTests"/> red
     /// too (their own idle-sweep-vs-nudge race depends on the same swallowed exception); restoring
     /// it turns all three green again. See the PR #52 CI follow-up report for the run log.
     /// </summary>
     [Fact]
     public async Task Keepalive_style_loop_survives_the_peer_aborting_mid_loop()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         await using var fakeBackend = new AbruptPeerFakeBackend(abortDelay: TimeSpan.FromMilliseconds(150));
-        var browser = await RealtimeBrowserClient.ConnectAsync(fakeBackend.BaseUri, cancellationToken: ct);
+        RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fakeBackend.BaseUri, cancellationToken: ct);
 
         // Mirrors the scenario files' own use of the shared helper: send on a fixed cadence for
         // long enough to run both before and after the fake's abort lands partway through (10
         // iterations at the old inline loop's 50ms cadence = ~500ms).
-        await using var keepAlive = KeepAlive.RunAsync(browser, TimeSpan.FromMilliseconds(50), ct);
+        await using KeepAliveLoop keepAlive = KeepAlive.RunAsync(browser, TimeSpan.FromMilliseconds(50), ct);
         await Task.Delay(TimeSpan.FromMilliseconds(500), ct);
         await keepAlive.StopAsync();
 
@@ -418,7 +419,7 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
 
             var probe = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
             probe.Start();
-            var port = ((IPEndPoint)probe.LocalEndpoint).Port;
+            int port = ((IPEndPoint)probe.LocalEndpoint).Port;
             probe.Stop();
 
             BaseUri = new Uri($"http://127.0.0.1:{port}/");
@@ -451,7 +452,7 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
         {
             if (context.Request.Url?.AbsolutePath == "/api/auth/session")
             {
-                var body = System.Text.Encoding.UTF8.GetBytes("""{"token":"fake-token"}""");
+                byte[] body = System.Text.Encoding.UTF8.GetBytes("""{"token":"fake-token"}""");
                 context.Response.ContentType = "application/json";
                 context.Response.ContentLength64 = body.Length;
                 await context.Response.OutputStream.WriteAsync(body, ct).ConfigureAwait(false);
@@ -461,14 +462,14 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
 
             if (context.Request.Url?.AbsolutePath == "/realtime")
             {
-                var wsContext = await context.AcceptWebSocketAsync(null).ConfigureAwait(false);
-                var socket = wsContext.WebSocket;
-                var buffer = new byte[4096];
+                HttpListenerWebSocketContext wsContext = await context.AcceptWebSocketAsync(null).ConfigureAwait(false);
+                WebSocket socket = wsContext.WebSocket;
+                byte[] buffer = new byte[4096];
                 try
                 {
                     while (true)
                     {
-                        var result = await socket.ReceiveAsync(buffer, ct).ConfigureAwait(false);
+                        WebSocketReceiveResult result = await socket.ReceiveAsync(buffer, ct).ConfigureAwait(false);
                         if (result.MessageType == WebSocketMessageType.Close)
                         {
                             // The whole point: answer only after a fixed delay, so the client's
@@ -504,6 +505,8 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
             {
                 // Best-effort teardown of the accept loop.
             }
+
+            _cts.Dispose();
         }
     }
 
@@ -532,7 +535,7 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
 
             var probe = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
             probe.Start();
-            var port = ((IPEndPoint)probe.LocalEndpoint).Port;
+            int port = ((IPEndPoint)probe.LocalEndpoint).Port;
             probe.Stop();
 
             BaseUri = new Uri($"http://127.0.0.1:{port}/");
@@ -565,7 +568,7 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
         {
             if (context.Request.Url?.AbsolutePath == "/api/auth/session")
             {
-                var body = System.Text.Encoding.UTF8.GetBytes("""{"token":"fake-token"}""");
+                byte[] body = System.Text.Encoding.UTF8.GetBytes("""{"token":"fake-token"}""");
                 context.Response.ContentType = "application/json";
                 context.Response.ContentLength64 = body.Length;
                 await context.Response.OutputStream.WriteAsync(body, ct).ConfigureAwait(false);
@@ -575,8 +578,8 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
 
             if (context.Request.Url?.AbsolutePath == "/realtime")
             {
-                var wsContext = await context.AcceptWebSocketAsync(null).ConfigureAwait(false);
-                var socket = wsContext.WebSocket;
+                HttpListenerWebSocketContext wsContext = await context.AcceptWebSocketAsync(null).ConfigureAwait(false);
+                WebSocket socket = wsContext.WebSocket;
 
                 // The whole point: disappear on our own schedule, regardless of anything the
                 // client sends or doesn't send -- an abrupt drop, not an answered close.
@@ -602,6 +605,8 @@ public sealed class BrowserClientLifecycleTests(ConformanceFixture fixture)
             {
                 // Best-effort teardown of the accept loop.
             }
+
+            _cts.Dispose();
         }
     }
 

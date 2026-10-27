@@ -39,7 +39,7 @@ public static class EnabledPersonaDiscovery
     /// <param name="enabledIdsOverride">Issue #16 round 2 (Rick's review, 2a): an explicit allow-list
     /// of persona ids to use INSTEAD OF "every folder with a persona.json", matching
     /// <c>persona_loader.PersonaCatalog.load()</c>'s own <c>PERSONAS</c> env-var allow-list
-    /// precedence (SearchIndexIngestor's <see cref="SearchIndexIngestor.PersonaCatalogEnvResolver"/>
+    /// precedence (SearchIndexIngestor's <c>PersonaCatalogEnvResolver</c>
     /// resolves <c>PERSONAS</c> into this list before calling here). <c>null</c>/empty (the
     /// default, and SearchIndexRequestBuilder's only caller, which has no <c>PERSONAS</c>-allow-list
     /// concept of its own) means "every enabled persona", matching this method's original
@@ -50,11 +50,11 @@ public static class EnabledPersonaDiscovery
     /// sorted by id regardless of the requested ids' own order, matching
     /// <c>PersonaCatalog.ids</c>'s own <c>sorted(self._personas.keys())</c> (the requested ids'
     /// order only matters for <c>--persona</c>, handled entirely by
-    /// <see cref="SearchIndexIngestor.PersonaTargeting"/>, a separate, later step).</param>
+    /// SearchIndexIngestor's <c>PersonaTargeting</c>, a separate, later step).</param>
     public static IReadOnlyList<DiscoveredPersona> DiscoverAll(
         string repoRoot, string? personasDirOverride = null, IReadOnlyList<string>? enabledIdsOverride = null)
     {
-        var personasDir = string.IsNullOrEmpty(personasDirOverride)
+        string personasDir = string.IsNullOrEmpty(personasDirOverride)
             ? Path.Combine(repoRoot, "personas")
             : personasDirOverride;
         if (!Directory.Exists(personasDir))
@@ -83,16 +83,15 @@ public static class EnabledPersonaDiscovery
                     $"{Path.Combine(personasDir, missing[0], "persona.json")} does not exist.");
             }
 
-            personaIds = enabledIdsOverride.Distinct(StringComparer.Ordinal).OrderBy(id => id, StringComparer.Ordinal).ToList();
+            personaIds = [.. enabledIdsOverride.Distinct(StringComparer.Ordinal).OrderBy(id => id, StringComparer.Ordinal)];
         }
         else
         {
-            personaIds = Directory.GetDirectories(personasDir)
+            personaIds = [.. Directory.GetDirectories(personasDir)
                 .Select(Path.GetFileName)
                 .Where(id => id is not null && File.Exists(Path.Combine(personasDir, id, "persona.json")))
                 .Select(id => id!)
-                .OrderBy(id => id, StringComparer.Ordinal)
-                .ToList();
+                .OrderBy(id => id, StringComparer.Ordinal)];
         }
 
         if (personaIds.Count == 0)
@@ -102,24 +101,24 @@ public static class EnabledPersonaDiscovery
                 "folder with a persona.json.");
         }
 
-        return personaIds.Select(id => Discover(personasDir, id)).ToList();
+        return [.. personaIds.Select(id => Discover(personasDir, id))];
     }
 
     private static DiscoveredPersona Discover(string personasDir, string personaId)
     {
-        var personaDir = Path.Combine(personasDir, personaId);
-        var manifestPath = Path.Combine(personaDir, "persona.json");
+        string personaDir = Path.Combine(personasDir, personaId);
+        string manifestPath = Path.Combine(personaDir, "persona.json");
         using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
 
-        if (!document.RootElement.TryGetProperty("search", out var search) ||
-            !search.TryGetProperty("indexName", out var indexNameElement) ||
+        if (!document.RootElement.TryGetProperty("search", out JsonElement search) ||
+            !search.TryGetProperty("indexName", out JsonElement indexNameElement) ||
             indexNameElement.GetString() is not { Length: > 0 } indexName)
         {
             throw new InvalidOperationException(
                 $"Persona '{personaId}': '{manifestPath}' has no string search.indexName.");
         }
 
-        var menuPath = Path.Combine(personaDir, "menu", "menuItems.json");
+        string menuPath = Path.Combine(personaDir, "menu", "menuItems.json");
         return new DiscoveredPersona(personaId, indexName, menuPath);
     }
 }

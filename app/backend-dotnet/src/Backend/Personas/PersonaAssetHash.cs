@@ -14,8 +14,8 @@ internal static class PersonaAssetHash
 {
     public static string ComputeHash(string filePath)
     {
-        using var stream = File.OpenRead(filePath);
-        var hash = SHA256.HashData(stream);
+        using FileStream stream = File.OpenRead(filePath);
+        byte[] hash = SHA256.HashData(stream);
         return Convert.ToHexStringLower(hash)[..16];
     }
 }

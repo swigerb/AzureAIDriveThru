@@ -37,7 +37,7 @@ public sealed class DotnetPlaceholderPolicyTests
     [Fact]
     public void BuildException_returns_NotImplemented_type_when_skip_is_allowed()
     {
-        var ex = DotnetPlaceholderPolicy.BuildException("1", isCi: false);
+        Exception ex = DotnetPlaceholderPolicy.BuildException("1", isCi: false);
 
         Assert.IsType<ConformanceBackendNotImplementedException>(ex);
         Assert.Contains("Skipping", ex.Message);
@@ -47,7 +47,7 @@ public sealed class DotnetPlaceholderPolicyTests
     [Fact]
     public void BuildException_returns_Unavailable_type_by_default_with_no_opt_in()
     {
-        var ex = DotnetPlaceholderPolicy.BuildException(null, isCi: false);
+        Exception ex = DotnetPlaceholderPolicy.BuildException(null, isCi: false);
 
         Assert.IsType<ConformanceBackendUnavailableException>(ex);
         Assert.Contains("FAILS the suite", ex.Message);
@@ -56,7 +56,7 @@ public sealed class DotnetPlaceholderPolicyTests
     [Fact]
     public void BuildException_returns_Unavailable_type_in_CI_even_with_the_opt_in_set()
     {
-        var ex = DotnetPlaceholderPolicy.BuildException("1", isCi: true);
+        Exception ex = DotnetPlaceholderPolicy.BuildException("1", isCi: true);
 
         Assert.IsType<ConformanceBackendUnavailableException>(ex);
     }

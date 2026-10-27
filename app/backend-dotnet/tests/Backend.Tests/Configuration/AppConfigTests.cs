@@ -12,7 +12,7 @@ public sealed class AppConfigTests
     {
         var config = AppConfig.Load();
 
-        foreach (var section in AppConfig.RequiredTopLevelSections)
+        foreach (string section in AppConfig.RequiredTopLevelSections)
         {
             Assert.True(config.Root.ContainsKey(section), $"Expected section '{section}' to be present.");
         }
@@ -21,16 +21,16 @@ public sealed class AppConfigTests
     [Fact]
     public void MissingFile_Throws()
     {
-        var missingPath = Path.Combine(Path.GetTempPath(), "beth-config-missing-" + Guid.NewGuid().ToString("n") + ".yaml");
+        string missingPath = Path.Combine(Path.GetTempPath(), "beth-config-missing-" + Guid.NewGuid().ToString("n") + ".yaml");
 
-        var exc = Assert.Throws<ConfigValidationException>(() => AppConfig.Load(missingPath));
+        ConfigValidationException exc = Assert.Throws<ConfigValidationException>(() => AppConfig.Load(missingPath));
         Assert.Contains(missingPath, exc.Message);
     }
 
     [Fact]
     public void MalformedYaml_Throws()
     {
-        var path = WriteTempYaml("model: [unterminated");
+        string path = WriteTempYaml("model: [unterminated");
 
         Assert.Throws<ConfigValidationException>(() => AppConfig.Load(path));
     }
@@ -38,18 +38,18 @@ public sealed class AppConfigTests
     [Fact]
     public void NonMappingYaml_Throws()
     {
-        var path = WriteTempYaml("- just\n- a\n- list\n");
+        string path = WriteTempYaml("- just\n- a\n- list\n");
 
-        var exc = Assert.Throws<ConfigValidationException>(() => AppConfig.Load(path));
+        ConfigValidationException exc = Assert.Throws<ConfigValidationException>(() => AppConfig.Load(path));
         Assert.Contains("must be a YAML mapping", exc.Message);
     }
 
     [Fact]
     public void MissingRequiredSection_Throws()
     {
-        var path = WriteTempYaml("model:\n  foo: bar\n");
+        string path = WriteTempYaml("model:\n  foo: bar\n");
 
-        var exc = Assert.Throws<ConfigValidationException>(() => AppConfig.Load(path));
+        ConfigValidationException exc = Assert.Throws<ConfigValidationException>(() => AppConfig.Load(path));
         Assert.Contains("business_rules", exc.Message);
     }
 
@@ -63,7 +63,7 @@ public sealed class AppConfigTests
 
     private static string WriteTempYaml(string content)
     {
-        var path = Path.Combine(Path.GetTempPath(), "beth-config-" + Guid.NewGuid().ToString("n") + ".yaml");
+        string path = Path.Combine(Path.GetTempPath(), "beth-config-" + Guid.NewGuid().ToString("n") + ".yaml");
         File.WriteAllText(path, content);
         return path;
     }

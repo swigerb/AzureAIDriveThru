@@ -7,19 +7,19 @@ namespace SearchIndexIngestor.Tests;
 /// </summary>
 public sealed class PersonaCatalogEnvResolverTests
 {
-    private static readonly IReadOnlyDictionary<string, string> EmptyAzd = new Dictionary<string, string>();
+    private static readonly IReadOnlyDictionary<string, string> s_emptyAzd = new Dictionary<string, string>();
 
     [Fact]
     public void ResolvePersonasDir_ReturnsNull_WhenNothingIsSet()
     {
-        Assert.Null(PersonaCatalogEnvResolver.ResolvePersonasDir(null, _ => null, EmptyAzd));
+        Assert.Null(PersonaCatalogEnvResolver.ResolvePersonasDir(null, _ => null, s_emptyAzd));
     }
 
     [Fact]
     public void ResolvePersonasDir_UsesEnvironmentVariable_WhenSet()
     {
-        var dir = PersonaCatalogEnvResolver.ResolvePersonasDir(
-            null, name => name == "PERSONAS_DIR" ? "/env/personas" : null, EmptyAzd);
+        string? dir = PersonaCatalogEnvResolver.ResolvePersonasDir(
+            null, name => name == "PERSONAS_DIR" ? "/env/personas" : null, s_emptyAzd);
         Assert.Equal("/env/personas", dir);
     }
 
@@ -27,7 +27,7 @@ public sealed class PersonaCatalogEnvResolverTests
     public void ResolvePersonasDir_AzdEnvValue_BeatsEnvironmentVariable()
     {
         var azd = new Dictionary<string, string> { ["PERSONAS_DIR"] = "/azd/personas" };
-        var dir = PersonaCatalogEnvResolver.ResolvePersonasDir(
+        string? dir = PersonaCatalogEnvResolver.ResolvePersonasDir(
             null, name => name == "PERSONAS_DIR" ? "/env/personas" : null, azd);
         Assert.Equal("/azd/personas", dir);
     }
@@ -36,7 +36,7 @@ public sealed class PersonaCatalogEnvResolverTests
     public void ResolvePersonasDir_Flag_BeatsBothAzdAndEnvironmentVariable()
     {
         var azd = new Dictionary<string, string> { ["PERSONAS_DIR"] = "/azd/personas" };
-        var dir = PersonaCatalogEnvResolver.ResolvePersonasDir(
+        string? dir = PersonaCatalogEnvResolver.ResolvePersonasDir(
             "/flag/personas", name => name == "PERSONAS_DIR" ? "/env/personas" : null, azd);
         Assert.Equal("/flag/personas", dir);
     }
@@ -48,7 +48,7 @@ public sealed class PersonaCatalogEnvResolverTests
         // an azd setting present but blank is treated the same as absent, not as "override with
         // empty string".
         var azd = new Dictionary<string, string> { ["PERSONAS_DIR"] = "" };
-        var dir = PersonaCatalogEnvResolver.ResolvePersonasDir(
+        string? dir = PersonaCatalogEnvResolver.ResolvePersonasDir(
             null, name => name == "PERSONAS_DIR" ? "/env/personas" : null, azd);
         Assert.Equal("/env/personas", dir);
     }
@@ -56,20 +56,20 @@ public sealed class PersonaCatalogEnvResolverTests
     [Fact]
     public void ResolveEnabledIds_ReturnsNull_WhenNothingIsSet()
     {
-        Assert.Null(PersonaCatalogEnvResolver.ResolveEnabledIds(_ => null, EmptyAzd));
+        Assert.Null(PersonaCatalogEnvResolver.ResolveEnabledIds(_ => null, s_emptyAzd));
     }
 
     [Fact]
     public void ResolveEnabledIds_ReturnsNull_WhenEnvironmentVariableIsEmpty()
     {
-        Assert.Null(PersonaCatalogEnvResolver.ResolveEnabledIds(name => name == "PERSONAS" ? "" : null, EmptyAzd));
+        Assert.Null(PersonaCatalogEnvResolver.ResolveEnabledIds(name => name == "PERSONAS" ? "" : null, s_emptyAzd));
     }
 
     [Fact]
     public void ResolveEnabledIds_SplitsTrimsAndDropsEmptyEntries()
     {
-        var ids = PersonaCatalogEnvResolver.ResolveEnabledIds(
-            name => name == "PERSONAS" ? " alpha, bravo ,, mike " : null, EmptyAzd);
+        IReadOnlyList<string>? ids = PersonaCatalogEnvResolver.ResolveEnabledIds(
+            name => name == "PERSONAS" ? " alpha, bravo ,, mike " : null, s_emptyAzd);
         Assert.Equal(["alpha", "bravo", "mike"], ids);
     }
 
@@ -77,7 +77,7 @@ public sealed class PersonaCatalogEnvResolverTests
     public void ResolveEnabledIds_AzdEnvValue_BeatsEnvironmentVariable()
     {
         var azd = new Dictionary<string, string> { ["PERSONAS"] = "mike" };
-        var ids = PersonaCatalogEnvResolver.ResolveEnabledIds(name => name == "PERSONAS" ? "alpha" : null, azd);
+        IReadOnlyList<string>? ids = PersonaCatalogEnvResolver.ResolveEnabledIds(name => name == "PERSONAS" ? "alpha" : null, azd);
         Assert.Equal(["mike"], ids);
     }
 
@@ -85,7 +85,7 @@ public sealed class PersonaCatalogEnvResolverTests
     public void ResolveEnabledIds_IgnoresAnEmptyAzdValue_FallingBackToTheEnvironmentVariable()
     {
         var azd = new Dictionary<string, string> { ["PERSONAS"] = "" };
-        var ids = PersonaCatalogEnvResolver.ResolveEnabledIds(name => name == "PERSONAS" ? "alpha" : null, azd);
+        IReadOnlyList<string>? ids = PersonaCatalogEnvResolver.ResolveEnabledIds(name => name == "PERSONAS" ? "alpha" : null, azd);
         Assert.Equal(["alpha"], ids);
     }
 }

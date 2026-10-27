@@ -2,7 +2,6 @@ using Backend.Configuration;
 using Backend.Personas;
 using Backend.Prompts;
 using Backend.Realtime;
-using Backend.Shared;
 using Backend.Tools;
 
 namespace Backend.Sessions;

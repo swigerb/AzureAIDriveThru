@@ -1,11 +1,10 @@
-using System.Net.WebSockets;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Backend.Cascade;
-using Backend.Prompts;
 using Backend.Realtime;
+using Backend.Shared;
 using Backend.Tools;
-using Microsoft.Extensions.Logging;
 
 namespace Backend.Sessions;
 
@@ -24,7 +23,7 @@ internal sealed class CascadeToolCallDispatcher(
     {
         if (context.Diagnostic is { } diagnostic && diagnostic.SessionId != context.SessionId)
         {
-            context.Logger.LogWarning("Synthetic cascade diagnostics disabled: session binding changed.");
+            context.Logger.CascadeDiagnosticsDisabledSessionBindingChanged();
             context.Diagnostic = null;
         }
         return await CascadeRateLimit.WithRetryAsync(
@@ -35,13 +34,15 @@ internal sealed class CascadeToolCallDispatcher(
             context.TimeProvider).ConfigureAwait(false);
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Tool boundary: any tool or argument-parse failure is logged and becomes a synthetic tool message plus a ticket refresh so the turn still completes; barge-in cancellation is rethrown by the clause above.")]
     private async Task ExecuteToolCallAsync(JsonObject toolCall, string previousItemId, CancellationToken turnCt)
     {
-        var callId = CascadeProcessor.GetString(toolCall, "id") ?? "";
-        var name = CascadeProcessor.GetString(toolCall["function"] as JsonObject, "name") ?? "";
+        string callId = CascadeProcessor.GetString(toolCall, "id") ?? "";
+        string name = CascadeProcessor.GetString(toolCall["function"] as JsonObject, "name") ?? "";
         if (!context.ToolExecutor.ToolNames.Contains(name))
         {
-            context.Logger.CascadeUnknownTool(name, context.SessionId);
+            context.Logger.CascadeUnknownTool(LogSanitizer.Sanitize(name), context.SessionId);
             context.State.Messages.Add(CascadeChatMessage.Tool("", callId));
             return;
         }
@@ -56,18 +57,18 @@ internal sealed class CascadeToolCallDispatcher(
             // back as `"arguments": ""`, not an omitted field -- `?? "{}"` alone only covers
             // the missing-field case and would otherwise send "" into JsonDocument.Parse,
             // throwing and routing a legitimate no-arg call into the generic error branch below).
-            var rawArguments = CascadeProcessor.GetString(toolCall["function"] as JsonObject, "arguments");
-            var argumentsJson = string.IsNullOrEmpty(rawArguments) ? "{}" : rawArguments;
+            string? rawArguments = CascadeProcessor.GetString(toolCall["function"] as JsonObject, "arguments");
+            string argumentsJson = string.IsNullOrEmpty(rawArguments) ? "{}" : rawArguments;
             using var argumentsDoc = JsonDocument.Parse(argumentsJson);
             context.Logger.CascadeExecutingTool(name, context.SessionId);
-            var result = await context.ToolExecutor.ExecuteAsync(name, argumentsDoc.RootElement.Clone(), turnCt).ConfigureAwait(false);
+            ToolResult result = await context.ToolExecutor.ExecuteAsync(name, argumentsDoc.RootElement.Clone(), turnCt).ConfigureAwait(false);
             context.Logger.CascadeToolResultDirection(name, result.Destination, context.SessionId);
 
             // Issue #13 tail: track tool call args + result in the context window, mirroring
             // cascade_processor.py's own ctx_monitor.add_content(tool_call.function.arguments
             // or "") / ctx_monitor.add_content(result.to_text()) right after logging the
             // result.
-            var ctxMonitorForTool = context.SessionManager?.GetContextMonitor(context.SessionId);
+            ContextMonitor? ctxMonitorForTool = context.SessionManager?.GetContextMonitor(context.SessionId);
             if (ctxMonitorForTool is not null)
             {
                 ctxMonitorForTool.AddContent(argumentsJson);
@@ -126,6 +127,8 @@ internal sealed class CascadeToolCallDispatcher(
         }
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Best-effort ticket read through IOrderTicketSource, whose implementations can fail in any way; the failure is logged and the refresh is skipped.")]
     private async Task RefreshTicketAsync(string previousItemId, CancellationToken turnCt)
     {
         if (context.ToolExecutor is not IOrderTicketSource ticketSource)
@@ -155,23 +158,22 @@ internal sealed class CascadeToolCallDispatcher(
 
     public async Task<string> RunChatToolLoopAsync(CancellationToken turnCt)
     {
-        for (var round = 0; round < CascadeProcessor.MaxToolRounds; round++)
+        for (int round = 0; round < CascadeProcessor.MaxToolRounds; round++)
         {
-            var message = await CallChatCompletionAsync(turnCt).ConfigureAwait(false);
-            var toolCalls = message["tool_calls"] as JsonArray;
-            if (toolCalls is null || toolCalls.Count == 0)
+            JsonObject message = await CallChatCompletionAsync(turnCt).ConfigureAwait(false);
+            if (message["tool_calls"] is not JsonArray toolCalls || toolCalls.Count == 0)
             {
-                var content = CascadeProcessor.GetString(message, "content") ?? "";
+                string content = CascadeProcessor.GetString(message, "content") ?? "";
                 context.State.Messages.Add(CascadeChatMessage.Assistant(content));
                 return content;
             }
 
-            var preRoundCount = context.State.Messages.Count;
+            int preRoundCount = context.State.Messages.Count;
             context.State.Messages.Add((JsonObject)message.DeepClone());
-            var previousItemId = MiddleTierItemIds.NewId();
+            string previousItemId = MiddleTierItemIds.NewId();
             try
             {
-                foreach (var toolCallNode in toolCalls)
+                foreach (JsonNode? toolCallNode in toolCalls)
                 {
                     if (toolCallNode is JsonObject toolCall)
                     {
@@ -210,12 +212,18 @@ internal sealed class CascadeToolCallDispatcher(
             .Where(message => message["role"]?.GetValue<string>() == "system")
             .Select(message => (JsonObject)message.DeepClone()).ToList();
         messages.Add(CascadeChatMessage.System(instructions));
-        var message = await CallChatCompletionAsync(turnCt, messages, disableTools: true).ConfigureAwait(false);
+        JsonObject message = await CallChatCompletionAsync(turnCt, messages, disableTools: true).ConfigureAwait(false);
         if (message["tool_calls"] is JsonArray { Count: > 0 })
+        {
             throw new InvalidOperationException("Greeting completion returned tool calls with tools disabled");
-        var content = CascadeProcessor.GetString(message, "content") ?? "";
+        }
+
+        string content = CascadeProcessor.GetString(message, "content") ?? "";
         if (!string.IsNullOrWhiteSpace(content))
+        {
             context.State.Messages.Add(CascadeChatMessage.Assistant(content));
+        }
+
         return content;
     }
 }

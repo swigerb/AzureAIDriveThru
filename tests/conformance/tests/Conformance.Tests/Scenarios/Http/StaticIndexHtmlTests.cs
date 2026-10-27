@@ -20,15 +20,15 @@ public sealed class StaticIndexHtmlTests(ConformanceFixture fixture)
     [Fact]
     public Task Root_route_serves_index_html_with_cache_control_no_cache() => fixture.RunAsync(async () =>
     {
-        using var http = ConformanceHttpClient.Create();
-        using var response = await http.GetAsync(fixture.Backend!.BaseUri, TestContext.Current.CancellationToken);
+        using HttpClient http = ConformanceHttpClient.Create();
+        using HttpResponseMessage response = await http.GetAsync(fixture.Backend!.BaseUri, TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.True(response.Headers.CacheControl?.NoCache,
             $"Expected Cache-Control: no-cache on the index route, got '{response.Headers.CacheControl}'.");
         Assert.Contains("text/html", response.Content.Headers.ContentType?.MediaType ?? "", StringComparison.OrdinalIgnoreCase);
 
-        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        string body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         Assert.False(string.IsNullOrWhiteSpace(body), "Expected a non-empty index.html body.");
     });
 }

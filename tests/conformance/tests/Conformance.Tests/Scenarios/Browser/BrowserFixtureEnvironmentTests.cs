@@ -23,19 +23,19 @@ namespace Conformance.Tests.Scenarios.Browser;
 [Trait("Dotnet", "ready")]
 public sealed class BrowserFixtureEnvironmentTests
 {
-    private static readonly Type FixtureType =
+    private static readonly Type s_fixtureType =
         typeof(BrowserConformanceFixture).GetNestedType(
             "BrowserTimersBackendFixture", BindingFlags.NonPublic)
         ?? throw new InvalidOperationException(
             "BrowserConformanceFixture.BrowserTimersBackendFixture not found by reflection.");
 
     private static object CreateFixture() =>
-        Activator.CreateInstance(FixtureType, nonPublic: true)
+        Activator.CreateInstance(s_fixtureType, nonPublic: true)
             ?? throw new InvalidOperationException("Could not construct BrowserTimersBackendFixture.");
 
     private static T GetProtectedProperty<T>(object instance, string name)
     {
-        var property = typeof(ConformanceFixture).GetProperty(
+        PropertyInfo property = typeof(ConformanceFixture).GetProperty(
             name, BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new InvalidOperationException($"ConformanceFixture.{name} not found by reflection.");
         return (T)property.GetValue(instance)!;
@@ -44,7 +44,7 @@ public sealed class BrowserFixtureEnvironmentTests
     [Fact]
     public void Browser_fixture_disables_entra_mode()
     {
-        var useEntraMode = GetProtectedProperty<bool>(CreateFixture(), "UseEntraMode");
+        bool useEntraMode = GetProtectedProperty<bool>(CreateFixture(), "UseEntraMode");
 
         Assert.False(useEntraMode);
     }
@@ -52,7 +52,7 @@ public sealed class BrowserFixtureEnvironmentTests
     [Fact]
     public void Browser_fixture_profile_has_no_auth_mode_or_entra_keys()
     {
-        var profile = GetProtectedProperty<BackendProfile>(CreateFixture(), "Profile");
+        BackendProfile profile = GetProtectedProperty<BackendProfile>(CreateFixture(), "Profile");
 
         Assert.DoesNotContain("AUTH_MODE", profile.ExtraEnvironment.Keys);
         Assert.DoesNotContain(profile.ExtraEnvironment.Keys, key => key.StartsWith("ENTRA_", StringComparison.Ordinal));
@@ -61,7 +61,7 @@ public sealed class BrowserFixtureEnvironmentTests
     [Fact]
     public void Browser_fixture_profile_is_not_production_on_either_launcher()
     {
-        var profile = GetProtectedProperty<BackendProfile>(CreateFixture(), "Profile");
+        BackendProfile profile = GetProtectedProperty<BackendProfile>(CreateFixture(), "Profile");
 
         Assert.Equal("false", profile.ExtraEnvironment["RUNNING_IN_PRODUCTION"]);
         Assert.Equal("Development", profile.ExtraEnvironment["ASPNETCORE_ENVIRONMENT"]);
@@ -74,9 +74,9 @@ public sealed class BrowserFixtureEnvironmentTests
         // Not Production shouldn't come at the cost of the real-browser timer headroom
         // BackendProfiles.BrowserTimers exists for, every one of its keys/values must still be
         // present unchanged.
-        var profile = GetProtectedProperty<BackendProfile>(CreateFixture(), "Profile");
+        BackendProfile profile = GetProtectedProperty<BackendProfile>(CreateFixture(), "Profile");
 
-        foreach (var (key, value) in BackendProfiles.BrowserTimers.ExtraEnvironment)
+        foreach ((string? key, string? value) in BackendProfiles.BrowserTimers.ExtraEnvironment)
         {
             Assert.Equal(value, profile.ExtraEnvironment[key]);
         }

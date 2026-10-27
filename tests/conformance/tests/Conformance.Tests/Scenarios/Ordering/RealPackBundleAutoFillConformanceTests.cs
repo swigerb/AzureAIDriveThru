@@ -1,4 +1,3 @@
-using System.Linq;
 using System.Text.Json;
 using Conformance.Harness;
 using Xunit;
@@ -58,35 +57,35 @@ public static class PersonaBundleAutoFillMenuData
 
     public static BundleAutoFillCase? Discover(string personasDir, string personaId)
     {
-        var items = ReadMenuItems(personasDir, personaId);
-        var downMachines = CurrentlyDownMachines(personasDir, personaId);
-        var hasDayparts = PersonaDaypartsFeature.Read(personasDir, personaId);
+        List<CandidateItem> items = ReadMenuItems(personasDir, personaId);
+        HashSet<string> downMachines = CurrentlyDownMachines(personasDir, personaId);
+        bool hasDayparts = PersonaDaypartsFeature.Read(personasDir, personaId);
 
-        foreach (var bundle in items.Where(i => i.AutoFillTemplates.Count > 0 && i.BundleSlots.Count > 0))
+        foreach (CandidateItem? bundle in items.Where(i => i.AutoFillTemplates.Count > 0 && i.BundleSlots.Count > 0))
         {
             if (string.IsNullOrWhiteSpace(bundle.BundleDefaultSize))
             {
                 continue;
             }
 
-            var defaultSize = bundle.Sizes.FirstOrDefault(s =>
+            (string Size, decimal Price) defaultSize = bundle.Sizes.FirstOrDefault(s =>
                 string.Equals(s.Size, bundle.BundleDefaultSize, StringComparison.Ordinal));
             if (string.IsNullOrWhiteSpace(defaultSize.Size))
             {
                 continue;
             }
 
-            var explicitSize = bundle.Sizes.FirstOrDefault(s =>
+            (string Size, decimal Price) explicitSize = bundle.Sizes.FirstOrDefault(s =>
                 !string.Equals(s.Size, bundle.BundleDefaultSize, StringComparison.Ordinal));
             if (string.IsNullOrWhiteSpace(explicitSize.Size))
             {
                 explicitSize = defaultSize;
             }
 
-            var side = bundle.BundleSlots.Contains("sides")
+            MenuItemRef? side = bundle.BundleSlots.Contains("sides")
                 ? FindStandaloneComponent(items, "sides", bundle.MenuPeriod, explicitSize.Size, downMachines)
                 : null;
-            var drink = bundle.BundleSlots.Contains("drinks")
+            MenuItemRef? drink = bundle.BundleSlots.Contains("drinks")
                 ? FindStandaloneComponent(items, "drinks", bundle.MenuPeriod, explicitSize.Size, downMachines)
                 : null;
 
@@ -118,7 +117,7 @@ public static class PersonaBundleAutoFillMenuData
         string preferredDifferentSize,
         IReadOnlySet<string> downMachines)
     {
-        foreach (var item in items)
+        foreach (CandidateItem item in items)
         {
             if (!string.Equals(item.ComboSlot, comboSlot, StringComparison.Ordinal) ||
                 !IsMenuPeriodCompatible(item.MenuPeriod, bundleMenuPeriod) ||
@@ -128,7 +127,7 @@ public static class PersonaBundleAutoFillMenuData
                 continue;
             }
 
-            var size = item.Sizes.FirstOrDefault(s => !string.Equals(s.Size, preferredDifferentSize, StringComparison.Ordinal));
+            (string Size, decimal Price) size = item.Sizes.FirstOrDefault(s => !string.Equals(s.Size, preferredDifferentSize, StringComparison.Ordinal));
             if (string.IsNullOrWhiteSpace(size.Size))
             {
                 size = item.Sizes[0];
@@ -148,15 +147,15 @@ public static class PersonaBundleAutoFillMenuData
             string.Equals(componentMenuPeriod, bundleMenuPeriod, StringComparison.Ordinal);
     }
 
-    private static IReadOnlyList<CandidateItem> ReadMenuItems(string personasDir, string personaId)
+    private static List<CandidateItem> ReadMenuItems(string personasDir, string personaId)
     {
-        var menuItemsPath = Path.Combine(personasDir, personaId, "menu", "menuItems.json");
+        string menuItemsPath = Path.Combine(personasDir, personaId, "menu", "menuItems.json");
         using var doc = JsonDocument.Parse(File.ReadAllText(menuItemsPath));
 
         var items = new List<CandidateItem>();
-        foreach (var category in doc.RootElement.GetProperty("menuItems").EnumerateArray())
+        foreach (JsonElement category in doc.RootElement.GetProperty("menuItems").EnumerateArray())
         {
-            foreach (var item in category.GetProperty("items").EnumerateArray())
+            foreach (JsonElement item in category.GetProperty("items").EnumerateArray())
             {
                 var sizes = item.GetProperty("sizes").EnumerateArray()
                     .Select(s => (s.GetProperty("size").GetString()!, s.GetProperty("price").GetDecimal()))
@@ -164,23 +163,23 @@ public static class PersonaBundleAutoFillMenuData
 
                 var bundleSlots = new List<string>();
                 var autoFill = new Dictionary<string, string>(StringComparer.Ordinal);
-                var bundleDefaultSize = string.Empty;
-                if (item.TryGetProperty("bundle", out var bundleElement))
+                string bundleDefaultSize = string.Empty;
+                if (item.TryGetProperty("bundle", out JsonElement bundleElement))
                 {
-                    if (bundleElement.TryGetProperty("slots", out var slotsElement))
+                    if (bundleElement.TryGetProperty("slots", out JsonElement slotsElement))
                     {
-                        bundleSlots = slotsElement.EnumerateArray().Select(s => s.GetString()!).ToList();
+                        bundleSlots = [.. slotsElement.EnumerateArray().Select(s => s.GetString()!)];
                     }
 
-                    if (bundleElement.TryGetProperty("autoFill", out var autoFillElement))
+                    if (bundleElement.TryGetProperty("autoFill", out JsonElement autoFillElement))
                     {
-                        foreach (var prop in autoFillElement.EnumerateObject())
+                        foreach (JsonProperty prop in autoFillElement.EnumerateObject())
                         {
                             autoFill[prop.Name] = prop.Value.GetString() ?? string.Empty;
                         }
                     }
 
-                    if (bundleElement.TryGetProperty("defaultSize", out var defaultSizeElement))
+                    if (bundleElement.TryGetProperty("defaultSize", out JsonElement defaultSizeElement))
                     {
                         bundleDefaultSize = defaultSizeElement.GetString() ?? string.Empty;
                     }
@@ -188,29 +187,29 @@ public static class PersonaBundleAutoFillMenuData
 
                 items.Add(new CandidateItem(
                     item.GetProperty("name").GetString()!,
-                    item.TryGetProperty("menuPeriod", out var menuPeriodElement) ? menuPeriodElement.GetString() ?? string.Empty : string.Empty,
-                    item.TryGetProperty("comboSlot", out var comboSlotElement) ? comboSlotElement.GetString() : null,
+                    item.TryGetProperty("menuPeriod", out JsonElement menuPeriodElement) ? menuPeriodElement.GetString() ?? string.Empty : string.Empty,
+                    item.TryGetProperty("comboSlot", out JsonElement comboSlotElement) ? comboSlotElement.GetString() : null,
                     sizes,
                     bundleSlots,
                     autoFill,
                     bundleDefaultSize,
-                    item.TryGetProperty("requiresMachine", out var requiresMachineElement) ? requiresMachineElement.GetString() : null));
+                    item.TryGetProperty("requiresMachine", out JsonElement requiresMachineElement) ? requiresMachineElement.GetString() : null));
             }
         }
 
         return items;
     }
 
-    private static IReadOnlySet<string> CurrentlyDownMachines(string personasDir, string personaId)
+    private static HashSet<string> CurrentlyDownMachines(string personasDir, string personaId)
     {
-        var personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
+        string personaJsonPath = Path.Combine(personasDir, personaId, "persona.json");
         using var doc = JsonDocument.Parse(File.ReadAllText(personaJsonPath));
         var down = new HashSet<string>(StringComparer.Ordinal);
-        if (doc.RootElement.TryGetProperty("machines", out var machines))
+        if (doc.RootElement.TryGetProperty("machines", out JsonElement machines))
         {
-            foreach (var machine in machines.EnumerateObject())
+            foreach (JsonProperty machine in machines.EnumerateObject())
             {
-                if (machine.Value.TryGetProperty("status", out var status) && status.GetString() == "down")
+                if (machine.Value.TryGetProperty("status", out JsonElement status) && status.GetString() == "down")
                 {
                     down.Add(machine.Name);
                 }
@@ -232,21 +231,21 @@ public sealed class RealPackBundleAutoFillConformanceTests
 {
     public static TheoryData<PersonaBundleAutoFillMenuData.BundleAutoFillCase> DiscoveredBundleAutoFillCases()
     {
-        var personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
+        string personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
         var data = new TheoryData<PersonaBundleAutoFillMenuData.BundleAutoFillCase>();
-        foreach (var personaId in ConformancePersonas.DiscoverFromDisk())
+        foreach (string personaId in ConformancePersonas.DiscoverFromDisk())
         {
             if (!PersonaBundleAutoFillMenuData.HasAnyBundleAutoFill(personasDir, personaId))
             {
                 continue;
             }
 
-            var discovered = PersonaBundleAutoFillMenuData.Discover(personasDir, personaId);
+            PersonaBundleAutoFillMenuData.BundleAutoFillCase? discovered = PersonaBundleAutoFillMenuData.Discover(personasDir, personaId);
             Assert.True(discovered is not null,
                 $"persona '{personaId}' has at least one real bundle.autoFill block in its own menu/menuItems.json, " +
                 "but no qualifying row could be discovered. Ensure at least one such bundle also has " +
                 "a real bundle.defaultSize and real standalone side/drink slot items for absorption coverage.");
-            data.Add(discovered!);
+            data.Add(discovered);
         }
 
         return data;
@@ -254,20 +253,20 @@ public sealed class RealPackBundleAutoFillConformanceTests
 
     [Theory]
     [Trait("Dotnet", "ready")]
-    [MemberData(nameof(DiscoveredBundleAutoFillCases))]
+    [MemberData(nameof(DiscoveredBundleAutoFillCases), DisableDiscoveryEnumeration = true)]
     public async Task Discovered_pack_autofills_its_own_bundle_slots_when_meal_size_is_explicit(
         PersonaBundleAutoFillMenuData.BundleAutoFillCase bundleCase)
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         await using var fixture = new BundleAutoFillFixture(bundleCase.PersonaId);
         await fixture.InitializeAsync();
         await fixture.RunAsync(async () =>
         {
-            var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+            (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
                 fixture, ct, persona: bundleCase.PersonaId, mode: bundleCase.MenuMode);
-            await using var _ = browser;
+            await using RealtimeBrowserClient _ = browser;
 
-            var added = await OrderScenarioHelpers.RunOrderStepsAsync(
+            ToolCallResult added = await OrderScenarioHelpers.RunOrderStepsAsync(
                 connection, browser,
                 [("add", bundleCase.BundleName, bundleCase.SizedBundleSize, 1, bundleCase.SizedBundlePrice)],
                 roundTripIndex, ct, callIdPrefix: "call_real_pack_bundle_autofill_sized");
@@ -278,20 +277,20 @@ public sealed class RealPackBundleAutoFillConformanceTests
 
     [Theory]
     [Trait("Dotnet", "ready")]
-    [MemberData(nameof(DiscoveredBundleAutoFillCases))]
+    [MemberData(nameof(DiscoveredBundleAutoFillCases), DisableDiscoveryEnumeration = true)]
     public async Task Discovered_pack_uses_its_own_bundle_default_size_for_unsized_bundle_autofill(
         PersonaBundleAutoFillMenuData.BundleAutoFillCase bundleCase)
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         await using var fixture = new BundleAutoFillFixture(bundleCase.PersonaId);
         await fixture.InitializeAsync();
         await fixture.RunAsync(async () =>
         {
-            var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+            (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
                 fixture, ct, persona: bundleCase.PersonaId, mode: bundleCase.MenuMode);
-            await using var _ = browser;
+            await using RealtimeBrowserClient _ = browser;
 
-            var added = await OrderScenarioHelpers.RunOrderStepsAsync(
+            ToolCallResult added = await OrderScenarioHelpers.RunOrderStepsAsync(
                 connection, browser,
                 [("add", bundleCase.BundleName, "standard", 1, bundleCase.DefaultBundlePrice)],
                 roundTripIndex, ct, callIdPrefix: "call_real_pack_bundle_autofill_unsized");
@@ -302,11 +301,11 @@ public sealed class RealPackBundleAutoFillConformanceTests
 
     [Theory]
     [Trait("Dotnet", "ready")]
-    [MemberData(nameof(DiscoveredBundleAutoFillCases))]
+    [MemberData(nameof(DiscoveredBundleAutoFillCases), DisableDiscoveryEnumeration = true)]
     public async Task Discovered_pack_absorbs_preordered_side_or_drink_instead_of_autofilling_that_slot(
         PersonaBundleAutoFillMenuData.BundleAutoFillCase bundleCase)
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         await using var fixture = new BundleAutoFillFixture(bundleCase.PersonaId);
         await fixture.InitializeAsync();
         await fixture.RunAsync(async () =>
@@ -318,16 +317,16 @@ public sealed class RealPackBundleAutoFillConformanceTests
                 $"persona '{bundleCase.PersonaId}' bundle '{bundleCase.BundleName}' needs a real comboSlot:drinks item " +
                 "to prove drink absorption beats autoFill.");
 
-            var sideFirst = await AddStandaloneThenBundleAsync(
-                fixture, bundleCase.PersonaId, bundleCase.MenuMode, bundleCase.PreorderedSide!, bundleCase, ct,
-                callIdPrefix: "call_real_pack_bundle_absorb_side");
+            ToolCallResult sideFirst = await AddStandaloneThenBundleAsync(
+                fixture, bundleCase.PersonaId, bundleCase.MenuMode, bundleCase.PreorderedSide!, bundleCase,
+                callIdPrefix: "call_real_pack_bundle_absorb_side", ct);
             AssertAbsorptionState(
                 sideFirst.ToolResultJson!, bundleCase, bundleCase.SizedBundleSize,
                 absorbedComponent: bundleCase.PreorderedSide!.Display, absorbedSlot: "sides");
 
-            var drinkFirst = await AddStandaloneThenBundleAsync(
-                fixture, bundleCase.PersonaId, bundleCase.MenuMode, bundleCase.PreorderedDrink!, bundleCase, ct,
-                callIdPrefix: "call_real_pack_bundle_absorb_drink");
+            ToolCallResult drinkFirst = await AddStandaloneThenBundleAsync(
+                fixture, bundleCase.PersonaId, bundleCase.MenuMode, bundleCase.PreorderedDrink!, bundleCase,
+                callIdPrefix: "call_real_pack_bundle_absorb_drink", ct);
             AssertAbsorptionState(
                 drinkFirst.ToolResultJson!, bundleCase, bundleCase.SizedBundleSize,
                 absorbedComponent: bundleCase.PreorderedDrink!.Display, absorbedSlot: "drinks");
@@ -340,12 +339,12 @@ public sealed class RealPackBundleAutoFillConformanceTests
         string? mode,
         PersonaBundleAutoFillMenuData.MenuItemRef preordered,
         PersonaBundleAutoFillMenuData.BundleAutoFillCase bundleCase,
-        CancellationToken ct,
-        string callIdPrefix)
+        string callIdPrefix,
+        CancellationToken ct)
     {
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(
             fixture, ct, persona: personaId, mode: mode);
-        await using var _ = browser;
+        await using RealtimeBrowserClient _ = browser;
 
         return await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
@@ -362,17 +361,15 @@ public sealed class RealPackBundleAutoFillConformanceTests
         string resolvedSizeLabel)
     {
         using var order = JsonDocument.Parse(orderSummaryJson);
-        var items = order.RootElement.GetProperty("items");
+        JsonElement items = order.RootElement.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
 
-        var bundle = items[0];
-        var components = bundle.GetProperty("components").EnumerateArray()
-            .Select(component => component.GetString() ?? string.Empty)
-            .ToArray();
+        JsonElement bundle = items[0];
+        string[] components = [.. bundle.GetProperty("components").EnumerateArray().Select(component => component.GetString() ?? string.Empty)];
 
-        foreach (var template in bundleCase.AutoFillTemplates.Values)
+        foreach (string template in bundleCase.AutoFillTemplates.Values)
         {
-            var expected = PersonaBundleAutoFillMenuData.ExpandAutoFill(template, resolvedSizeLabel);
+            string expected = PersonaBundleAutoFillMenuData.ExpandAutoFill(template, resolvedSizeLabel);
             Assert.Contains(expected, components);
         }
     }
@@ -385,32 +382,30 @@ public sealed class RealPackBundleAutoFillConformanceTests
         string absorbedSlot)
     {
         using var order = JsonDocument.Parse(orderSummaryJson);
-        var items = order.RootElement.GetProperty("items");
+        JsonElement items = order.RootElement.GetProperty("items");
         Assert.Equal(1, items.GetArrayLength());
 
-        var bundle = items[0];
-        var components = bundle.GetProperty("components").EnumerateArray()
-            .Select(component => component.GetString() ?? string.Empty)
-            .ToArray();
+        JsonElement bundle = items[0];
+        string[] components = [.. bundle.GetProperty("components").EnumerateArray().Select(component => component.GetString() ?? string.Empty)];
 
         Assert.Contains(absorbedComponent, components);
-        if (bundleCase.AutoFillTemplates.TryGetValue(absorbedSlot, out var absorbedTemplate))
+        if (bundleCase.AutoFillTemplates.TryGetValue(absorbedSlot, out string? absorbedTemplate))
         {
-            var absorbedAutoFill = PersonaBundleAutoFillMenuData.ExpandAutoFill(absorbedTemplate, resolvedSizeLabel);
+            string absorbedAutoFill = PersonaBundleAutoFillMenuData.ExpandAutoFill(absorbedTemplate, resolvedSizeLabel);
             if (!string.Equals(absorbedAutoFill, absorbedComponent, StringComparison.Ordinal))
             {
                 Assert.DoesNotContain(absorbedAutoFill, components);
             }
         }
 
-        foreach (var (slot, template) in bundleCase.AutoFillTemplates)
+        foreach ((string? slot, string? template) in bundleCase.AutoFillTemplates)
         {
             if (string.Equals(slot, absorbedSlot, StringComparison.Ordinal))
             {
                 continue;
             }
 
-            var expected = PersonaBundleAutoFillMenuData.ExpandAutoFill(template, resolvedSizeLabel);
+            string expected = PersonaBundleAutoFillMenuData.ExpandAutoFill(template, resolvedSizeLabel);
             Assert.Contains(expected, components);
         }
     }

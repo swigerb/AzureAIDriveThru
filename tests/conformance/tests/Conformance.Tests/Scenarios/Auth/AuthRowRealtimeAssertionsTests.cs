@@ -27,7 +27,7 @@ public sealed class AuthRowRealtimeAssertionsTests
     [InlineData("", "a-known-valid-default-token")]
     public void Always_resolves_to_the_default_access_token_never_the_row_s_own(string? rowAccessToken, string? defaultAccessToken)
     {
-        var resolved = AuthRowRealtimeAssertions.ResolveSessionTokenFetchToken(rowAccessToken, defaultAccessToken);
+        string? resolved = AuthRowRealtimeAssertions.ResolveSessionTokenFetchToken(rowAccessToken, defaultAccessToken);
 
         Assert.Equal(defaultAccessToken, resolved);
         Assert.NotEqual(rowAccessToken, resolved);
@@ -41,7 +41,7 @@ public sealed class AuthRowRealtimeAssertionsTests
     [Fact]
     public void Attaches_the_row_s_own_access_token_and_the_separately_resolved_session_token()
     {
-        var query = AuthRowRealtimeAssertions.BuildRejectionQuery(
+        string query = AuthRowRealtimeAssertions.BuildRejectionQuery(
             rowAccessToken: "row-access-token",
             sessionToken: "resolved-session-token",
             attachSessionToken: true,
@@ -51,14 +51,14 @@ public sealed class AuthRowRealtimeAssertionsTests
         Assert.Contains("token=resolved-session-token", query);
     }
 
-    /// <summary>R3 pin: when <paramref name="attachSessionToken"/> is false (18.11 row 10's "no
+    /// <summary>R3 pin: when <c>attachSessionToken</c> is false (18.11 row 10's "no
     /// session token" case), the <c>token</c> query param must be omitted entirely, not sent
     /// empty -- matching <see cref="Conformance.Harness.RealtimeBrowserClient.ConnectAsync"/>'s
     /// own behaviour exactly.</summary>
     [Fact]
     public void Omits_the_session_token_param_entirely_when_attachSessionToken_is_false()
     {
-        var query = AuthRowRealtimeAssertions.BuildRejectionQuery(
+        string query = AuthRowRealtimeAssertions.BuildRejectionQuery(
             rowAccessToken: "row-access-token",
             sessionToken: null,
             attachSessionToken: false,
@@ -72,7 +72,7 @@ public sealed class AuthRowRealtimeAssertionsTests
     [Fact]
     public void Omits_the_access_token_param_entirely_when_the_row_access_token_is_null()
     {
-        var query = AuthRowRealtimeAssertions.BuildRejectionQuery(
+        string query = AuthRowRealtimeAssertions.BuildRejectionQuery(
             rowAccessToken: null,
             sessionToken: "resolved-session-token",
             attachSessionToken: true,

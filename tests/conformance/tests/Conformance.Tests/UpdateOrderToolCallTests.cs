@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
@@ -15,32 +16,32 @@ namespace Conformance.Tests;
 [Collection(ConformanceCollection.Name)]
 public sealed class UpdateOrderToolCallTests(ConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Scripted_update_order_call_executes_and_notifies_the_browser() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        bool noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(s_frameTimeout, ct);
         Assert.True(noneOpen, $"Expected no open upstream connections at test start, but " +
             $"{fixture.Realtime.OpenConnectionCount} are still open — a previous test leaked a connection.");
 
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
         await browser.SendStartSessionAsync(cancellationToken: ct);
 
         // Wait for the greeting's round trip to fully complete (tools_pending cleared, backend
         // ready for a new turn) before scripting the next response — enqueuing any earlier would
         // let the automatic greeting response.create consume our script instead.
-        var greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        RecordedFrame? greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token", s_frameTimeout, ct);
         Assert.True(greetingRoundTrip is not null, "Greeting round trip never completed.");
 
-        const string callId = "call_update_order_1";
+        const string CallId = "call_update_order_1";
         // #73: "Small Fries" is off-menu ("Fries" is not a menuItems.json item; the real side is
         // "Tots") and would now be rejected TO_SERVER-only, so the `extension.middle_tier_tool_response`
         // wait below would time out. This test's subject matter is the scripted-call plumbing
@@ -49,7 +50,7 @@ public sealed class UpdateOrderToolCallTests(ConformanceFixture fixture)
             new FunctionCallEvent(
                 Name: "update_order",
                 ArgumentsJson: """{"action":"add","item_name":"Tots","size":"small","quantity":1,"price":2.19}""",
-                CallId: callId),
+                CallId: CallId),
             new DoneEvent(),
         ]));
 
@@ -58,24 +59,24 @@ public sealed class UpdateOrderToolCallTests(ConformanceFixture fixture)
         // would, without needing to simulate real audio timing.
         await browser.SendResponseCreateAsync(ct);
 
-        var functionCallOutput = await connection!.ReceivedFrames.WaitForAsync(
+        RecordedFrame? functionCallOutput = await connection!.ReceivedFrames.WaitForAsync(
             f => f.Type == "conversation.item.create" &&
-                 f.Json.TryGetProperty("item", out var item) &&
-                 item.TryGetProperty("type", out var itemType) &&
+                 f.Json.TryGetProperty("item", out JsonElement item) &&
+                 item.TryGetProperty("type", out JsonElement itemType) &&
                  itemType.GetString() == "function_call_output" &&
-                 item.TryGetProperty("call_id", out var respondedCallId) &&
-                 respondedCallId.GetString() == callId,
-            FrameTimeout, ct);
+                 item.TryGetProperty("call_id", out JsonElement respondedCallId) &&
+                 respondedCallId.GetString() == CallId,
+            s_frameTimeout, ct);
         Assert.True(functionCallOutput is not null,
-            $"Expected a conversation.item.create(function_call_output) for call_id={callId} upstream within {FrameTimeout}.");
+            $"Expected a conversation.item.create(function_call_output) for call_id={CallId} upstream within {s_frameTimeout}.");
 
-        var toolResponse = await browser.ReceivedFrames.WaitForAsync(
+        RecordedFrame? toolResponse = await browser.ReceivedFrames.WaitForAsync(
             f => f.Type == "extension.middle_tier_tool_response" &&
-                 f.Json.TryGetProperty("tool_name", out var toolName) &&
+                 f.Json.TryGetProperty("tool_name", out JsonElement toolName) &&
                  toolName.GetString() == "update_order",
-            FrameTimeout, ct);
+            s_frameTimeout, ct);
         Assert.True(toolResponse is not null,
-            $"Expected extension.middle_tier_tool_response for update_order on the browser within {FrameTimeout}.");
+            $"Expected extension.middle_tier_tool_response for update_order on the browser within {s_frameTimeout}.");
 
         // The "backend logged no unhandled error during this scenario" invariant (PR #22 review
         // item N5) is now a fixture-wide, language-neutral check applied by

@@ -1,6 +1,5 @@
 using Backend.Personas;
 using Backend.Sessions;
-using Microsoft.Extensions.Logging;
 
 namespace Backend.Models;
 
@@ -38,7 +37,7 @@ internal static class ModelDispatch
         ModelCatalog catalog,
         Backend.Sessions.ProcessorRegistry registry)
     {
-        var effectiveModelId = requestedModelId ?? persona.Models.Realtime.Default;
+        string effectiveModelId = requestedModelId ?? persona.Models.Realtime.Default;
 
         ModelEntry entry;
         try
@@ -50,12 +49,8 @@ internal static class ModelDispatch
             throw new ModelSelectionException($"Unknown or disallowed model: {Repr(requestedModelId)}");
         }
 
-        var processor = registry.Get(entry.Pipeline);
-        if (processor is null)
-        {
-            throw new ModelSelectionException(
+        IPipelineProcessor processor = registry.Get(entry.Pipeline) ?? throw new ModelSelectionException(
                 $"Unknown or disallowed model: {Repr(requestedModelId)} (pipeline '{entry.Pipeline}' has no registered processor).");
-        }
 
         return (entry.Pipeline, processor);
     }
@@ -81,8 +76,8 @@ internal static class ModelDispatch
         string defaultDeployment,
         ILogger<RealtimeProcessor> logger)
     {
-        var pipelineCfg = persona.Models.Realtime;
-        var modelId = requestedModelId ?? pipelineCfg.Default;
+        PersonaModelPipeline pipelineCfg = persona.Models.Realtime;
+        string modelId = requestedModelId ?? pipelineCfg.Default;
 
         if (modelId != pipelineCfg.Default && !pipelineCfg.Allowed.Contains(modelId))
         {
@@ -95,7 +90,7 @@ internal static class ModelDispatch
             throw new ModelSelectionException($"Model '{modelId}' is not catalogued for the realtime pipeline.");
         }
 
-        var deployment = catalog.DeploymentFor(modelId);
+        string? deployment = catalog.DeploymentFor(modelId);
         if (deployment is null)
         {
             if (modelId != pipelineCfg.Default)
@@ -105,13 +100,10 @@ internal static class ModelDispatch
             }
 
             deployment = defaultDeployment;
-            logger.LogWarning(
-                "Persona {PersonaId}'s realtime default model {ModelId} has no AZURE_AI_MODEL_DEPLOYMENTS entry -- " +
-                "falling back to AZURE_OPENAI_REALTIME_DEPLOYMENT ({Deployment}) for back-compat.",
-                persona.Id, modelId, defaultDeployment);
+            logger.RealtimeDefaultDeploymentFallback(persona.Id, modelId, defaultDeployment);
         }
 
-        var entry = catalog.Get(modelId);
+        ModelEntry entry = catalog.Get(modelId);
         return new ResolvedModel(modelId, "realtime", deployment, entry.Reasoning);
     }
 
@@ -135,15 +127,11 @@ internal static class ModelDispatch
         string? requestedModelId,
         ModelCatalog catalog)
     {
-        var pipelineCfg = persona.Models.Cascade;
-        if (pipelineCfg is null)
-        {
-            throw new ModelSelectionException(
+        PersonaModelPipeline pipelineCfg = persona.Models.Cascade ?? throw new ModelSelectionException(
                 $"Persona '{persona.Id}' has no models.cascade configured -- cascade is not enabled for it.");
-        }
 
-        var modelId = requestedModelId ?? pipelineCfg.Default;
-        var isDefault = modelId == pipelineCfg.Default;
+        string modelId = requestedModelId ?? pipelineCfg.Default;
+        bool isDefault = modelId == pipelineCfg.Default;
 
         if (!pipelineCfg.Allowed.Contains(modelId) && !isDefault)
         {
@@ -158,15 +146,11 @@ internal static class ModelDispatch
                 $"Model '{modelId}' is not in config.yaml's models.catalog for the cascade pipeline.");
         }
 
-        var entry = catalog.Get(modelId);
+        ModelEntry entry = catalog.Get(modelId);
 
-        var deployment = catalog.DeploymentFor(modelId);
-        if (deployment is null)
-        {
-            throw new ModelSelectionException(
+        string? deployment = catalog.DeploymentFor(modelId) ?? throw new ModelSelectionException(
                 $"Model '{modelId}' is catalogued for the cascade pipeline but has no deployment mapped " +
                 "in AZURE_AI_MODEL_DEPLOYMENTS.");
-        }
 
         return new ResolvedModel(modelId, "cascade", deployment, entry.Reasoning);
     }

@@ -21,20 +21,20 @@ internal static class PersonaMenuPrice
 {
     public static decimal Read(string personasDir, string personaId, string itemName, string size)
     {
-        var menuItemsJsonPath = Path.Combine(personasDir, personaId, "menu", "menuItems.json");
-        using var stream = File.OpenRead(menuItemsJsonPath);
+        string menuItemsJsonPath = Path.Combine(personasDir, personaId, "menu", "menuItems.json");
+        using FileStream stream = File.OpenRead(menuItemsJsonPath);
         using var document = JsonDocument.Parse(stream);
 
-        foreach (var category in document.RootElement.GetProperty("menuItems").EnumerateArray())
+        foreach (JsonElement category in document.RootElement.GetProperty("menuItems").EnumerateArray())
         {
-            foreach (var item in category.GetProperty("items").EnumerateArray())
+            foreach (JsonElement item in category.GetProperty("items").EnumerateArray())
             {
                 if (!string.Equals(item.GetProperty("name").GetString(), itemName, StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
 
-                foreach (var sizeEntry in item.GetProperty("sizes").EnumerateArray())
+                foreach (JsonElement sizeEntry in item.GetProperty("sizes").EnumerateArray())
                 {
                     if (string.Equals(sizeEntry.GetProperty("size").GetString(), size, StringComparison.OrdinalIgnoreCase))
                     {

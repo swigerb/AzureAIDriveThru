@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Conformance.Fakes;
 using Conformance.Harness;
 using Conformance.Tests.Scenarios.Ordering;
 using Xunit;
@@ -14,12 +15,12 @@ public sealed class RewardsDemoCascadeTests(CascadeConformanceFixture fixture)
     public Task Cascade_greeting_instruction_is_request_scoped_and_resume_preserves_only_real_speech() =>
         fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var before = fixture.Chat.RequestCount;
-        var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        int before = fixture.Chat.RequestCount;
+        CascadeConnection connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(
             fixture, fixture.Chat, "gpt-5-mini", ct, persona: "tacobell");
-        await using var browser = connection.Browser;
-        var greeting = fixture.Chat.Requests[before].RawBody;
+        await using RealtimeBrowserClient browser = connection.Browser;
+        JsonElement greeting = fixture.Chat.Requests[before].RawBody;
         Assert.Empty(greeting.GetProperty("tools").EnumerateArray());
         Assert.Equal("none", greeting.GetProperty("tool_choice").GetString());
         Assert.All(greeting.GetProperty("messages").EnumerateArray(), message =>
@@ -27,14 +28,16 @@ public sealed class RewardsDemoCascadeTests(CascadeConformanceFixture fixture)
         Assert.Contains("Say exactly: Welcome to Taco Bell!",
             greeting.GetProperty("messages").EnumerateArray().Last().GetProperty("content").GetString());
         Assert.Equal(before + 1, fixture.Chat.RequestCount);
-        var metadata = browser.ReceivedFrames.Snapshot().Single(frame => frame.Type == "extension.session_metadata");
-        var resumeId = metadata.Json.GetProperty("resumeId").GetString()!;
+        RecordedFrame metadata = browser.ReceivedFrames.Snapshot().Single(frame => frame.Type == "extension.session_metadata");
+        string resumeId = metadata.Json.GetProperty("resumeId").GetString()!;
         fixture.Chat.EnqueueMessage(new JsonObject
         {
-            ["role"] = "assistant", ["content"] = null,
+            ["role"] = "assistant",
+            ["content"] = null,
             ["tool_calls"] = new JsonArray(new JsonObject
             {
-                ["id"] = "scoped-order", ["type"] = "function",
+                ["id"] = "scoped-order",
+                ["type"] = "function",
                 ["function"] = new JsonObject { ["name"] = "get_order", ["arguments"] = "{}" },
             }),
         });
@@ -44,20 +47,20 @@ public sealed class RewardsDemoCascadeTests(CascadeConformanceFixture fixture)
         Assert.NotNull(await browser.ReceivedFrames.WaitForAsync(
             frame => frame.Sequence > connection.GreetingWatermark && frame.Type == "extension.round_trip_token",
             CascadeScenarioHelpers.FrameTimeout, ct));
-        var next = fixture.Chat.Requests[before + 1].RawBody;
+        JsonElement next = fixture.Chat.Requests[before + 1].RawBody;
         Assert.NotEmpty(next.GetProperty("tools").EnumerateArray());
-        Assert.Equal(new[] { "system", "assistant", "user" },
+        Assert.Equal(["system", "assistant", "user"],
             next.GetProperty("messages").EnumerateArray().Select(message => message.GetProperty("role").GetString()));
         Assert.Contains("Welcome to the drive-thru!", next.GetRawText());
         Assert.DoesNotContain("Say exactly:", next.GetRawText());
         Assert.DoesNotContain("Greet exactly:", next.GetRawText());
-        var result = fixture.Chat.Requests[before + 2].RawBody.GetProperty("messages").EnumerateArray().Last();
+        JsonElement result = fixture.Chat.Requests[before + 2].RawBody.GetProperty("messages").EnumerateArray().Last();
         Assert.Equal("scoped-order", result.GetProperty("tool_call_id").GetString());
         Assert.Equal(before + 3, fixture.Chat.RequestCount);
 
         await browser.CloseAsync(cancellationToken: ct);
         await browser.WaitForCloseAsync(CascadeScenarioHelpers.FrameTimeout, ct);
-        await using var resumed = await CascadeScenarioHelpers.ConnectAsync(fixture, "gpt-5-mini", ct, persona: "tacobell");
+        await using RealtimeBrowserClient resumed = await CascadeScenarioHelpers.ConnectAsync(fixture, "gpt-5-mini", ct, persona: "tacobell");
         await resumed.SendExtensionResumeAsync(resumeId, ct);
         Assert.NotNull(await resumed.ReceivedFrames.WaitForAsync(
             frame => frame.Type == "extension.session_resumed", CascadeScenarioHelpers.FrameTimeout, ct));
@@ -69,7 +72,7 @@ public sealed class RewardsDemoCascadeTests(CascadeConformanceFixture fixture)
         await CascadeScenarioHelpers.SendGuestTurnAsync(resumed, ct);
         Assert.NotNull(await resumed.ReceivedFrames.WaitForAsync(
             frame => frame.Type == "extension.round_trip_token", CascadeScenarioHelpers.FrameTimeout, ct));
-        var rehydrated = fixture.Chat.Requests[before + 3].RawBody.GetRawText();
+        string rehydrated = fixture.Chat.Requests[before + 3].RawBody.GetRawText();
         Assert.Contains("Welcome to the drive-thru!", rehydrated);
         Assert.DoesNotContain("Say exactly:", rehydrated);
         Assert.DoesNotContain("Greet exactly:", rehydrated);
@@ -78,20 +81,22 @@ public sealed class RewardsDemoCascadeTests(CascadeConformanceFixture fixture)
     [Fact]
     public Task Cascade_checkin_tool_order_redemption_and_completion_use_the_same_ledger() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        CascadeConnection connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(
             fixture, fixture.Chat, "gpt-5-mini", ct, persona: "tacobell");
-        await using var browser = connection.Browser;
-        var invalid = await RewardsDemoConformanceTests.Act(browser, "check_in", "123456", ct);
+        await using RealtimeBrowserClient browser = connection.Browser;
+        JsonElement invalid = await RewardsDemoConformanceTests.Act(browser, "check_in", "123456", ct);
         Assert.False(invalid.GetProperty("rewardsDemo").GetProperty("checkedIn").GetBoolean());
         await RewardsDemoConformanceTests.Act(browser, "check_in", "DEMO-PLUS", ct);
 
         fixture.Chat.EnqueueMessage(new JsonObject
         {
-            ["role"] = "assistant", ["content"] = null,
+            ["role"] = "assistant",
+            ["content"] = null,
             ["tool_calls"] = new JsonArray(new JsonObject
             {
-                ["id"] = "cascade_demo_tacos", ["type"] = "function",
+                ["id"] = "cascade_demo_tacos",
+                ["type"] = "function",
                 ["function"] = new JsonObject
                 {
                     ["name"] = "update_order",
@@ -102,23 +107,23 @@ public sealed class RewardsDemoCascadeTests(CascadeConformanceFixture fixture)
         fixture.Chat.EnqueueMessage(new JsonObject { ["role"] = "assistant", ["content"] = "Added two demo tacos." });
         fixture.Realtime.NextTranscript = "Two plain crunchy tacos.";
         await CascadeScenarioHelpers.SendGuestTurnAsync(browser, ct);
-        var added = await browser.ReceivedFrames.WaitForAsync(
+        RecordedFrame? added = await browser.ReceivedFrames.WaitForAsync(
             f => f.Sequence > connection.GreetingWatermark && f.Type == "extension.middle_tier_tool_response"
                 && f.Json.GetProperty("tool_name").GetString() == "update_order",
             CascadeScenarioHelpers.FrameTimeout, ct);
         Assert.NotNull(added);
-        Assert.Equal("$3.98", JsonDocument.Parse(added.Json.GetProperty("tool_result").GetString()!)
-            .RootElement.GetProperty("totalDisplay").GetString());
+        Assert.Equal("$3.98", JsonElement.Parse(added.Json.GetProperty("tool_result").GetString()!)
+            .GetProperty("totalDisplay").GetString());
         Assert.NotNull(await browser.ReceivedFrames.WaitForAsync(
             f => f.Sequence > added.Sequence && f.Type == "response.done", CascadeScenarioHelpers.FrameTimeout, ct));
 
-        var redeemed = await RewardsDemoConformanceTests.Act(browser, "redeem", null, ct);
+        JsonElement redeemed = await RewardsDemoConformanceTests.Act(browser, "redeem", null, ct);
         Assert.Equal("$2.15", redeemed.GetProperty("finalTotalDisplay").GetString());
         Assert.Equal(19, redeemed.GetProperty("rewardsDemo").GetProperty("pointsToEarn").GetInt32());
         await RewardsDemoConformanceTests.Act(browser, "complete", null, ct);
-        var twice = await RewardsDemoConformanceTests.Act(browser, "complete", null, ct);
+        JsonElement twice = await RewardsDemoConformanceTests.Act(browser, "complete", null, ct);
         Assert.Equal(269, twice.GetProperty("rewardsDemo").GetProperty("balance").GetInt32());
-        var reset = await RewardsDemoConformanceTests.Act(browser, "reset", null, ct);
+        JsonElement reset = await RewardsDemoConformanceTests.Act(browser, "reset", null, ct);
         Assert.Empty(reset.GetProperty("items").EnumerateArray());
         Assert.Equal(269, reset.GetProperty("rewardsDemo").GetProperty("balance").GetInt32());
         Assert.True(reset.GetProperty("rewardsDemo").GetProperty("checkedIn").GetBoolean());

@@ -44,7 +44,7 @@ public sealed class RateLimitDetectionTests
             },
         };
 
-        var error = RateLimitDetection.RateLimitErrorOfResponseDone(message);
+        JsonObject? error = RateLimitDetection.RateLimitErrorOfResponseDone(message);
 
         Assert.NotNull(error);
         Assert.Equal("rate_limit_exceeded", error!["code"]!.GetValue<string>());
@@ -81,7 +81,7 @@ public sealed class RateLimitDetectionTests
     {
         var message = new JsonObject { ["error"] = new JsonObject { ["code"] = "rate_limit_exceeded" } };
 
-        var error = RateLimitDetection.RateLimitErrorOfErrorEvent(message);
+        JsonObject? error = RateLimitDetection.RateLimitErrorOfErrorEvent(message);
 
         Assert.NotNull(error);
         Assert.Equal("rate_limit_exceeded", error!["code"]!.GetValue<string>());
@@ -98,6 +98,6 @@ public sealed class RateLimitDetectionTests
     [Fact]
     public void RateLimitErrorOfErrorEvent_NullWhenNoErrorObject()
     {
-        Assert.Null(RateLimitDetection.RateLimitErrorOfErrorEvent(new JsonObject()));
+        Assert.Null(RateLimitDetection.RateLimitErrorOfErrorEvent([]));
     }
 }

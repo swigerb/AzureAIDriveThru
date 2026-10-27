@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Backend.Ordering;
 using Backend.Personas;
 using Backend.Tests.TestSupport;
 using Backend.Tools;
@@ -22,9 +23,9 @@ public sealed class OrderToolExecutorCanonicalItemNameTests
 
     private static OrderToolExecutor NewExecutor()
     {
-        var persona = ZetaFixture.Load();
-        var menu = Backend.Ordering.PersonaOrderFactory.GetMenuCatalog(persona);
-        var order = Backend.Ordering.PersonaOrderFactory.CreateOrderState(persona);
+        Persona persona = ZetaFixture.Load();
+        MenuCatalog menu = Backend.Ordering.PersonaOrderFactory.GetMenuCatalog(persona);
+        OrderState order = Backend.Ordering.PersonaOrderFactory.CreateOrderState(persona);
         return new OrderToolExecutor(order, menu, promptLoader: null, MaxItemQuantity, MaxOrderItems);
     }
 
@@ -46,19 +47,19 @@ public sealed class OrderToolExecutorCanonicalItemNameTests
 
     private static async Task<List<JsonElement>> GetOrderItemsAsync(OrderToolExecutor executor, CancellationToken ct)
     {
-        var summary = await executor.ExecuteAsync("get_order", JsonSerializer.SerializeToElement(new { }), ct);
-        var client = JsonDocument.Parse(summary.ToClientText());
-        return client.RootElement.GetProperty("items").EnumerateArray().ToList();
+        ToolResult summary = await executor.ExecuteAsync("get_order", JsonSerializer.SerializeToElement(new { }), ct);
+        var client = JsonElement.Parse(summary.ToClientText());
+        return [.. client.GetProperty("items").EnumerateArray()];
     }
 
     [Fact]
     public async Task Add_WithTheUnmarkedSpelling_StoresTheMenusCanonicalMarkedName()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var executor = NewExecutor();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        OrderToolExecutor executor = NewExecutor();
         await executor.ExecuteAsync("update_order", Args("add", "ZORBS Bite Treats", "10 count", 1, 3.99m), ct);
 
-        var items = await GetOrderItemsAsync(executor, ct);
+        List<JsonElement> items = await GetOrderItemsAsync(executor, ct);
         Assert.Single(items);
         Assert.Equal("ZORBS\u00ae Bite Treats", items[0].GetProperty("item").GetString());
     }
@@ -66,12 +67,12 @@ public sealed class OrderToolExecutorCanonicalItemNameTests
     [Fact]
     public async Task Adding_the_same_item_with_different_spellings_merges_into_one_line()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var executor = NewExecutor();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        OrderToolExecutor executor = NewExecutor();
         await executor.ExecuteAsync("update_order", Args("add", "ZORBS\u00ae Bite Treats", "10 count", 1, 3.99m), ct);
         await executor.ExecuteAsync("update_order", Args("add", "ZORBS Bite Treats", "10 count", 1, 3.99m), ct);
 
-        var items = await GetOrderItemsAsync(executor, ct);
+        List<JsonElement> items = await GetOrderItemsAsync(executor, ct);
         Assert.Single(items);
         Assert.Equal(2, items[0].GetProperty("quantity").GetInt32());
         Assert.Equal("ZORBS\u00ae Bite Treats", items[0].GetProperty("item").GetString());
@@ -80,12 +81,12 @@ public sealed class OrderToolExecutorCanonicalItemNameTests
     [Fact]
     public async Task Remove_with_the_unmarked_spelling_matches_a_line_added_with_the_marked_spelling()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var executor = NewExecutor();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        OrderToolExecutor executor = NewExecutor();
         await executor.ExecuteAsync("update_order", Args("add", "ZORBS\u00ae Bite Treats", "10 count", 1, 3.99m), ct);
         await executor.ExecuteAsync("update_order", Args("remove", "ZORBS Bite Treats", "10 count", 1), ct);
 
-        var items = await GetOrderItemsAsync(executor, ct);
+        List<JsonElement> items = await GetOrderItemsAsync(executor, ct);
         Assert.Empty(items);
     }
 
@@ -96,11 +97,11 @@ public sealed class OrderToolExecutorCanonicalItemNameTests
     [Fact]
     public async Task Add_with_the_exact_canonical_paren_name_stores_it_unchanged_not_duplicated()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var executor = NewExecutor();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        OrderToolExecutor executor = NewExecutor();
         await executor.ExecuteAsync("update_order", Args("add", "Zeta Snack Mix (Family Size)", "regular", 1, 3.49m), ct);
 
-        var items = await GetOrderItemsAsync(executor, ct);
+        List<JsonElement> items = await GetOrderItemsAsync(executor, ct);
         Assert.Single(items);
         Assert.Equal("Zeta Snack Mix (Family Size)", items[0].GetProperty("item").GetString());
     }
@@ -108,12 +109,12 @@ public sealed class OrderToolExecutorCanonicalItemNameTests
     [Fact]
     public async Task Add_with_the_paren_less_spelling_merges_into_the_same_line()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var executor = NewExecutor();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        OrderToolExecutor executor = NewExecutor();
         await executor.ExecuteAsync("update_order", Args("add", "Zeta Snack Mix (Family Size)", "regular", 1, 3.49m), ct);
         await executor.ExecuteAsync("update_order", Args("add", "Zeta Snack Mix", "regular", 1, 3.49m), ct);
 
-        var items = await GetOrderItemsAsync(executor, ct);
+        List<JsonElement> items = await GetOrderItemsAsync(executor, ct);
         Assert.Single(items);
         Assert.Equal(2, items[0].GetProperty("quantity").GetInt32());
         Assert.Equal("Zeta Snack Mix (Family Size)", items[0].GetProperty("item").GetString());
@@ -122,12 +123,12 @@ public sealed class OrderToolExecutorCanonicalItemNameTests
     [Fact]
     public async Task A_genuine_customization_stacks_on_top_of_the_canonical_paren_name()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var executor = NewExecutor();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        OrderToolExecutor executor = NewExecutor();
         await executor.ExecuteAsync(
             "update_order", Args("add", "Zeta Snack Mix (Family Size) (Extra Spicy)", "regular", 1, 3.49m), ct);
 
-        var items = await GetOrderItemsAsync(executor, ct);
+        List<JsonElement> items = await GetOrderItemsAsync(executor, ct);
         Assert.Single(items);
         Assert.Equal("Zeta Snack Mix (Family Size) (Extra Spicy)", items[0].GetProperty("item").GetString());
     }
@@ -151,10 +152,10 @@ public sealed class OrderToolExecutorCanonicalItemNameSonicTests
     {
         // Brand-neutral: locate the shipped pack whose own menu carries this combo, instead of naming it.
         var catalog = PersonaCatalog.Load();
-        var persona = catalog.Ids.Select(catalog.Get)
+        Persona persona = catalog.Ids.Select(catalog.Get)
             .First(p => Backend.Ordering.PersonaOrderFactory.GetMenuCatalog(p).ResolveMenuItem(Bundle) is not null);
-        var menu = Backend.Ordering.PersonaOrderFactory.GetMenuCatalog(persona);
-        var order = Backend.Ordering.PersonaOrderFactory.CreateOrderState(persona);
+        MenuCatalog menu = Backend.Ordering.PersonaOrderFactory.GetMenuCatalog(persona);
+        OrderState order = Backend.Ordering.PersonaOrderFactory.CreateOrderState(persona);
         return new OrderToolExecutor(order, menu, promptLoader: null, MaxItemQuantity, MaxOrderItems);
     }
 
@@ -176,19 +177,19 @@ public sealed class OrderToolExecutorCanonicalItemNameSonicTests
 
     private static async Task<List<JsonElement>> GetOrderItemsAsync(OrderToolExecutor executor, CancellationToken ct)
     {
-        var summary = await executor.ExecuteAsync("get_order", JsonSerializer.SerializeToElement(new { }), ct);
-        var client = JsonDocument.Parse(summary.ToClientText());
-        return client.RootElement.GetProperty("items").EnumerateArray().ToList();
+        ToolResult summary = await executor.ExecuteAsync("get_order", JsonSerializer.SerializeToElement(new { }), ct);
+        var client = JsonElement.Parse(summary.ToClientText());
+        return [.. client.GetProperty("items").EnumerateArray()];
     }
 
     [Fact]
     public async Task Add_bundle_combo_item_with_the_unmarked_spelling_stores_the_canonical_marked_name()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var executor = NewExecutor();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        OrderToolExecutor executor = NewExecutor();
         await executor.ExecuteAsync("update_order", Args("add", BundleUnmarked, "standard", 1, 10.19m), ct);
 
-        var items = await GetOrderItemsAsync(executor, ct);
+        List<JsonElement> items = await GetOrderItemsAsync(executor, ct);
         Assert.Single(items);
         Assert.Equal(Bundle, items[0].GetProperty("item").GetString());
     }
@@ -196,12 +197,12 @@ public sealed class OrderToolExecutorCanonicalItemNameSonicTests
     [Fact]
     public async Task Adding_the_same_bundle_combo_with_different_spellings_merges_into_one_line()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var executor = NewExecutor();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        OrderToolExecutor executor = NewExecutor();
         await executor.ExecuteAsync("update_order", Args("add", Bundle, "standard", 1, 10.19m), ct);
         await executor.ExecuteAsync("update_order", Args("add", BundleUnmarked, "standard", 1, 10.19m), ct);
 
-        var items = await GetOrderItemsAsync(executor, ct);
+        List<JsonElement> items = await GetOrderItemsAsync(executor, ct);
         Assert.Single(items);
         Assert.Equal(2, items[0].GetProperty("quantity").GetInt32());
         Assert.Equal(Bundle, items[0].GetProperty("item").GetString());
@@ -210,12 +211,12 @@ public sealed class OrderToolExecutorCanonicalItemNameSonicTests
     [Fact]
     public async Task Modify_with_an_alias_and_a_size_change_resolves_and_stores_the_canonical_name()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var executor = NewExecutor();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        OrderToolExecutor executor = NewExecutor();
         await executor.ExecuteAsync("update_order", Args("add", "Coke", "medium", 1, 2.49m), ct);
         await executor.ExecuteAsync("update_order", Args("modify", "Coke", "large", 1, 2.99m), ct);
 
-        var items = await GetOrderItemsAsync(executor, ct);
+        List<JsonElement> items = await GetOrderItemsAsync(executor, ct);
         Assert.Single(items);
         Assert.Equal("Coca-Cola\u00ae", items[0].GetProperty("item").GetString());
         Assert.Equal("large", items[0].GetProperty("size").GetString(), ignoreCase: true);
@@ -224,12 +225,12 @@ public sealed class OrderToolExecutorCanonicalItemNameSonicTests
     [Fact]
     public async Task Remove_with_unmarked_name_matches_a_line_stored_under_the_marked_name()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var executor = NewExecutor();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        OrderToolExecutor executor = NewExecutor();
         await executor.ExecuteAsync("update_order", Args("add", Bundle, "standard", 1, 10.19m), ct);
         await executor.ExecuteAsync("update_order", Args("remove", BundleUnmarked, "standard", 1), ct);
 
-        var items = await GetOrderItemsAsync(executor, ct);
+        List<JsonElement> items = await GetOrderItemsAsync(executor, ct);
         Assert.Empty(items);
     }
 
@@ -238,11 +239,11 @@ public sealed class OrderToolExecutorCanonicalItemNameSonicTests
     [Fact]
     public async Task Add_with_a_real_menu_items_own_parenthetical_name_is_not_duplicated()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var executor = NewExecutor();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        OrderToolExecutor executor = NewExecutor();
         await executor.ExecuteAsync("update_order", Args("add", "Milk Jug (1%) - White", "standard", 1, 1.39m), ct);
 
-        var items = await GetOrderItemsAsync(executor, ct);
+        List<JsonElement> items = await GetOrderItemsAsync(executor, ct);
         Assert.Single(items);
         Assert.Equal("Milk Jug (1%) - White", items[0].GetProperty("item").GetString());
     }
@@ -250,12 +251,12 @@ public sealed class OrderToolExecutorCanonicalItemNameSonicTests
     [Fact]
     public async Task Add_with_a_real_menu_items_paren_less_spelling_merges_into_the_same_line()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var executor = NewExecutor();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        OrderToolExecutor executor = NewExecutor();
         await executor.ExecuteAsync("update_order", Args("add", "Milk Jug (1%) - White", "standard", 1, 1.39m), ct);
         await executor.ExecuteAsync("update_order", Args("add", "Milk Jug - White", "standard", 1, 1.39m), ct);
 
-        var items = await GetOrderItemsAsync(executor, ct);
+        List<JsonElement> items = await GetOrderItemsAsync(executor, ct);
         Assert.Single(items);
         Assert.Equal(2, items[0].GetProperty("quantity").GetInt32());
         Assert.Equal("Milk Jug (1%) - White", items[0].GetProperty("item").GetString());

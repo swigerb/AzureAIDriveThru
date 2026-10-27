@@ -79,7 +79,7 @@ public static class ExternalModeProfilePolicy
     public static string? ShouldSkip(
         string? backendUrl, string profileName, string defaultProfileName, string? deployment, string? persona)
     {
-        var isExternal = !string.IsNullOrWhiteSpace(backendUrl);
+        bool isExternal = !string.IsNullOrWhiteSpace(backendUrl);
         if (!isExternal)
         {
             return null;

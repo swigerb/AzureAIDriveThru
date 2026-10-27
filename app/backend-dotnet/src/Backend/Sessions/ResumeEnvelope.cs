@@ -28,14 +28,14 @@ internal static class ResumeEnvelope
     /// the other two fields.</summary>
     public static JsonObject BuildSessionResumedFrame(
         SessionIdentifiers identifiers, string orderSummaryJson, string? resumeId) => new()
-    {
-        ["type"] = "extension.session_resumed",
-        ["order_summary"] = JsonNode.Parse(orderSummaryJson) ?? new JsonObject(),
-        ["session_token"] = identifiers.SessionToken,
-        ["round_trip_index"] = identifiers.RoundTripIndex,
-        ["round_trip_token"] = identifiers.RoundTripToken,
-        ["resume_id"] = resumeId,
-    };
+        {
+            ["type"] = "extension.session_resumed",
+            ["order_summary"] = JsonNode.Parse(orderSummaryJson) ?? new JsonObject(),
+            ["session_token"] = identifiers.SessionToken,
+            ["round_trip_index"] = identifiers.RoundTripIndex,
+            ["round_trip_token"] = identifiers.RoundTripToken,
+            ["resume_id"] = resumeId,
+        };
 
     /// <summary>Builds the <c>extension.resume_rejected</c> frame -- identical shape previously
     /// duplicated across <c>ResumeCoordinator.RejectLateResumeAsync</c> (literal
@@ -54,7 +54,7 @@ internal static class ResumeEnvelope
     /// fresh-path/no-registry announces both already built inline.</summary>
     public static JsonObject BuildSessionMetadataFrame(SessionIdentifiers identifiers, string? resumeId)
     {
-        var frame = identifiers.ToFrame("extension.session_metadata");
+        JsonObject frame = identifiers.ToFrame("extension.session_metadata");
         if (resumeId is not null)
         {
             frame["resumeId"] = resumeId;

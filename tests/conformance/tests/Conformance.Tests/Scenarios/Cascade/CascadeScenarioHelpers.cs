@@ -1,6 +1,6 @@
+using System.Text.Json.Nodes;
 using Conformance.Fakes;
 using Conformance.Harness;
-using System.Text.Json.Nodes;
 
 namespace Conformance.Tests.Scenarios.Cascade;
 
@@ -69,36 +69,24 @@ public static class CascadeScenarioHelpers
         string? persona = null, string? mode = null, bool waitOutAcousticTail = true)
     {
         chat.EnqueueMessage(new JsonObject { ["role"] = "assistant", ["content"] = "Welcome to the drive-thru!" });
-        var browser = await ConnectAsync(fixture, model, ct, persona, mode).ConfigureAwait(false);
+        RealtimeBrowserClient browser = await ConnectAsync(fixture, model, ct, persona, mode).ConfigureAwait(false);
         try
         {
-            var metadata = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_metadata", FrameTimeout, ct)
-                .ConfigureAwait(false);
-            if (metadata is null)
-            {
-                throw new InvalidOperationException($"Expected extension.session_metadata within {FrameTimeout}.");
-            }
+            RecordedFrame metadata = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_metadata", FrameTimeout, ct)
+                .ConfigureAwait(false) ?? throw new InvalidOperationException($"Expected extension.session_metadata within {FrameTimeout}.");
 
-            var greetingDone = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "response.done", FrameTimeout, ct)
-                .ConfigureAwait(false);
-            if (greetingDone is null)
-            {
-                throw new InvalidOperationException($"Expected the connect-time greeting's own response.done within {FrameTimeout}.");
-            }
+            RecordedFrame greetingDone = await browser.ReceivedFrames.WaitForAsync(f => f.Type == "response.done", FrameTimeout, ct)
+                .ConfigureAwait(false) ?? throw new InvalidOperationException($"Expected the connect-time greeting's own response.done within {FrameTimeout}.");
 
             // #236 Rick re-review item 4: wait for the greeting's own `extension.round_trip_token`,
             // not just `response.done` -- `response.done` is sent mid-turn-teardown, BEFORE the
             // round-trip token frame (see CascadeProcessor.RunTurnAndSpeakAsync), so a caller that
             // proceeds immediately after `response.done` can race the greeting's own trailing frame
             // and misattribute it to the guest's first turn once GreetingWatermark is used to filter.
-            var greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+            RecordedFrame greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
                     f => f.Type == "extension.round_trip_token", FrameTimeout, ct)
-                .ConfigureAwait(false);
-            if (greetingRoundTrip is null)
-            {
-                throw new InvalidOperationException(
+                .ConfigureAwait(false) ?? throw new InvalidOperationException(
                     $"Expected the connect-time greeting's own extension.round_trip_token within {FrameTimeout}.");
-            }
 
             if (waitOutAcousticTail)
             {
@@ -125,17 +113,17 @@ public static class CascadeScenarioHelpers
     /// </summary>
     public static async Task SendGuestTurnAsync(RealtimeBrowserClient browser, CancellationToken ct)
     {
-        var speechChunk = GenerateTone(SilenceSamplesNeeded, amplitude: 24000);
-        var silenceChunk = GenerateTone(SilenceSamplesNeeded, amplitude: 0);
+        byte[] speechChunk = GenerateTone(SilenceSamplesNeeded, amplitude: 24000);
+        byte[] silenceChunk = GenerateTone(SilenceSamplesNeeded, amplitude: 0);
         await browser.SendInputAudioAppendAsync(Convert.ToBase64String(speechChunk), ct).ConfigureAwait(false);
         await browser.SendInputAudioAppendAsync(Convert.ToBase64String(silenceChunk), ct).ConfigureAwait(false);
     }
 
     private static byte[] GenerateTone(int sampleCount, short amplitude)
     {
-        var bytes = new byte[sampleCount * 2];
-        var sample = BitConverter.GetBytes(amplitude);
-        for (var i = 0; i < sampleCount; i++)
+        byte[] bytes = new byte[sampleCount * 2];
+        byte[] sample = BitConverter.GetBytes(amplitude);
+        for (int i = 0; i < sampleCount; i++)
         {
             sample.CopyTo(bytes, i * 2);
         }

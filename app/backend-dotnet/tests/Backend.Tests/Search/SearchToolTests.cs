@@ -33,7 +33,7 @@ internal sealed class QueuedHttpHandler : HttpMessageHandler
         {
             RequestBodies.Add(await request.Content.ReadAsStringAsync(cancellationToken));
         }
-        var (status, body) = _responses.Count > 0
+        (HttpStatusCode status, string? body) = _responses.Count > 0
             ? _responses.Dequeue()
             : (HttpStatusCode.InternalServerError, """{"error":{"message":"no queued response"}}""");
         return new HttpResponseMessage(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
@@ -64,7 +64,7 @@ public sealed class SearchToolTests
         string? menuMode = null, Persona? persona = null, Func<string, string?>? effectiveMachineStatus = null)
     {
         persona ??= DeltaFixture.Load();
-        var menu = PersonaOrderFactory.GetMenuCatalog(persona);
+        MenuCatalog menu = PersonaOrderFactory.GetMenuCatalog(persona);
         var searchConfig = SearchConfig.FromAppConfig(AppConfig.Load());
         var endpointConfig = new SearchEndpointConfig(
             endpoint: "https://fake-search.example.com",
@@ -98,7 +98,7 @@ public sealed class SearchToolTests
     [Fact]
     public async Task ExecuteAsync_FormatsRecordsIncludingDoubleEncodedSizesAndMachineOosSuffix()
     {
-        var handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.OK, """
+        QueuedHttpHandler handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.OK, """
             {
               "value": [
                 {
@@ -110,12 +110,12 @@ public sealed class SearchToolTests
               ]
             }
             """);
-        var tool = NewTool(handler, personaId: Guid.NewGuid().ToString("n"));
+        SearchTool tool = NewTool(handler, personaId: Guid.NewGuid().ToString("n"));
 
-        var result = await tool.ExecuteAsync(QueryArgs("shake"), TestContext.Current.CancellationToken);
+        ToolResult result = await tool.ExecuteAsync(QueryArgs("shake"), TestContext.Current.CancellationToken);
 
         Assert.Equal(ToolResultDirection.ToServer, result.Destination);
-        var text = result.ToText();
+        string text = result.ToText();
         Assert.Contains("[delta-shake]", text);
         Assert.Contains("Item: Delta Shake", text);
         Assert.Contains("Category: drinks", text);
@@ -127,10 +127,10 @@ public sealed class SearchToolTests
     [Fact]
     public async Task ExecuteAsync_NoValueRecords_ReturnsNoResultsFallback()
     {
-        var handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.OK, """{"value": []}""");
-        var tool = NewTool(handler, personaId: Guid.NewGuid().ToString("n"));
+        QueuedHttpHandler handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.OK, """{"value": []}""");
+        SearchTool tool = NewTool(handler, personaId: Guid.NewGuid().ToString("n"));
 
-        var result = await tool.ExecuteAsync(QueryArgs("nothing matches this"), TestContext.Current.CancellationToken);
+        ToolResult result = await tool.ExecuteAsync(QueryArgs("nothing matches this"), TestContext.Current.CancellationToken);
 
         Assert.Equal("No matching menu entries found.", result.ToText());
     }
@@ -138,13 +138,13 @@ public sealed class SearchToolTests
     [Fact]
     public async Task ExecuteAsync_SecondCallWithSameQuery_IsServedFromCacheNotASecondRequest()
     {
-        var handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.OK, """
+        QueuedHttpHandler handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.OK, """
             {"value": [{"id": "delta-latte", "name": "Delta Latte", "category": "drinks", "sizes": "[]"}]}
             """);
-        var tool = NewTool(handler, personaId: Guid.NewGuid().ToString("n"));
+        SearchTool tool = NewTool(handler, personaId: Guid.NewGuid().ToString("n"));
 
-        var first = await tool.ExecuteAsync(QueryArgs("latte"), TestContext.Current.CancellationToken);
-        var second = await tool.ExecuteAsync(QueryArgs("LATTE  "), TestContext.Current.CancellationToken); // same key: trim+lower
+        ToolResult first = await tool.ExecuteAsync(QueryArgs("latte"), TestContext.Current.CancellationToken);
+        ToolResult second = await tool.ExecuteAsync(QueryArgs("LATTE  "), TestContext.Current.CancellationToken); // same key: trim+lower
 
         Assert.Equal(first.ToText(), second.ToText());
         Assert.Single(handler.RequestBodies); // only ONE HTTP round trip for both calls
@@ -159,11 +159,11 @@ public sealed class SearchToolTests
     [Fact]
     public async Task ExecuteAsync_PackDownButSessionOverridesMachineUp_ItemIsNotTaggedOos()
     {
-        var persona = DeltaFixture.Load("test-delta");
-        var order = PersonaOrderFactory.CreateOrderState(persona);
+        Persona persona = DeltaFixture.Load("test-delta");
+        OrderState order = PersonaOrderFactory.CreateOrderState(persona);
         Assert.True(order.SetMachineOverride("delta_machine", "up"));
 
-        var handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.OK, """
+        QueuedHttpHandler handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.OK, """
             {
               "value": [
                 {
@@ -175,11 +175,11 @@ public sealed class SearchToolTests
               ]
             }
             """);
-        var tool = NewTool(
+        SearchTool tool = NewTool(
             handler, personaId: Guid.NewGuid().ToString("n"), persona: persona,
             effectiveMachineStatus: order.EffectiveMachineStatus);
 
-        var result = await tool.ExecuteAsync(QueryArgs("shake"), TestContext.Current.CancellationToken);
+        ToolResult result = await tool.ExecuteAsync(QueryArgs("shake"), TestContext.Current.CancellationToken);
 
         Assert.DoesNotContain("[OOS:", result.ToText(), StringComparison.Ordinal);
     }
@@ -191,11 +191,11 @@ public sealed class SearchToolTests
     [Fact]
     public async Task ExecuteAsync_PackUpButSessionOverridesMachineDown_ItemIsTaggedOos()
     {
-        var persona = DeltaFixture.Load("test-beta");
-        var order = PersonaOrderFactory.CreateOrderState(persona);
+        Persona persona = DeltaFixture.Load("test-beta");
+        OrderState order = PersonaOrderFactory.CreateOrderState(persona);
         Assert.True(order.SetMachineOverride("soda_machine", "down"));
 
-        var handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.OK, """
+        QueuedHttpHandler handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.OK, """
             {
               "value": [
                 {
@@ -207,11 +207,11 @@ public sealed class SearchToolTests
               ]
             }
             """);
-        var tool = NewTool(
+        SearchTool tool = NewTool(
             handler, personaId: Guid.NewGuid().ToString("n"), persona: persona,
             effectiveMachineStatus: order.EffectiveMachineStatus);
 
-        var result = await tool.ExecuteAsync(QueryArgs("root beer"), TestContext.Current.CancellationToken);
+        ToolResult result = await tool.ExecuteAsync(QueryArgs("root beer"), TestContext.Current.CancellationToken);
 
         Assert.Contains("[OOS: Soda machine is down]", result.ToText(), StringComparison.Ordinal);
     }
@@ -226,9 +226,9 @@ public sealed class SearchToolTests
     [Fact]
     public async Task ExecuteAsync_CacheHit_IsReformattedAgainstTheCurrentCallersOwnOverrideState()
     {
-        var persona = DeltaFixture.Load("test-beta"); // soda_machine pack default "operational"/up
-        var personaId = Guid.NewGuid().ToString("n"); // shared cache key namespace for both calls
-        var handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.OK, """
+        Persona persona = DeltaFixture.Load("test-beta"); // soda_machine pack default "operational"/up
+        string personaId = Guid.NewGuid().ToString("n"); // shared cache key namespace for both calls
+        QueuedHttpHandler handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.OK, """
             {
               "value": [
                 {
@@ -243,18 +243,18 @@ public sealed class SearchToolTests
 
         // First caller's own session has overridden soda_machine DOWN -- this call issues the
         // one real HTTP request and populates the cache with the RAW record.
-        var downOrder = PersonaOrderFactory.CreateOrderState(persona);
+        OrderState downOrder = PersonaOrderFactory.CreateOrderState(persona);
         Assert.True(downOrder.SetMachineOverride("soda_machine", "down"));
-        var downTool = NewTool(handler, personaId: personaId, persona: persona, effectiveMachineStatus: downOrder.EffectiveMachineStatus);
-        var downResult = await downTool.ExecuteAsync(QueryArgs("root beer"), TestContext.Current.CancellationToken);
+        SearchTool downTool = NewTool(handler, personaId: personaId, persona: persona, effectiveMachineStatus: downOrder.EffectiveMachineStatus);
+        ToolResult downResult = await downTool.ExecuteAsync(QueryArgs("root beer"), TestContext.Current.CancellationToken);
         Assert.Contains("[OOS: Soda machine is down]", downResult.ToText(), StringComparison.Ordinal);
 
         // Second caller's own session has NO override (pack default "up") and asks the exact
         // same query -- served from cache (still only one HTTP request total), but reformatted
         // fresh against THIS caller's own (un-overridden) effective status.
-        var upOrder = PersonaOrderFactory.CreateOrderState(persona);
-        var upTool = NewTool(handler, personaId: personaId, persona: persona, effectiveMachineStatus: upOrder.EffectiveMachineStatus);
-        var upResult = await upTool.ExecuteAsync(QueryArgs("root beer"), TestContext.Current.CancellationToken);
+        OrderState upOrder = PersonaOrderFactory.CreateOrderState(persona);
+        SearchTool upTool = NewTool(handler, personaId: personaId, persona: persona, effectiveMachineStatus: upOrder.EffectiveMachineStatus);
+        ToolResult upResult = await upTool.ExecuteAsync(QueryArgs("root beer"), TestContext.Current.CancellationToken);
 
         Assert.DoesNotContain("[OOS:", upResult.ToText(), StringComparison.Ordinal);
         Assert.Single(handler.RequestBodies); // only ONE HTTP round trip for both calls
@@ -263,16 +263,16 @@ public sealed class SearchToolTests
     [Fact]
     public async Task ExecuteAsync_FieldMismatch400_RetriesWithMinimalSelectAndSucceeds()
     {
-        var handler = new QueuedHttpHandler()
+        QueuedHttpHandler handler = new QueuedHttpHandler()
             .Enqueue(HttpStatusCode.BadRequest, """
                 {"error":{"code":"InvalidRequestParameter","message":"Could not find a property named 'sizes' on type 'search.document'."}}
                 """)
             .Enqueue(HttpStatusCode.OK, """
                 {"value": [{"id": "delta-burger", "description": "Test Delta's plain burger."}]}
                 """);
-        var tool = NewTool(handler, personaId: Guid.NewGuid().ToString("n"));
+        SearchTool tool = NewTool(handler, personaId: Guid.NewGuid().ToString("n"));
 
-        var result = await tool.ExecuteAsync(QueryArgs("burger"), TestContext.Current.CancellationToken);
+        ToolResult result = await tool.ExecuteAsync(QueryArgs("burger"), TestContext.Current.CancellationToken);
 
         Assert.Equal(2, handler.RequestBodies.Count);
         // The retry's own `select` is the minimal [identifierField, contentField] projection.
@@ -284,12 +284,12 @@ public sealed class SearchToolTests
     [Fact]
     public async Task ExecuteAsync_EveryAttemptFails_ReturnsTheGenericApologyFallback()
     {
-        var handler = new QueuedHttpHandler()
+        QueuedHttpHandler handler = new QueuedHttpHandler()
             .Enqueue(HttpStatusCode.InternalServerError, """{"error":{"message":"boom"}}""")
             .Enqueue(HttpStatusCode.InternalServerError, """{"error":{"message":"boom again"}}""");
-        var tool = NewTool(handler, personaId: Guid.NewGuid().ToString("n"));
+        SearchTool tool = NewTool(handler, personaId: Guid.NewGuid().ToString("n"));
 
-        var result = await tool.ExecuteAsync(QueryArgs("anything"), TestContext.Current.CancellationToken);
+        ToolResult result = await tool.ExecuteAsync(QueryArgs("anything"), TestContext.Current.CancellationToken);
 
         Assert.Equal("I'm sorry, I can't reach our menu data right now.", result.ToText());
     }
@@ -316,7 +316,7 @@ public sealed class SearchToolTests
             cts.Cancel();
             return new TaskCanceledException("simulated barge-in cancellation mid-request");
         });
-        var tool = NewTool(handler, personaId: Guid.NewGuid().ToString("n"));
+        SearchTool tool = NewTool(handler, personaId: Guid.NewGuid().ToString("n"));
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => tool.ExecuteAsync(QueryArgs("anything"), cts.Token));
@@ -331,8 +331,8 @@ public sealed class SearchToolTests
     [Fact]
     public async Task ExecuteAsync_SemanticRankerEnabled_SendsQueryTypeSemanticAndSemanticConfiguration()
     {
-        var handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.OK, """{"value": []}""");
-        var tool = NewTool(handler, personaId: Guid.NewGuid().ToString("n"), useSemanticRanker: true);
+        QueuedHttpHandler handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.OK, """{"value": []}""");
+        SearchTool tool = NewTool(handler, personaId: Guid.NewGuid().ToString("n"), useSemanticRanker: true);
 
         await tool.ExecuteAsync(QueryArgs("shake"), TestContext.Current.CancellationToken);
 
@@ -351,16 +351,16 @@ public sealed class SearchToolTests
     [Fact]
     public async Task ExecuteAsync_SemanticRankerRejectedByService_RetriesWithoutSemanticAndSucceeds()
     {
-        var handler = new QueuedHttpHandler()
+        QueuedHttpHandler handler = new QueuedHttpHandler()
             .Enqueue(HttpStatusCode.BadRequest, """
                 {"error":{"code":"InvalidRequestParameter","message":"semantic ranker is not available for this service"}}
                 """)
             .Enqueue(HttpStatusCode.OK, """
                 {"value": [{"id": "delta-latte", "name": "Delta Latte", "category": "drinks", "sizes": "[]"}]}
                 """);
-        var tool = NewTool(handler, personaId: Guid.NewGuid().ToString("n"), useSemanticRanker: true);
+        SearchTool tool = NewTool(handler, personaId: Guid.NewGuid().ToString("n"), useSemanticRanker: true);
 
-        var result = await tool.ExecuteAsync(QueryArgs("latte"), TestContext.Current.CancellationToken);
+        ToolResult result = await tool.ExecuteAsync(QueryArgs("latte"), TestContext.Current.CancellationToken);
 
         Assert.Equal(2, handler.RequestBodies.Count);
         using var retryBody = JsonDocument.Parse(handler.RequestBodies[1]);
@@ -384,8 +384,8 @@ public sealed class SearchToolTests
     [InlineData("lunch")]
     public async Task ExecuteAsync_BoundMenuMode_SendsFilterAdmittingAllDayAndPeriodlessItems(string mode)
     {
-        var handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.OK, """{"value": []}""");
-        var tool = NewTool(handler, personaId: Guid.NewGuid().ToString("n"), menuMode: mode);
+        QueuedHttpHandler handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.OK, """{"value": []}""");
+        SearchTool tool = NewTool(handler, personaId: Guid.NewGuid().ToString("n"), menuMode: mode);
 
         await tool.ExecuteAsync(QueryArgs("anything"), TestContext.Current.CancellationToken);
 
@@ -418,12 +418,12 @@ public sealed class SearchToolTests
     [InlineData("Delta Shake", "lunch")]
     public async Task ExecuteAsync_PeriodlessItemIsAdmittedByBothTheAddGateAndTheSearchFilter(string itemName, string mode)
     {
-        var persona = DeltaFixture.Load();
-        var menu = PersonaOrderFactory.GetMenuCatalog(persona);
+        Persona persona = DeltaFixture.Load();
+        MenuCatalog menu = PersonaOrderFactory.GetMenuCatalog(persona);
         Assert.True(menu.ItemAvailableNow(itemName, mode));
 
-        var handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.OK, """{"value": []}""");
-        var tool = NewTool(handler, personaId: Guid.NewGuid().ToString("n"), menuMode: mode);
+        QueuedHttpHandler handler = new QueuedHttpHandler().Enqueue(HttpStatusCode.OK, """{"value": []}""");
+        SearchTool tool = NewTool(handler, personaId: Guid.NewGuid().ToString("n"), menuMode: mode);
         await tool.ExecuteAsync(QueryArgs(itemName), TestContext.Current.CancellationToken);
 
         using var body = JsonDocument.Parse(handler.RequestBodies[0]);

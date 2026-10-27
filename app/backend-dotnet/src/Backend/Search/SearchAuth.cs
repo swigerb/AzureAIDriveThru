@@ -27,7 +27,7 @@ internal sealed class DefaultAzureCredentialSearchTokenProvider : ISearchBearerT
 {
     // Azure AI Search's own data-plane scope -- the search equivalent of PR #140 R5's
     // "https://cognitiveservices.azure.com/.default" for the realtime upstream connect.
-    private static readonly string[] Scopes = ["https://search.azure.com/.default"];
+    private static readonly string[] s_scopes = ["https://search.azure.com/.default"];
 
     private readonly TokenCredential _credential;
 
@@ -38,8 +38,8 @@ internal sealed class DefaultAzureCredentialSearchTokenProvider : ISearchBearerT
 
     public async Task<string> GetTokenAsync(CancellationToken cancellationToken)
     {
-        var token = await _credential
-            .GetTokenAsync(new TokenRequestContext(Scopes), cancellationToken)
+        AccessToken token = await _credential
+            .GetTokenAsync(new TokenRequestContext(s_scopes), cancellationToken)
             .ConfigureAwait(false);
         return token.Token;
     }

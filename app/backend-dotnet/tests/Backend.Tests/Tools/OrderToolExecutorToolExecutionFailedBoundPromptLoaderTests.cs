@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Backend.Ordering;
+using Backend.Personas;
 using Backend.Prompts;
 using Backend.Tests.TestSupport;
 using Backend.Tools;
@@ -16,7 +17,7 @@ namespace Backend.Tests.Tools;
 /// <see cref="OrderToolExecutor"/>'s own `tool_execution_failed` site (missing required
 /// `update_order` arguments) already renders from its OWN constructor-injected
 /// <see cref="PromptLoader"/> field (<c>_promptLoader</c>), which <see
-/// cref="Sessions.RealtimeProcessor.RunSessionAsync"/> constructs per-session from THIS
+/// cref="Backend.Sessions.RealtimeProcessor.RunSessionAsync"/> constructs per-session from THIS
 /// connection's own bound persona (<c>_promptLoaders.TryGetValue(persona.Id, ...)</c>) -- so the
 /// production code was already correct here, unlike Python's. This test exists because, before
 /// it, nothing proved that: a regression that swapped in a shared/default loader instead of the
@@ -48,9 +49,9 @@ public sealed class OrderToolExecutorToolExecutionFailedBoundPromptLoaderTests :
     [Fact]
     public async Task UpdateOrder_missing_required_args_renders_tool_execution_failed_from_THIS_executors_own_bound_loader()
     {
-        var ct = TestContext.Current.CancellationToken;
-        var persona = DeltaFixture.Load();
-        var menu = PersonaOrderFactory.GetMenuCatalog(persona);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Persona persona = DeltaFixture.Load();
+        MenuCatalog menu = PersonaOrderFactory.GetMenuCatalog(persona);
 
         var widgetcoLoader = new PromptLoader(_personasDir, "widgetco");
         var widgetcoExecutor = new OrderToolExecutor(
@@ -60,10 +61,10 @@ public sealed class OrderToolExecutorToolExecutionFailedBoundPromptLoaderTests :
         var northwindExecutor = new OrderToolExecutor(
             PersonaOrderFactory.CreateOrderState(persona), menu, northwindLoader, MaxItemQuantity, MaxOrderItems);
 
-        var missingArgs = JsonSerializer.SerializeToElement(new Dictionary<string, object?> { ["action"] = "add" });
+        JsonElement missingArgs = JsonSerializer.SerializeToElement(new Dictionary<string, object?> { ["action"] = "add" });
 
-        var widgetcoResult = await widgetcoExecutor.ExecuteAsync("update_order", missingArgs, ct);
-        var northwindResult = await northwindExecutor.ExecuteAsync("update_order", missingArgs, ct);
+        ToolResult widgetcoResult = await widgetcoExecutor.ExecuteAsync("update_order", missingArgs, ct);
+        ToolResult northwindResult = await northwindExecutor.ExecuteAsync("update_order", missingArgs, ct);
 
         Assert.Equal("Widgetco's own tool failure text.", widgetcoResult.ToText());
         Assert.Equal("Northwind's own, different, tool failure text.", northwindResult.ToText());
@@ -72,7 +73,7 @@ public sealed class OrderToolExecutorToolExecutionFailedBoundPromptLoaderTests :
 
     private void WriteMinimalPromptPack(string personaId, string toolExecutionFailedText)
     {
-        var promptsDir = Path.Combine(_personasDir, personaId, "prompts");
+        string promptsDir = Path.Combine(_personasDir, personaId, "prompts");
         Directory.CreateDirectory(promptsDir);
 
         File.WriteAllText(Path.Combine(promptsDir, "system_prompt.yaml"), """

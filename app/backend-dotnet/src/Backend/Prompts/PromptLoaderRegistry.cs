@@ -8,8 +8,6 @@ namespace Backend.Prompts;
 /// </summary>
 internal sealed class PromptLoaderRegistry
 {
-    private readonly IReadOnlyDictionary<string, PromptLoader> _loaders;
-
     public PromptLoaderRegistry(string personasDir, PersonaCatalog personaCatalog)
     {
         var loaders = new Dictionary<string, PromptLoader>(StringComparer.Ordinal)
@@ -18,33 +16,33 @@ internal sealed class PromptLoaderRegistry
         };
         var allToolNames = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var personaId in personaCatalog.Ids)
+        foreach (string personaId in personaCatalog.Ids)
         {
-            if (!loaders.TryGetValue(personaId, out var loader))
+            if (!loaders.TryGetValue(personaId, out PromptLoader? loader))
             {
                 loader = new PromptLoader(personasDir, personaId);
                 loaders[personaId] = loader;
             }
 
-            foreach (var schema in loader.ToolSchemas)
+            foreach (IReadOnlyDictionary<object, object> schema in loader.ToolSchemas)
             {
-                if (schema.TryGetValue("name", out var nameObj) && nameObj?.ToString() is { Length: > 0 } toolName)
+                if (schema.TryGetValue("name", out object? nameObj) && nameObj?.ToString() is { Length: > 0 } toolName)
                 {
                     allToolNames.Add(toolName);
                 }
             }
         }
 
-        _loaders = loaders;
+        Loaders = loaders;
         AllToolNames = allToolNames;
     }
 
-    public IReadOnlyDictionary<string, PromptLoader> Loaders => _loaders;
+    public IReadOnlyDictionary<string, PromptLoader> Loaders { get; }
 
     public IReadOnlySet<string> AllToolNames { get; }
 
     public PromptLoader GetRequired(string personaId) =>
-        _loaders.TryGetValue(personaId, out var loader)
+        Loaders.TryGetValue(personaId, out PromptLoader? loader)
             ? loader
             : throw new KeyNotFoundException($"No prompt loader is registered for persona '{personaId}'.");
 }

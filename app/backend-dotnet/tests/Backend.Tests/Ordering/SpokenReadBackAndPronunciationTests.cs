@@ -93,22 +93,22 @@ public sealed class ShippedPersonaPronunciationAndSpokenNameTests
     [Fact]
     public void Every_shipped_packs_pronunciation_lexicon_is_applied()
     {
-        var catalog = AllShippedPacks();
-        var anyPackDeclaresALexicon = false;
+        PersonaCatalog catalog = AllShippedPacks();
+        bool anyPackDeclaresALexicon = false;
 
-        foreach (var id in catalog.Ids)
+        foreach (string id in catalog.Ids)
         {
-            var persona = catalog.Get(id);
-            var pronunciations = persona.Pronunciations;
+            Persona persona = catalog.Get(id);
+            IReadOnlyDictionary<string, string>? pronunciations = persona.Pronunciations;
             if (pronunciations is not { Count: > 0 })
             {
                 continue;
             }
 
             anyPackDeclaresALexicon = true;
-            foreach (var (rawKey, spokenForm) in pronunciations)
+            foreach ((string? rawKey, string? spokenForm) in pronunciations)
             {
-                var result = MenuCatalog.ApplyLexicon($"Example {rawKey} text", pronunciations);
+                string result = MenuCatalog.ApplyLexicon($"Example {rawKey} text", pronunciations);
                 Assert.True(result.Contains(spokenForm), $"{id}: {rawKey} was not respelled");
                 Assert.True(!result.Contains(rawKey), $"{id}: raw key {rawKey} survived");
             }
@@ -123,17 +123,17 @@ public sealed class ShippedPersonaPronunciationAndSpokenNameTests
     [Fact]
     public void Every_shipped_packs_item_spoken_name_is_applied_via_spoken()
     {
-        var catalog = AllShippedPacks();
-        var anyPackDeclaresASpokenName = false;
+        PersonaCatalog catalog = AllShippedPacks();
+        bool anyPackDeclaresASpokenName = false;
 
-        foreach (var id in catalog.Ids)
+        foreach (string id in catalog.Ids)
         {
-            var persona = catalog.Get(id);
-            var menu = PersonaOrderFactory.GetMenuCatalog(persona);
+            Persona persona = catalog.Get(id);
+            MenuCatalog menu = PersonaOrderFactory.GetMenuCatalog(persona);
 
-            foreach (var category in persona.Menu.MenuItems)
+            foreach (PersonaMenuCategory category in persona.Menu.MenuItems)
             {
-                foreach (var item in category.Items)
+                foreach (PersonaMenuItem item in category.Items)
                 {
                     if (string.IsNullOrEmpty(item.SpokenName))
                     {
@@ -141,7 +141,7 @@ public sealed class ShippedPersonaPronunciationAndSpokenNameTests
                     }
 
                     anyPackDeclaresASpokenName = true;
-                    var result = menu.Spoken(item.Name);
+                    string result = menu.Spoken(item.Name);
                     Assert.True(result == item.SpokenName, $"{id}: {item.Name} was not spoken as {item.SpokenName}");
                     if (item.Name != item.SpokenName)
                     {
@@ -161,7 +161,7 @@ public sealed class ShippedPersonaPronunciationAndSpokenNameTests
     public void Unrelated_item_is_unaffected_by_spoken_name_overrides()
     {
         // test-zeta's own fixture item has no spokenName override, so Spoken() must be a no-op.
-        var menu = PersonaOrderFactory.GetMenuCatalog(ZetaFixture.Load());
+        MenuCatalog menu = PersonaOrderFactory.GetMenuCatalog(ZetaFixture.Load());
         Assert.Equal("Zeta Cola", menu.Spoken("Zeta Cola"));
     }
 }
@@ -183,14 +183,14 @@ public sealed class SpokenReadBackCompositionTests
     [Fact]
     public void Empty_order_readback_is_the_empty_order_sentence()
     {
-        var order = PersonaOrderFactory.CreateOrderState(Pack());
+        OrderState order = PersonaOrderFactory.CreateOrderState(Pack());
         Assert.Equal("Your order is currently empty.", order.Summary.SpokenReadBack);
     }
 
     [Fact]
     public void Single_item_readback_uses_singular_one_prefix_and_includes_total()
     {
-        var order = PersonaOrderFactory.CreateOrderState(Pack());
+        OrderState order = PersonaOrderFactory.CreateOrderState(Pack());
         order.HandleOrderUpdate("add", "Zeta Cola", "regular", 1, 0.01m);
 
         Assert.Contains("I have one ", order.Summary.SpokenReadBack);
@@ -203,7 +203,7 @@ public sealed class SpokenReadBackCompositionTests
     [Fact]
     public void Multiple_quantity_readback_uses_numeric_prefix()
     {
-        var order = PersonaOrderFactory.CreateOrderState(Pack());
+        OrderState order = PersonaOrderFactory.CreateOrderState(Pack());
         order.HandleOrderUpdate("add", "Zeta Cola", "regular", 3, 0.01m);
 
         // #313 (Rick's review, item 1/2): a bare digit quantity is ambiguous next to a count-based
@@ -214,7 +214,7 @@ public sealed class SpokenReadBackCompositionTests
     [Fact]
     public void Multiple_distinct_items_are_joined_with_an_oxford_and()
     {
-        var order = PersonaOrderFactory.CreateOrderState(Pack());
+        OrderState order = PersonaOrderFactory.CreateOrderState(Pack());
         order.HandleOrderUpdate("add", "Zeta Cola", "regular", 1, 0.01m);
         order.HandleOrderUpdate("add", "ZORBS® Bite Treats", "10 count", 1, 0.01m);
 
@@ -224,7 +224,7 @@ public sealed class SpokenReadBackCompositionTests
     [Fact]
     public void Get_grouped_order_for_readback_matches_the_cached_summary_field()
     {
-        var order = PersonaOrderFactory.CreateOrderState(Pack());
+        OrderState order = PersonaOrderFactory.CreateOrderState(Pack());
         order.HandleOrderUpdate("add", "Zeta Cola", "regular", 2, 0.01m);
 
         Assert.Equal(order.Summary.SpokenReadBack, order.GetGroupedOrderForReadback());
@@ -233,12 +233,12 @@ public sealed class SpokenReadBackCompositionTests
     [Fact]
     public void Readback_updates_after_a_subsequent_mutation()
     {
-        var order = PersonaOrderFactory.CreateOrderState(Pack());
+        OrderState order = PersonaOrderFactory.CreateOrderState(Pack());
         order.HandleOrderUpdate("add", "Zeta Cola", "regular", 1, 0.01m);
-        var first = order.Summary.SpokenReadBack;
+        string first = order.Summary.SpokenReadBack;
 
         order.HandleOrderUpdate("add", "ZORBS® Bite Treats", "10 count", 1, 0.01m);
-        var second = order.Summary.SpokenReadBack;
+        string second = order.Summary.SpokenReadBack;
 
         Assert.NotEqual(first, second);
     }
@@ -246,7 +246,7 @@ public sealed class SpokenReadBackCompositionTests
     [Fact]
     public void Zorbs_spoken_name_is_reflected_in_the_readback()
     {
-        var order = PersonaOrderFactory.CreateOrderState(Pack());
+        OrderState order = PersonaOrderFactory.CreateOrderState(Pack());
         order.HandleOrderUpdate("add", "ZORBS® Bite Treats", "10 count", 1, 0.01m);
 
         Assert.Contains("Zorb Bite Treats", order.Summary.SpokenReadBack);

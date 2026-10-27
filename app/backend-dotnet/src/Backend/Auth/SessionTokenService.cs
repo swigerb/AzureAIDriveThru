@@ -30,12 +30,12 @@ internal sealed class SessionTokenService(byte[] secret)
     /// </summary>
     public string Create(int expirySeconds = 900, string? oid = null)
     {
-        var exp = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + expirySeconds;
-        var payloadJson = oid is null
+        long exp = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + expirySeconds;
+        string payloadJson = oid is null
             ? $"{{\"exp\": {exp.ToString(CultureInfo.InvariantCulture)}}}"
             : $"{{\"exp\": {exp.ToString(CultureInfo.InvariantCulture)}, \"oid\": \"{oid}\"}}";
-        var payloadB64 = UrlSafeBase64Encode(Encoding.UTF8.GetBytes(payloadJson));
-        var signature = Sign(payloadB64);
+        string payloadB64 = UrlSafeBase64Encode(Encoding.UTF8.GetBytes(payloadJson));
+        string signature = Sign(payloadB64);
         return $"{payloadB64}.{signature}";
     }
 
@@ -52,14 +52,14 @@ internal sealed class SessionTokenService(byte[] secret)
     {
         oid = null;
 
-        var lastDot = token.LastIndexOf('.');
+        int lastDot = token.LastIndexOf('.');
         if (lastDot < 0)
         {
             return false;
         }
 
-        var payloadB64 = token[..lastDot];
-        var signature = token[(lastDot + 1)..];
+        string payloadB64 = token[..lastDot];
+        string signature = token[(lastDot + 1)..];
 
         // PR #96 review nit: Python's hmac.compare_digest(sig, expected_sig) is a plain
         // case-sensitive byte comparison against hexdigest()'s always-lowercase output, so an
@@ -67,7 +67,7 @@ internal sealed class SessionTokenService(byte[] secret)
         // as-is (no .ToLowerInvariant()) against our always-lowercase expectedSignature mirrors
         // that exactly -- a previous draft lowercased the presented signature first, which
         // accepted uppercase hex that Python rejects.
-        var expectedSignature = Sign(payloadB64);
+        string expectedSignature = Sign(payloadB64);
         if (!CryptographicOperations.FixedTimeEquals(
                 Encoding.ASCII.GetBytes(signature),
                 Encoding.ASCII.GetBytes(expectedSignature)))
@@ -89,8 +89,8 @@ internal sealed class SessionTokenService(byte[] secret)
         try
         {
             using var doc = JsonDocument.Parse(payloadBytes);
-            exp = doc.RootElement.TryGetProperty("exp", out var expElement) ? expElement.GetInt64() : 0;
-            if (doc.RootElement.TryGetProperty("oid", out var oidElement) && oidElement.ValueKind == JsonValueKind.String)
+            exp = doc.RootElement.TryGetProperty("exp", out JsonElement expElement) ? expElement.GetInt64() : 0;
+            if (doc.RootElement.TryGetProperty("oid", out JsonElement oidElement) && oidElement.ValueKind == JsonValueKind.String)
             {
                 oid = oidElement.GetString();
             }
@@ -111,8 +111,8 @@ internal sealed class SessionTokenService(byte[] secret)
 
     private string Sign(string payloadB64)
     {
-        var payloadB64Bytes = Encoding.ASCII.GetBytes(payloadB64);
-        var hash = HMACSHA256.HashData(_secret, payloadB64Bytes);
+        byte[] payloadB64Bytes = Encoding.ASCII.GetBytes(payloadB64);
+        byte[] hash = HMACSHA256.HashData(_secret, payloadB64Bytes);
         return Convert.ToHexStringLower(hash);
     }
 

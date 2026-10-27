@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 
@@ -24,15 +23,13 @@ namespace Conformance.Tests.Scenarios.Ordering;
 [Collection(ConformanceCollection.Name)]
 public sealed class SearchToolTests(ConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
-
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Search_returns_a_result_upstream_and_never_notifies_the_browser() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
         // Unique query text (module-scope `_search_cache` in tools.py is process-wide) so this
         // test's request is guaranteed to actually reach FakeSearchServer rather than short-
@@ -43,10 +40,10 @@ public sealed class SearchToolTests(ConformanceFixture fixture)
         // (and, with no relevance ranking in the fake, bury "cherry"/"limeade" behind burgers
         // that happen to sort earlier in menuItems.json) far more of the catalog than intended,
         // defeating the point of asserting on a specific matched item.
-        const string query = "conformance-issue9-search-happypath cherry limeade";
-        var result = await OrderScenarioHelpers.CallToolAsync(
+        const string Query = "conformance-issue9-search-happypath cherry limeade";
+        ToolCallResult result = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "search",
-            $$"""{"query":"{{query}}"}""",
+            $$"""{"query":"{{Query}}"}""",
             "call_search_happy_path", roundTripIndex, ct, toClient: false);
 
         Assert.False(string.IsNullOrWhiteSpace(result.FunctionCallOutputText));
@@ -65,9 +62,9 @@ public sealed class SearchToolTests(ConformanceFixture fixture)
         // on the browser at all (not just that we didn't wait for one) -- ToolResultDirection
         // .TO_SERVER means rtmt.py's `if result.destination in (TO_CLIENT, TO_BOTH)` guard is
         // never true for this tool.
-        var anySearchToolResponse = browser.ReceivedFrames.Snapshot().Any(f =>
+        bool anySearchToolResponse = browser.ReceivedFrames.Snapshot().Any(f =>
             f.Type == "extension.middle_tier_tool_response" &&
-            f.Json.TryGetProperty("tool_name", out var toolName) &&
+            f.Json.TryGetProperty("tool_name", out JsonElement toolName) &&
             toolName.GetString() == "search");
         Assert.False(anySearchToolResponse, "search must never emit extension.middle_tier_tool_response.");
     });
@@ -76,18 +73,18 @@ public sealed class SearchToolTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Search_retries_with_a_minimal_select_after_the_field_name_fallback_400() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        const string query = "sonic issue9 search fallback select mismatch";
-        const string rejectedField = "sizes"; // present in tools.py's normal select_fields, absent from its fallback select
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        const string Query = "sonic issue9 search fallback select mismatch";
+        const string RejectedField = "sizes"; // present in tools.py's normal select_fields, absent from its fallback select
 
-        fixture.Search.RejectSelectFieldOnce = rejectedField;
+        fixture.Search.RejectSelectFieldOnce = RejectedField;
 
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult result = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "search",
-            $$"""{"query":"{{query}}"}""",
+            $$"""{"query":"{{Query}}"}""",
             "call_search_fallback", roundTripIndex, ct, toClient: false);
 
         // The retry succeeded (a genuinely-failed search would instead return the TO_SERVER
@@ -97,39 +94,39 @@ public sealed class SearchToolTests(ConformanceFixture fixture)
         Assert.Null(fixture.Search.RejectSelectFieldOnce);
 
         var matchingRequests = fixture.Search.ReceivedRequests.Snapshot()
-            .Where(f => f.Json.TryGetProperty("search", out var s) && s.GetString() == query)
+            .Where(f => f.Json.TryGetProperty("search", out JsonElement s) && s.GetString() == Query)
             .ToList();
         Assert.Equal(2, matchingRequests.Count);
 
-        var firstSelect = matchingRequests[0].Json.GetProperty("select").GetString()!;
-        Assert.Contains(rejectedField, firstSelect.Split(',', StringSplitOptions.TrimEntries), StringComparer.OrdinalIgnoreCase);
+        string firstSelect = matchingRequests[0].Json.GetProperty("select").GetString()!;
+        Assert.Contains(RejectedField, firstSelect.Split(',', StringSplitOptions.TrimEntries), StringComparer.OrdinalIgnoreCase);
 
-        var retrySelect = matchingRequests[1].Json.GetProperty("select").GetString()!;
-        Assert.DoesNotContain(rejectedField, retrySelect.Split(',', StringSplitOptions.TrimEntries), StringComparer.OrdinalIgnoreCase);
+        string retrySelect = matchingRequests[1].Json.GetProperty("select").GetString()!;
+        Assert.DoesNotContain(RejectedField, retrySelect.Split(',', StringSplitOptions.TrimEntries), StringComparer.OrdinalIgnoreCase);
     });
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Session_survives_the_search_fallback_and_a_later_update_order_call_still_works() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        const string query = "sonic issue9 search fallback then order still works";
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        const string Query = "sonic issue9 search fallback then order still works";
         fixture.Search.RejectSelectFieldOnce = "sizes";
 
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var searchResult = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult searchResult = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "search",
-            $$"""{"query":"{{query}}"}""",
+            $$"""{"query":"{{Query}}"}""",
             "call_search_then_order", roundTripIndex, ct, toClient: false);
 
-        var orderResult = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult orderResult = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", "Tots", "medium", 1, 2.79m)],
             searchResult.RoundTripIndex, ct);
 
-        var order = JsonDocument.Parse(orderResult.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(orderResult.ToolResultJson!);
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
     });
 }

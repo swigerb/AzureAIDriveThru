@@ -41,27 +41,27 @@ public static class BackendLauncherFactory
         string? personasDir = null,
         CancellationToken cancellationToken = default)
     {
-        var explicitUrl = Environment.GetEnvironmentVariable("CONFORMANCE_BACKEND_URL");
+        string? explicitUrl = Environment.GetEnvironmentVariable("CONFORMANCE_BACKEND_URL");
         if (!string.IsNullOrWhiteSpace(explicitUrl))
         {
             return new ExternalBackend(new Uri(explicitUrl));
         }
 
-        var target = (Environment.GetEnvironmentVariable("CONFORMANCE_BACKEND") ?? "python").Trim().ToLowerInvariant();
+        string target = (Environment.GetEnvironmentVariable("CONFORMANCE_BACKEND") ?? "python").Trim().ToLowerInvariant();
 
         // Issue #76: resolve the persona axis exactly like the backend itself would (env var,
         // else disk discovery, else "sonic") -- see ConformancePersonas' own doc comment. A
         // fixture's Persona override is folded into the enabled set so it always actually takes
         // effect as DEFAULT_PERSONA, even if it isn't already covered by CONFORMANCE_PERSONAS or
         // disk discovery (ConformancePersonas.EnsureIncluded's own doc comment).
-        var resolvedPersonas = personas ?? ConformancePersonas.ResolveEnabled(
+        IReadOnlyList<string> resolvedPersonas = personas ?? ConformancePersonas.ResolveEnabled(
             Environment.GetEnvironmentVariable("CONFORMANCE_PERSONAS"), ConformancePersonas.DiscoverFromDisk);
         resolvedPersonas = ConformancePersonas.EnsureIncluded(resolvedPersonas, persona);
-        var resolvedDefaultPersona = ConformancePersonas.ResolveDefault(persona, resolvedPersonas);
+        string resolvedDefaultPersona = ConformancePersonas.ResolveDefault(persona, resolvedPersonas);
 
         var contract = BackendContract.ForPort(
             realtimeBaseUri, searchBaseUri, port, deployment, resolvedPersonas, resolvedDefaultPersona, personasDir);
-        var env = extraEnvironment ?? new Dictionary<string, string>();
+        IReadOnlyDictionary<string, string> env = extraEnvironment ?? new Dictionary<string, string>();
 
         return target switch
         {

@@ -1,5 +1,3 @@
-using System.IO;
-using System.Linq;
 using System.Reflection;
 using System.Text.Json;
 using Conformance.Harness;
@@ -39,18 +37,15 @@ public sealed class RealPackCapabilityCoverageTests
     [Trait("Dotnet", "ready")]
     public void Every_real_pack_with_bundle_autofill_has_a_bundle_autofill_theory_row()
     {
-        var personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
-        var discovered = ConformancePersonas.DiscoverFromDisk()
-            .Where(id => HasBundleAutoFillBlock(personasDir, id))
-            .ToArray();
+        string personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
+        string[] discovered = [.. ConformancePersonas.DiscoverFromDisk().Where(id => HasBundleAutoFillBlock(personasDir, id))];
         Assert.NotEmpty(discovered);
 
-        var covered = GetTheoryDataValues<PersonaBundleAutoFillMenuData.BundleAutoFillCase>(
+        string[] covered = [.. GetTheoryDataValues<PersonaBundleAutoFillMenuData.BundleAutoFillCase>(
                 typeof(RealPackBundleAutoFillConformanceTests), nameof(RealPackBundleAutoFillConformanceTests.DiscoveredBundleAutoFillCases))
-            .Select(row => row.PersonaId)
-            .ToArray();
+            .Select(row => row.PersonaId)];
 
-        var missing = discovered.Except(covered).ToArray();
+        string[] missing = [.. discovered.Except(covered)];
         Assert.True(missing.Length == 0,
             $"Real pack(s) with at least one bundle.autoFill block have no RealPackBundleAutoFillConformanceTests row: " +
             $"{string.Join(", ", missing)}. Either the discovered MemberData silently shrank, or a newly-added " +
@@ -61,16 +56,14 @@ public sealed class RealPackCapabilityCoverageTests
     [Trait("Dotnet", "ready")]
     public void Every_real_pack_with_dayparts_has_a_menu_mode_theory_row()
     {
-        var personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
-        var discovered = ConformancePersonas.DiscoverFromDisk()
-            .Where(id => PersonaDaypartsFeature.Read(personasDir, id))
-            .ToArray();
+        string personasDir = RepoPaths.PersonasDirectory(RepoPaths.FindRepoRoot());
+        string[] discovered = [.. ConformancePersonas.DiscoverFromDisk().Where(id => PersonaDaypartsFeature.Read(personasDir, id))];
         Assert.NotEmpty(discovered);
 
-        var covered = GetTheoryDataValues<string>(
+        List<string> covered = GetTheoryDataValues<string>(
             typeof(RealPackMenuModeConformanceTests), nameof(RealPackMenuModeConformanceTests.DiscoveredPersonaIds));
 
-        var missing = discovered.Except(covered).ToArray();
+        string[] missing = [.. discovered.Except(covered)];
         Assert.True(missing.Length == 0,
             $"Real pack(s) with features.dayparts:true have no RealPackMenuModeConformanceTests row: " +
             $"{string.Join(", ", missing)}.");
@@ -86,15 +79,15 @@ public sealed class RealPackCapabilityCoverageTests
     /// </summary>
     private static bool HasBundleAutoFillBlock(string personasDir, string personaId)
     {
-        var menuItemsPath = Path.Combine(personasDir, personaId, "menu", "menuItems.json");
+        string menuItemsPath = Path.Combine(personasDir, personaId, "menu", "menuItems.json");
         using var doc = JsonDocument.Parse(File.ReadAllText(menuItemsPath));
 
-        foreach (var category in doc.RootElement.GetProperty("menuItems").EnumerateArray())
+        foreach (JsonElement category in doc.RootElement.GetProperty("menuItems").EnumerateArray())
         {
-            foreach (var item in category.GetProperty("items").EnumerateArray())
+            foreach (JsonElement item in category.GetProperty("items").EnumerateArray())
             {
-                if (item.TryGetProperty("bundle", out var bundleElement) &&
-                    bundleElement.TryGetProperty("autoFill", out var autoFillElement) &&
+                if (item.TryGetProperty("bundle", out JsonElement bundleElement) &&
+                    bundleElement.TryGetProperty("autoFill", out JsonElement autoFillElement) &&
                     autoFillElement.ValueKind == JsonValueKind.Object &&
                     autoFillElement.EnumerateObject().Any())
                 {
@@ -108,9 +101,9 @@ public sealed class RealPackCapabilityCoverageTests
 
     private static List<T> GetTheoryDataValues<T>(Type declaringType, string methodName)
     {
-        var method = declaringType.GetMethod(methodName, BindingFlags.Public | BindingFlags.Static)
+        MethodInfo method = declaringType.GetMethod(methodName, BindingFlags.Public | BindingFlags.Static)
             ?? throw new InvalidOperationException($"{declaringType.Name}.{methodName} not found.");
         var data = (TheoryData<T>)method.Invoke(null, null)!;
-        return data.Select(row => row.Data).ToList();
+        return [.. data.Select(row => row.Data)];
     }
 }

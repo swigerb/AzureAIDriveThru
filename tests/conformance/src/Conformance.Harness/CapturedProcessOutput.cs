@@ -10,7 +10,7 @@ namespace Conformance.Harness;
 /// so it can be dumped into a test failure message without needing the process to still be
 /// alive or the test to have redirected output itself.
 /// </summary>
-public sealed class CapturedProcessOutput
+public sealed partial class CapturedProcessOutput
 {
     private const int MaxLines = 4000;
     private readonly ConcurrentQueue<string> _lines = new();
@@ -78,8 +78,8 @@ public sealed class CapturedProcessOutput
     /// instant, a literal <c>Z</c>, then a single space. One shared regex for both backends
     /// since they deliberately emit byte-identical prefixes.
     /// </summary>
-    private static readonly Regex BackendTimestampPrefix = new(
-        @"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z) ", RegexOptions.Compiled);
+    [GeneratedRegex(@"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z) ")]
+    private static partial Regex BackendTimestampPrefix { get; }
 
     /// <summary>
     /// #233: splits an optional backend-embedded self-timestamp off the front of a freshly
@@ -93,14 +93,14 @@ public sealed class CapturedProcessOutput
     /// </summary>
     private static (DateTimeOffset? Timestamp, string Content) StripBackendTimestamp(string line)
     {
-        var match = BackendTimestampPrefix.Match(line);
+        Match match = BackendTimestampPrefix.Match(line);
         if (!match.Success)
         {
             return (null, line);
         }
         if (!DateTimeOffset.TryParseExact(
                 match.Groups[1].Value, "yyyy-MM-ddTHH:mm:ss.ffffff'Z'",
-                CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed))
+                CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out DateTimeOffset parsed))
         {
             return (null, line);
         }
@@ -129,10 +129,10 @@ public sealed class CapturedProcessOutput
         // real read-time regardless: it drives WaitForOutputQuiescenceAsync's silence detection,
         // which is inherently about when *this harness* last saw output, not when the backend
         // wrote it.
-        var (embeddedTimestamp, content) = StripBackendTimestamp(line);
-        var displayTimestamp = embeddedTimestamp ?? DateTimeOffset.UtcNow;
+        (DateTimeOffset? embeddedTimestamp, string? content) = StripBackendTimestamp(line);
+        DateTimeOffset displayTimestamp = embeddedTimestamp ?? DateTimeOffset.UtcNow;
 
-        _lines.Enqueue($"[{displayTimestamp:HH:mm:ss.fff} {stream}] {content}");
+        _lines.Enqueue(string.Create(CultureInfo.InvariantCulture, $"[{displayTimestamp:HH:mm:ss.fff} {stream}] {content}"));
         if (Interlocked.Increment(ref _count) > MaxLines)
         {
             _lines.TryDequeue(out _);
@@ -174,10 +174,10 @@ public sealed class CapturedProcessOutput
     /// </summary>
     public string DumpSince(int watermark)
     {
-        var snapshot = _lines.ToArray();
-        var totalEverAppended = Volatile.Read(ref _count);
-        var evictedBeforeSnapshot = Math.Max(0, totalEverAppended - snapshot.Length);
-        var skip = Math.Max(0, watermark - evictedBeforeSnapshot);
+        string[] snapshot = [.. _lines];
+        int totalEverAppended = Volatile.Read(ref _count);
+        int evictedBeforeSnapshot = Math.Max(0, totalEverAppended - snapshot.Length);
+        int skip = Math.Max(0, watermark - evictedBeforeSnapshot);
         return string.Join(Environment.NewLine, snapshot.Skip(skip));
     }
 
@@ -196,8 +196,8 @@ public sealed class CapturedProcessOutput
     public async Task<bool> WaitForDiagnosticsAsync(
         Func<string, bool> predicate,
         TimeSpan timeout,
-        CancellationToken cancellationToken = default,
-        int sinceWatermark = 0)
+        int sinceWatermark = 0,
+        CancellationToken cancellationToken = default)
     {
         // #66 S3: one timeout task for the entire wait -- the previous version recomputed
         // "remaining" and allocated a fresh Task.Delay on every wake, which also meant a
@@ -216,7 +216,7 @@ public sealed class CapturedProcessOutput
                 signalTask = _signal.Task;
             }
 
-            var completed = await Task.WhenAny(signalTask, timeoutTask).ConfigureAwait(false);
+            Task completed = await Task.WhenAny(signalTask, timeoutTask).ConfigureAwait(false);
             if (completed == timeoutTask)
             {
                 // Rethrows only if cancellationToken (not the plain timeout) is what completed
@@ -233,8 +233,8 @@ public sealed class CapturedProcessOutput
     /// <summary>
     /// Waits until no new stdout/stderr line has been captured for at least
     /// <paramref name="idleWindow"/> (an explicit quiet-period signal, not a blind sleep), giving
-    /// up after <paramref name="maxWait"/> total regardless. Fixes #62: <see
-    /// cref="Conformance.Tests.ConformanceFixture.RunAsync(Func{Task}, int)"/> snapshots a
+    /// up after <paramref name="maxWait"/> total regardless. Fixes #62:
+    /// <c>Conformance.Tests.ConformanceFixture.RunAsync(Func{Task}, int)</c> snapshots a
     /// per-scenario baseline error count before running the scenario body; if a *previous*
     /// scenario's own already-accounted-for stderr line was still in flight through the
     /// ThreadPool callback at that instant, it could land just after this baseline snapshot and
@@ -250,7 +250,7 @@ public sealed class CapturedProcessOutput
     /// how long it takes when there is nothing to detect.
     /// </para>
     /// <para>
-    /// #103 (PR #123 review): <paramref name="idleWindow"/>/<paramref name="quietFor"/> are
+    /// #103 (PR #123 review): <paramref name="idleWindow"/>/<c>quietFor</c> are
     /// derived from <see cref="_lastAppendUtc"/> (a <see cref="DateTimeOffset"/>), but the actual
     /// wait below is a <c>Task.Delay</c> timer, whose resolution is coarser than that clock
     /// (~1ms on Linux, ~15.6ms on Windows) -- so a delay armed for exactly "however long is left
@@ -286,7 +286,7 @@ public sealed class CapturedProcessOutput
         TimeSpan maxWait,
         CancellationToken cancellationToken = default)
     {
-        var deadline = DateTimeOffset.UtcNow + maxWait;
+        DateTimeOffset deadline = DateTimeOffset.UtcNow + maxWait;
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -299,7 +299,7 @@ public sealed class CapturedProcessOutput
                 // #103: re-derived fresh on EVERY iteration (not gated to the first) -- see this
                 // method's own doc comment above for why a completed idle timer alone can't be
                 // trusted as proof that a full idleWindow has really elapsed.
-                var quietFor = DateTimeOffset.UtcNow - _lastAppendUtc;
+                TimeSpan quietFor = DateTimeOffset.UtcNow - _lastAppendUtc;
                 idleNeeded = quietFor >= idleWindow ? TimeSpan.Zero : idleWindow - quietFor;
             }
 
@@ -311,16 +311,16 @@ public sealed class CapturedProcessOutput
                 return true;
             }
 
-            var remaining = deadline - DateTimeOffset.UtcNow;
+            TimeSpan remaining = deadline - DateTimeOffset.UtcNow;
             if (remaining <= TimeSpan.Zero)
             {
                 return false;
             }
 
-            var cappedByDeadline = remaining < idleNeeded;
-            var waitFor = cappedByDeadline ? remaining : idleNeeded;
+            bool cappedByDeadline = remaining < idleNeeded;
+            TimeSpan waitFor = cappedByDeadline ? remaining : idleNeeded;
             var idleTask = Task.Delay(waitFor, cancellationToken);
-            var completed = await Task.WhenAny(signalTask, idleTask).ConfigureAwait(false);
+            Task completed = await Task.WhenAny(signalTask, idleTask).ConfigureAwait(false);
             if (completed == idleTask)
             {
                 await idleTask.ConfigureAwait(false); // rethrows only for a genuine cancellation.
@@ -337,7 +337,7 @@ public sealed class CapturedProcessOutput
 
     /// <summary>
     /// Counts unhandled-error incidents in captured stderr — a python.exe subprocess implementation
-    /// of the language-neutral <see cref="IBackendUnderTest.UnhandledErrorCount"/> signal (PR #22
+    /// of the language-neutral <see cref="IBackendUnderTest.UnhandledErrorCount()"/> signal (PR #22
     /// review item N5). Before this, scenarios asserted directly on <c>DumpDiagnostics()</c>
     /// containing/not-containing the literal string "Traceback", coupling every scenario to
     /// Python's exact log format. A C# backend (S2) will never print a Python traceback, so those
@@ -357,7 +357,7 @@ public sealed class CapturedProcessOutput
     /// call. That buffer is a bounded ring (<see cref="MaxLines"/>) that silently evicts its
     /// oldest lines once a long-running suite process crosses the cap — so a re-scan would forget
     /// about incidents whose lines had already scrolled out, making the return value able to go
-    /// *down* between calls. <see cref="ConformanceFixture.RunAsync(Func{Task}, int)"/> depends on
+    /// *down* between calls. <c>ConformanceFixture.RunAsync(Func{Task}, int)</c> depends on
     /// this being monotonically non-decreasing (it asserts <c>actual &lt;= baseline + allowed</c>
     /// across the scenario body) — a wrap partway through a suite run could otherwise make that
     /// delta go negative and silently hide a real new backend error. The count is now accumulated
@@ -373,7 +373,7 @@ public sealed class CapturedProcessOutput
     }
 
     /// <summary>Feeds one freshly-captured line into the incident-counting state machine (moved
-    /// here, off the dump buffer, per <see cref="CountUnhandledErrors"/>'s doc comment). Locked
+    /// here, off the dump buffer, per <see cref="CountUnhandledErrors()"/>'s doc comment). Locked
     /// because <see cref="Attach"/> wires stdout and stderr to independent process callbacks that
     /// can run on different threads concurrently.</summary>
     private void ScanLine(string stream, string content)
@@ -386,9 +386,9 @@ public sealed class CapturedProcessOutput
                 return;
             }
 
-            var isIndented = content.Length > 0 && char.IsWhiteSpace(content[0]);
-            var isTracebackHeader = content is "Traceback (most recent call last):";
-            var isErrorHeader = content.StartsWith("ERROR:", StringComparison.Ordinal);
+            bool isIndented = content.Length > 0 && char.IsWhiteSpace(content[0]);
+            bool isTracebackHeader = content is "Traceback (most recent call last):";
+            bool isErrorHeader = content.StartsWith("ERROR:", StringComparison.Ordinal);
 
             switch (_scanState)
             {
@@ -458,7 +458,7 @@ public sealed class CapturedProcessOutput
     /// incident -- but an incident whose full captured text (every content line from its header
     /// through its last frame/summary line, in order) satisfies <paramref name="isBenignIncident"/>
     /// is skipped entirely instead of counted. Added for issue #10/#26's Browser scenarios -- see
-    /// <see cref="Conformance.Tests.Scenarios.Browser.BrowserConformanceFixture"/>'s own doc
+    /// <c>Conformance.Tests.Scenarios.Browser.BrowserConformanceFixture</c>'s own doc
     /// comment for the one signature it actually filters and why. This overload never changes what
     /// <see cref="CountUnhandledErrors()"/> itself returns for any existing caller, and re-scans
     /// <see cref="_lines"/> directly rather than sharing #28 N13's incremental <see cref="ScanLine"/>
@@ -469,8 +469,8 @@ public sealed class CapturedProcessOutput
     /// </summary>
     public int CountUnhandledErrors(Func<IReadOnlyList<string>, bool> isBenignIncident)
     {
-        var count = 0;
-        var state = ErrorScanState.Idle;
+        int count = 0;
+        ErrorScanState state = ErrorScanState.Idle;
         var incident = new List<string>();
 
         void FinishIncident()
@@ -482,18 +482,18 @@ public sealed class CapturedProcessOutput
             incident.Clear();
         }
 
-        foreach (var line in _lines)
+        foreach (string line in _lines)
         {
-            if (!TryGetStderrContent(line, out var content))
+            if (!TryGetStderrContent(line, out string? content))
             {
                 FinishIncident();
                 state = ErrorScanState.Idle;
                 continue;
             }
 
-            var isIndented = content.Length > 0 && char.IsWhiteSpace(content[0]);
-            var isTracebackHeader = content is "Traceback (most recent call last):";
-            var isErrorHeader = content.StartsWith("ERROR:", StringComparison.Ordinal);
+            bool isIndented = content.Length > 0 && char.IsWhiteSpace(content[0]);
+            bool isTracebackHeader = content is "Traceback (most recent call last):";
+            bool isErrorHeader = content.StartsWith("ERROR:", StringComparison.Ordinal);
 
             switch (state)
             {
@@ -578,7 +578,7 @@ public sealed class CapturedProcessOutput
         // Lines are "[HH:mm:ss.fff ERR] <original>" / "[HH:mm:ss.fff OUT] <original>" — the
         // timestamp format is fixed-width, but searching for the "] " delimiter rather than
         // hard-coding offsets keeps this robust to that formatting ever changing.
-        var closeBracket = capturedLine.IndexOf("] ", StringComparison.Ordinal);
+        int closeBracket = capturedLine.IndexOf("] ", StringComparison.Ordinal);
         if (closeBracket < 0 || !capturedLine.Contains(" ERR]", StringComparison.Ordinal))
         {
             content = "";

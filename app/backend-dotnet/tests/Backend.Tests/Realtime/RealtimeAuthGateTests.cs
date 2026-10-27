@@ -1,6 +1,7 @@
 using Backend.Auth;
 using Backend.Configuration;
 using Backend.Realtime;
+using Backend.Tests.TestSupport;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -16,13 +17,13 @@ namespace Backend.Tests.Realtime;
 /// this backend.</summary>
 public sealed class RealtimeAuthGateTests
 {
-    private static readonly byte[] Secret = "test-secret-at-least-32-bytes-long!"u8.ToArray();
+    private static readonly byte[] s_secret = "test-secret-at-least-32-bytes-long!"u8.ToArray();
     private const string Host = "example.com";
 
     [Fact]
     public void Check_NoOrigin_TokenNotRequired_Allows()
     {
-        var result = RealtimeAuthGate.Check(
+        IResult? result = RealtimeAuthGate.Check(
             origin: string.Empty, host: Host, token: null,
             security: NoAuthRequired(), tokenService: NewTokenService(), NullLogger.Instance);
 
@@ -32,7 +33,7 @@ public sealed class RealtimeAuthGateTests
     [Fact]
     public void Check_MatchingOrigin_Allows()
     {
-        var result = RealtimeAuthGate.Check(
+        IResult? result = RealtimeAuthGate.Check(
             origin: $"https://{Host}", host: Host, token: null,
             security: NoAuthRequired(), tokenService: NewTokenService(), NullLogger.Instance);
 
@@ -42,20 +43,20 @@ public sealed class RealtimeAuthGateTests
     [Fact]
     public async Task Check_MismatchedOrigin_Returns403WithPythonBody()
     {
-        var result = RealtimeAuthGate.Check(
+        IResult? result = RealtimeAuthGate.Check(
             origin: "https://attacker.example", host: Host, token: null,
             security: NoAuthRequired(), tokenService: NewTokenService(), NullLogger.Instance);
 
         Assert.NotNull(result);
-        await AssertResponse(result!, StatusCodes.Status403Forbidden, "Origin not allowed");
+        await AssertResponse(result, StatusCodes.Status403Forbidden, "Origin not allowed");
     }
 
     [Fact]
     public void Check_MismatchedOrigin_ButExplicitlyAllowlisted_Allows()
     {
-        var security = SecurityConfigFor(allowedOrigins: ["https://partner.example"], requireSessionToken: false);
+        SecurityConfig security = SecurityConfigFor(allowedOrigins: ["https://partner.example"], requireSessionToken: false);
 
-        var result = RealtimeAuthGate.Check(
+        IResult? result = RealtimeAuthGate.Check(
             origin: "https://partner.example", host: Host, token: null,
             security, tokenService: NewTokenService(), NullLogger.Instance);
 
@@ -65,7 +66,7 @@ public sealed class RealtimeAuthGateTests
     [Fact]
     public void Check_TokenNotRequired_MissingToken_StillAllows()
     {
-        var result = RealtimeAuthGate.Check(
+        IResult? result = RealtimeAuthGate.Check(
             origin: string.Empty, host: Host, token: null,
             security: NoAuthRequired(), tokenService: NewTokenService(), NullLogger.Instance);
 
@@ -75,24 +76,24 @@ public sealed class RealtimeAuthGateTests
     [Fact]
     public async Task Check_TokenRequired_MissingToken_Returns401WithPythonBody()
     {
-        var security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: true);
+        SecurityConfig security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: true);
 
-        var result = RealtimeAuthGate.Check(
+        IResult? result = RealtimeAuthGate.Check(
             origin: string.Empty, host: Host, token: null,
             security, tokenService: NewTokenService(), NullLogger.Instance);
 
         Assert.NotNull(result);
-        await AssertResponse(result!, StatusCodes.Status401Unauthorized, "Invalid or expired token");
+        await AssertResponse(result, StatusCodes.Status401Unauthorized, "Invalid or expired token");
     }
 
     [Fact]
     public void Check_TokenRequired_ValidToken_Allows()
     {
-        var security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: true);
-        var tokenService = NewTokenService();
-        var token = tokenService.Create();
+        SecurityConfig security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: true);
+        SessionTokenService tokenService = NewTokenService();
+        string token = tokenService.Create();
 
-        var result = RealtimeAuthGate.Check(
+        IResult? result = RealtimeAuthGate.Check(
             origin: string.Empty, host: Host, token,
             security, tokenService, NullLogger.Instance);
 
@@ -102,14 +103,14 @@ public sealed class RealtimeAuthGateTests
     [Fact]
     public async Task Check_TokenRequired_InvalidToken_Returns401()
     {
-        var security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: true);
+        SecurityConfig security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: true);
 
-        var result = RealtimeAuthGate.Check(
+        IResult? result = RealtimeAuthGate.Check(
             origin: string.Empty, host: Host, token: "not-a-real-token",
             security, tokenService: NewTokenService(), NullLogger.Instance);
 
         Assert.NotNull(result);
-        await AssertResponse(result!, StatusCodes.Status401Unauthorized, "Invalid or expired token");
+        await AssertResponse(result, StatusCodes.Status401Unauthorized, "Invalid or expired token");
     }
 
     [Fact]
@@ -117,14 +118,14 @@ public sealed class RealtimeAuthGateTests
     {
         // rtmt.py checks Origin before the token ("Task 3" before "Task 4") -- a request that
         // fails both must get the Origin rejection, not the token rejection.
-        var security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: true);
+        SecurityConfig security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: true);
 
-        var result = RealtimeAuthGate.Check(
+        IResult? result = RealtimeAuthGate.Check(
             origin: "https://attacker.example", host: Host, token: null,
             security, tokenService: NewTokenService(), NullLogger.Instance);
 
         Assert.NotNull(result);
-        await AssertResponse(result!, StatusCodes.Status403Forbidden, "Origin not allowed");
+        await AssertResponse(result, StatusCodes.Status403Forbidden, "Origin not allowed");
     }
 
     // ── Issue #147 (ADR-002): entra_mode forces the session-token check on, and additionally
@@ -133,9 +134,9 @@ public sealed class RealtimeAuthGateTests
     [Fact]
     public void Check_EntraMode_SessionTokenForced_EvenWhenConfigDisablesIt()
     {
-        var security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: false);
+        SecurityConfig security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: false);
 
-        var result = RealtimeAuthGate.Check(
+        IResult? result = RealtimeAuthGate.Check(
             origin: string.Empty, host: Host, token: null,
             security, tokenService: NewTokenService(), NullLogger.Instance, entraMode: true, principalOid: "oid-1");
 
@@ -145,11 +146,11 @@ public sealed class RealtimeAuthGateTests
     [Fact]
     public void Check_EntraMode_MatchingOid_Allows()
     {
-        var security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: false);
-        var tokenService = NewTokenService();
-        var token = tokenService.Create(oid: "33333333-3333-3333-3333-333333333333");
+        SecurityConfig security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: false);
+        SessionTokenService tokenService = NewTokenService();
+        string token = tokenService.Create(oid: "33333333-3333-3333-3333-333333333333");
 
-        var result = RealtimeAuthGate.Check(
+        IResult? result = RealtimeAuthGate.Check(
             origin: string.Empty, host: Host, token,
             security, tokenService, NullLogger.Instance,
             entraMode: true, principalOid: "33333333-3333-3333-3333-333333333333");
@@ -160,17 +161,17 @@ public sealed class RealtimeAuthGateTests
     [Fact]
     public async Task Check_EntraMode_MismatchedOid_Returns401()
     {
-        var security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: false);
-        var tokenService = NewTokenService();
-        var token = tokenService.Create(oid: "33333333-3333-3333-3333-333333333333");
+        SecurityConfig security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: false);
+        SessionTokenService tokenService = NewTokenService();
+        string token = tokenService.Create(oid: "33333333-3333-3333-3333-333333333333");
 
-        var result = RealtimeAuthGate.Check(
+        IResult? result = RealtimeAuthGate.Check(
             origin: string.Empty, host: Host, token,
             security, tokenService, NullLogger.Instance,
             entraMode: true, principalOid: "44444444-4444-4444-4444-444444444444");
 
         Assert.NotNull(result);
-        await AssertResponse(result!, StatusCodes.Status401Unauthorized, "Invalid or expired token");
+        await AssertResponse(result, StatusCodes.Status401Unauthorized, "Invalid or expired token");
     }
 
     [Fact]
@@ -178,17 +179,17 @@ public sealed class RealtimeAuthGateTests
     {
         // A token minted without an oid (e.g. pre-#147) must not satisfy the Entra-mode binding
         // check even though it is otherwise structurally valid.
-        var security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: false);
-        var tokenService = NewTokenService();
-        var token = tokenService.Create();
+        SecurityConfig security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: false);
+        SessionTokenService tokenService = NewTokenService();
+        string token = tokenService.Create();
 
-        var result = RealtimeAuthGate.Check(
+        IResult? result = RealtimeAuthGate.Check(
             origin: string.Empty, host: Host, token,
             security, tokenService, NullLogger.Instance,
             entraMode: true, principalOid: "33333333-3333-3333-3333-333333333333");
 
         Assert.NotNull(result);
-        await AssertResponse(result!, StatusCodes.Status401Unauthorized, "Invalid or expired token");
+        await AssertResponse(result, StatusCodes.Status401Unauthorized, "Invalid or expired token");
     }
 
     [Fact]
@@ -196,11 +197,11 @@ public sealed class RealtimeAuthGateTests
     {
         // entraMode defaults to false (Development pass-through) -- the oid check must not run
         // even if a principalOid happened to be passed in.
-        var security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: false);
-        var tokenService = NewTokenService();
-        var token = tokenService.Create();
+        SecurityConfig security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: false);
+        SessionTokenService tokenService = NewTokenService();
+        string token = tokenService.Create();
 
-        var result = RealtimeAuthGate.Check(
+        IResult? result = RealtimeAuthGate.Check(
             origin: string.Empty, host: Host, token,
             security, tokenService, NullLogger.Instance, entraMode: false, principalOid: null);
 
@@ -212,43 +213,92 @@ public sealed class RealtimeAuthGateTests
     {
         // The pre-#147 implementation was missing this header on both the missing-token and
         // oid-mismatch 401s; rtmt.py's _websocket_handler sets it on every 401 this gate raises.
-        var security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: true);
+        SecurityConfig security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: true);
 
-        var result = RealtimeAuthGate.Check(
+        IResult? result = RealtimeAuthGate.Check(
             origin: string.Empty, host: Host, token: null,
             security, tokenService: NewTokenService(), NullLogger.Instance);
 
         Assert.NotNull(result);
-        await AssertWwwAuthenticateBearer(result!);
+        await AssertWwwAuthenticateBearer(result);
     }
 
     [Fact]
     public async Task Check_EntraMode_MismatchedOid_SetsWwwAuthenticateBearerHeader()
     {
-        var security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: false);
-        var tokenService = NewTokenService();
-        var token = tokenService.Create(oid: "33333333-3333-3333-3333-333333333333");
+        SecurityConfig security = SecurityConfigFor(allowedOrigins: [], requireSessionToken: false);
+        SessionTokenService tokenService = NewTokenService();
+        string token = tokenService.Create(oid: "33333333-3333-3333-3333-333333333333");
 
-        var result = RealtimeAuthGate.Check(
+        IResult? result = RealtimeAuthGate.Check(
             origin: string.Empty, host: Host, token,
             security, tokenService, NullLogger.Instance,
             entraMode: true, principalOid: "44444444-4444-4444-4444-444444444444");
 
         Assert.NotNull(result);
-        await AssertWwwAuthenticateBearer(result!);
+        await AssertWwwAuthenticateBearer(result);
     }
 
-    private static SessionTokenService NewTokenService() => new(Secret);
+    [Fact]
+    public async Task Check_HostileHostAndOrigin_AreNeutralisedInEveryLogLine_AndTheResponseIsUnchanged()
+    {
+        var logger = new CapturingLogger();
+
+        IResult? result = RealtimeAuthGate.Check(
+            origin: "https://attacker.example\r\nWARN forged entry\u001b[31m", host: "example.com\nforged", token: null,
+            security: NoAuthRequired(), tokenService: NewTokenService(), logger);
+
+        Assert.NotNull(result);
+        await AssertResponse(result, StatusCodes.Status403Forbidden, "Origin not allowed");
+        Assert.Collection(
+            logger.Entries,
+            handshake => Assert.Equal(
+                "Realtime handshake: GET /realtime (host=example.com_forged, origin=https://attacker.example__WARN forged entry_[31m)",
+                handshake.Message),
+            rejected => Assert.Equal(
+                "Rejected WebSocket from disallowed origin: host=example.com_forged origin=https://attacker.example__WARN forged entry_[31m",
+                rejected.Message));
+    }
+
+    [Fact]
+    public void Check_OrdinaryHostAndOrigin_AreLoggedVerbatim()
+    {
+        var logger = new CapturingLogger();
+
+        IResult? result = RealtimeAuthGate.Check(
+            origin: $"https://{Host}", host: Host, token: null,
+            security: NoAuthRequired(), tokenService: NewTokenService(), logger);
+
+        Assert.Null(result);
+        CapturingLogger.CapturedEntry entry = Assert.Single(logger.Entries);
+        Assert.Equal("Realtime handshake: GET /realtime (host=example.com, origin=https://example.com)", entry.Message);
+    }
+
+    [Fact]
+    public void Check_OverlongOrigin_IsTruncatedInTheLog()
+    {
+        var logger = new CapturingLogger();
+
+        IResult? result = RealtimeAuthGate.Check(
+            origin: "https://" + new string('a', 5000), host: Host, token: null,
+            security: NoAuthRequired(), tokenService: NewTokenService(), logger);
+
+        Assert.NotNull(result);
+        Assert.All(logger.Entries, entry => Assert.True(entry.Message.Length < 700));
+        Assert.All(logger.Entries, entry => Assert.Contains("...", entry.Message, StringComparison.Ordinal));
+    }
+
+    private static SessionTokenService NewTokenService() => new(s_secret);
 
     private static SecurityConfig NoAuthRequired() => SecurityConfigFor(allowedOrigins: [], requireSessionToken: false);
 
     private static SecurityConfig SecurityConfigFor(IReadOnlyList<string> allowedOrigins, bool requireSessionToken)
     {
-        var originsYaml = allowedOrigins.Count == 0
+        string originsYaml = allowedOrigins.Count == 0
             ? "  allowed_origins: []\n"
             : "  allowed_origins:\n" + string.Join(string.Empty, allowedOrigins.Select(o => $"    - {o}\n"));
 
-        var yaml =
+        string yaml =
             "model:\n  foo: bar\n" +
             "business_rules:\n  foo: bar\n" +
             "cache:\n  foo: bar\n" +
@@ -258,7 +308,7 @@ public sealed class RealtimeAuthGateTests
             originsYaml +
             $"  require_session_token: {(requireSessionToken ? "true" : "false")}\n";
 
-        var path = Path.Combine(Path.GetTempPath(), "squanchy-realtime-auth-gate-" + Guid.NewGuid().ToString("n") + ".yaml");
+        string path = Path.Combine(Path.GetTempPath(), "squanchy-realtime-auth-gate-" + Guid.NewGuid().ToString("n") + ".yaml");
         File.WriteAllText(path, yaml);
         try
         {

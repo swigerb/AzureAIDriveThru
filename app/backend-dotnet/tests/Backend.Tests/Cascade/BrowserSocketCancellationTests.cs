@@ -3,8 +3,8 @@ using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json.Nodes;
-using Backend.Configuration;
 using Backend.Cascade;
+using Backend.Configuration;
 using Backend.Models;
 using Backend.Personas;
 using Backend.Prompts;
@@ -37,7 +37,7 @@ public sealed class BrowserSocketCancellationTests
 
     private static (Persona Persona, PromptLoader Loader) LoadDeltaFixture()
     {
-        var personasDir = Path.Combine(RepoRootLocator.Find(), "app", "backend", "tests", "fixtures", "personas");
+        string personasDir = Path.Combine(RepoRootLocator.Find(), "app", "backend", "tests", "fixtures", "personas");
         return (DeltaFixture.Load(), new PromptLoader(personasDir, "test-delta"));
     }
 
@@ -68,8 +68,8 @@ public sealed class BrowserSocketCancellationTests
 
     private static byte[] Pcm16(short sampleValue, int count)
     {
-        var bytes = new byte[count * 2];
-        for (var i = 0; i < count; i++)
+        byte[] bytes = new byte[count * 2];
+        for (int i = 0; i < count; i++)
         {
             bytes[i * 2] = (byte)(sampleValue & 0xFF);
             bytes[i * 2 + 1] = (byte)((sampleValue >> 8) & 0xFF);
@@ -114,7 +114,7 @@ public sealed class BrowserSocketCancellationTests
 
         public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            var writeTask = inner.WriteAsync(buffer, cancellationToken).AsTask();
+            Task writeTask = inner.WriteAsync(buffer, cancellationToken).AsTask();
             if (buffer.Length >= minBytesToSignal)
             {
                 Interlocked.Exchange(ref _nextBigWriteStarted, null)?.TrySetResult(writeTask);
@@ -147,12 +147,12 @@ public sealed class BrowserSocketCancellationTests
     }
 
     /// <summary>Opens a real loopback TCP pair and wraps each end as a real
-    /// <c>ManagedWebSocket</c>: <paramref name="BrowserSocket"/> is what <see cref="CascadeProcessor"/>
+    /// <c>ManagedWebSocket</c>: <c>BrowserSocket</c> is what <see cref="CascadeProcessor"/>
     /// treats as the server-accepted connection to the browser (<c>isServer: true</c>, matching
-    /// Kestrel), <paramref name="GuestSocket"/> is the test's stand-in for the guest's own browser
+    /// Kestrel), <c>GuestSocket</c> is the test's stand-in for the guest's own browser
     /// WebSocket client. Both ends get a tiny socket buffer so a large payload genuinely
-    /// backpressures if the guest side stops reading. <paramref name="BrowserWriteTracker"/> is the
-    /// same stream <paramref name="BrowserSocket"/> writes through, exposed so the test can observe
+    /// backpressures if the guest side stops reading. <c>BrowserWriteTracker</c> is the
+    /// same stream <c>BrowserSocket</c> writes through, exposed so the test can observe
     /// (<see cref="WriteObservingStream.ArmNextBigWrite"/>) exactly when a browser-socket send is
     /// genuinely backpressure-blocked, rather than guessing with a fixed delay (#331).</summary>
     private static async Task<(WebSocket BrowserSocket, WebSocket GuestSocket, TcpClient ServerTcp, TcpClient ClientTcp, WriteObservingStream BrowserWriteTracker)> OpenLoopbackWebSocketPairAsync()
@@ -173,12 +173,12 @@ public sealed class BrowserSocketCancellationTests
         listener.Start();
         try
         {
-            var acceptTask = listener.AcceptTcpClientAsync();
+            Task<TcpClient> acceptTask = listener.AcceptTcpClientAsync();
             var clientTcp = new TcpClient();
             clientTcp.Client.SendBufferSize = TinyBufferBytes;
             clientTcp.Client.ReceiveBufferSize = TinyBufferBytes;
             await clientTcp.ConnectAsync(IPAddress.Loopback, ((IPEndPoint)listener.LocalEndpoint).Port).ConfigureAwait(false);
-            var serverTcp = await acceptTask.ConfigureAwait(false);
+            TcpClient serverTcp = await acceptTask.ConfigureAwait(false);
 
             // Deliberately tiny: makes a multi-chunk TTS reply back up almost immediately once the
             // guest side stops draining, without needing a multi-megabyte payload to force it.
@@ -208,7 +208,7 @@ public sealed class BrowserSocketCancellationTests
         var frames = new List<JsonObject>();
         while (true)
         {
-            var frame = await WebSocketFrameReader.ReadMessageAsync(guestSocket, ct).ConfigureAwait(false);
+            WebSocketFrame? frame = await WebSocketFrameReader.ReadMessageAsync(guestSocket, ct).ConfigureAwait(false);
             if (frame is null)
             {
                 return frames;
@@ -243,9 +243,9 @@ public sealed class BrowserSocketCancellationTests
     [Fact]
     public async Task RunSessionAsync_BargeInDuringABackpressuredTtsWrite_DoesNotAbortTheBrowserSocket()
     {
-        var (persona, loader) = LoadDeltaFixture();
-        var bigAnswerPcm = Pcm16(12345, count: 400_000); // 800 KB of PCM -> ~33 chunks of TtsChunkBytes(24000) each
-        var handler = new RoutingFoundryHandler()
+        (Persona? persona, PromptLoader? loader) = LoadDeltaFixture();
+        byte[] bigAnswerPcm = Pcm16(12345, count: 400_000); // 800 KB of PCM -> ~33 chunks of TtsChunkBytes(24000) each
+        RoutingFoundryHandler handler = new RoutingFoundryHandler()
             .EnqueueChatMessage("assistant", "Welcome!") // greeting's own small chat+TTS turn
             .EnqueueSpeech([1, 2, 3, 4])
             .EnqueueTranscript("tell me about the menu") // guest turn 1: a big spoken answer that will back up the socket
@@ -256,18 +256,22 @@ public sealed class BrowserSocketCancellationTests
             .EnqueueSpeech([5, 6]);
 
         var toolExecutor = new StubToolExecutor(["search"]);
-        var processor = NewProcessor(handler, toolExecutor, loader);
+        CascadeProcessor processor = NewProcessor(handler, toolExecutor, loader);
         var resolvedModel = new ResolvedModel("gpt-5-mini", "cascade", "chat-dep", Reasoning: false);
 
         using var overallCts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         overallCts.CancelAfter(TimeSpan.FromSeconds(30));
-        var ct = overallCts.Token;
+        CancellationToken ct = overallCts.Token;
 
-        var (browserSocket, guestSocket, serverTcp, clientTcp, browserWriteTracker) = await OpenLoopbackWebSocketPairAsync();
-        using var _server = serverTcp;
-        using var _client = clientTcp;
+        (WebSocket? browserSocket, WebSocket? guestSocket, TcpClient? serverTcp, TcpClient? clientTcp, WriteObservingStream? browserWriteTracker) = await OpenLoopbackWebSocketPairAsync();
+        using TcpClient _server = serverTcp;
+        using TcpClient _client = clientTcp;
 
-        var sessionTask = processor.RunSessionAsync(browserSocket, persona, resolvedModel, sessionId: "sess-real-socket", ct);
+        // CA2025: sessionTask is awaited at the end of the test once the guest closes; on a failure
+        // path, disposing the using-declared TcpClients closes the loopback socket and ends the session.
+#pragma warning disable CA2025 // awaited before disposal on the passing path (see above)
+        Task sessionTask = processor.RunSessionAsync(browserSocket, persona, resolvedModel, sessionId: "sess-real-socket", ct);
+#pragma warning restore CA2025
 
         // 1) Drain the greeting's turn fully (small payload -- fits easily even in the tiny buffer).
         await DrainUntilAsync(guestSocket, "extension.round_trip_token", ct);
@@ -276,9 +280,9 @@ public sealed class BrowserSocketCancellationTests
         //    TTS chunks back up against the 512-byte socket buffers almost immediately. Arm the
         //    write tracker first: nothing else writes to the browser socket between here and the
         //    big reply's own chunk-send loop, so the next write it observes IS that reply's.
-        var loudChunk = Pcm16(20000, count: 10);
-        var silentChunk = Pcm16(0, count: 4800); // config.yaml vad.silence_duration_ms=200 @ 24kHz
-        var nextBrowserWrite = browserWriteTracker.ArmNextBigWrite();
+        byte[] loudChunk = Pcm16(20000, count: 10);
+        byte[] silentChunk = Pcm16(0, count: 4800); // config.yaml vad.silence_duration_ms=200 @ 24kHz
+        Task<Task> nextBrowserWrite = browserWriteTracker.ArmNextBigWrite();
         await guestSocket.SendAsync(AppendFrame(loudChunk), WebSocketMessageType.Text, true, ct);
         await guestSocket.SendAsync(AppendFrame(silentChunk), WebSocketMessageType.Text, true, ct);
 
@@ -289,7 +293,7 @@ public sealed class BrowserSocketCancellationTests
         // it actually took under current load, and (with a 512-byte buffer and an 800 KB base64'd
         // payload) that write cannot complete until the guest below resumes reading in step 4, so
         // it is still genuinely in flight -- backpressure-blocked -- when step 3 fires below.
-        var backpressuredWrite = await nextBrowserWrite.WaitAsync(TimeSpan.FromSeconds(10), ct);
+        Task backpressuredWrite = await nextBrowserWrite.WaitAsync(TimeSpan.FromSeconds(10), ct);
 
         // 3) The real barge-in: a second speech_started lands while that big send is still
         //    genuinely blocked on backpressure.
@@ -314,10 +318,10 @@ public sealed class BrowserSocketCancellationTests
         //    in this test's doc comment), then resume draining (flushes whatever was left of turn
         //    1's cut-short reply, harmlessly), and prove the socket is still fully functional: a
         //    fresh guest turn must complete end-to-end (STT -> chat -> TTS -> response.done -> round trip).
-        var silentChunk2 = Pcm16(0, count: 4800);
+        byte[] silentChunk2 = Pcm16(0, count: 4800);
         await guestSocket.SendAsync(AppendFrame(silentChunk2), WebSocketMessageType.Text, true, ct);
 
-        var finalFrames = await DrainUntilAsync(guestSocket, "extension.round_trip_token", ct);
+        List<JsonObject> finalFrames = await DrainUntilAsync(guestSocket, "extension.round_trip_token", ct);
         var roundTrips = finalFrames.Where(f => f["type"]!.GetValue<string>() == "extension.round_trip_token").ToList();
         Assert.NotEmpty(roundTrips);
         Assert.Equal(2, roundTrips[^1]["roundTripIndex"]!.GetValue<int>()); // greeting=1, resumed guest turn=2 (turn 1 never got this far)

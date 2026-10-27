@@ -20,14 +20,14 @@ internal static class PythonInterop
     /// </summary>
     public static async Task<string?> RequireInterpreterAsync(string repoRoot, CancellationToken cancellationToken)
     {
-        var interpreter = await FindWorkingInterpreterAsync(repoRoot, cancellationToken);
+        string? interpreter = await FindWorkingInterpreterAsync(repoRoot, cancellationToken);
         if (interpreter is not null)
         {
             return interpreter;
         }
 
-        var isCi = string.Equals(Environment.GetEnvironmentVariable("GITHUB_ACTIONS"), "true", StringComparison.OrdinalIgnoreCase);
-        var message =
+        bool isCi = string.Equals(Environment.GetEnvironmentVariable("GITHUB_ACTIONS"), "true", StringComparison.OrdinalIgnoreCase);
+        string message =
             "No Python interpreter was found (checked the repo-root .venv, then bare " +
             "\"python3\"/\"python\" on PATH) with azure-search-documents importable (and able to " +
             "import app/backend/setup_search_index.py's full dependency set: azure-identity, " +
@@ -52,14 +52,14 @@ internal static class PythonInterop
             "python",
         ];
 
-        const string probe =
+        const string Probe =
             "import azure.search.documents, azure.identity, openai, jsonschema, pydantic, jwt, aiohttp, dotenv, rich";
 
-        foreach (var candidate in candidates)
+        foreach (string candidate in candidates)
         {
             try
             {
-                var (exitCode, _, _) = await RunAsync(candidate, ["-c", probe], cancellationToken);
+                (int exitCode, string _, string _) = await RunAsync(candidate, ["-c", Probe], cancellationToken);
                 if (exitCode == 0)
                 {
                     return candidate;
@@ -87,20 +87,20 @@ internal static class PythonInterop
         startInfo.Environment["PYTHONIOENCODING"] = "utf-8";
         if (extraEnvironment is not null)
         {
-            foreach (var (key, value) in extraEnvironment)
+            foreach ((string? key, string? value) in extraEnvironment)
             {
                 startInfo.Environment[key] = value;
             }
         }
-        foreach (var argument in arguments)
+        foreach (string argument in arguments)
         {
             startInfo.ArgumentList.Add(argument);
         }
 
         using var process = new Process { StartInfo = startInfo };
         process.Start();
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        Task<string> stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
         await process.WaitForExitAsync(cancellationToken);
         return (process.ExitCode, await stdoutTask, await stderrTask);
     }

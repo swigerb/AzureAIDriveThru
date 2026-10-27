@@ -56,7 +56,7 @@ internal sealed class ConnectionConfig
 
     public static ConnectionConfig FromConfig(AppConfig config)
     {
-        var connection = config.TryGetSection("connection");
+        IDictionary<object, object>? connection = config.TryGetSection("connection");
         return new ConnectionConfig(
             wsHeartbeatSeconds: GetDouble(connection, "ws_heartbeat_seconds", 15.0),
             wsCompression: GetBool(connection, "ws_compression", false),
@@ -65,14 +65,14 @@ internal sealed class ConnectionConfig
     }
 
     private static double GetDouble(IDictionary<object, object>? section, string key, double fallback) =>
-        section is not null && section.TryGetValue(key, out var raw) &&
-        double.TryParse(raw?.ToString(), CultureInfo.InvariantCulture, out var value)
+        section is not null && section.TryGetValue(key, out object? raw) &&
+        double.TryParse(raw?.ToString(), CultureInfo.InvariantCulture, out double value)
             ? value
             : fallback;
 
     private static bool GetBool(IDictionary<object, object>? section, string key, bool fallback)
     {
-        if (section is null || !section.TryGetValue(key, out var raw) || raw is null)
+        if (section is null || !section.TryGetValue(key, out object? raw) || raw is null)
         {
             return fallback;
         }
@@ -80,6 +80,6 @@ internal sealed class ConnectionConfig
         {
             return direct;
         }
-        return bool.TryParse(raw.ToString(), out var parsed) ? parsed : fallback;
+        return bool.TryParse(raw.ToString(), out bool parsed) ? parsed : fallback;
     }
 }

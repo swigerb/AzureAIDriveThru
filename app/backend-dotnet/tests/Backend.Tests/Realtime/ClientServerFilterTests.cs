@@ -26,12 +26,12 @@ public sealed class ClientServerFilterTests
     [Fact]
     public void EventIdWithTrailingNewline_IsStrippedNotTheWholeFrame()
     {
-        var message = InputAudioBufferClear("abc123\n");
+        JsonObject message = InputAudioBufferClear("abc123\n");
 
-        var filtered = ClientServerFilter.Filter(message, hooksEnabled: false);
+        JsonObject? filtered = ClientServerFilter.Filter(message, hooksEnabled: false);
 
         Assert.NotNull(filtered);
-        Assert.False(filtered!.TryGetPropertyValue("event_id", out _),
+        Assert.False(filtered.TryGetPropertyValue("event_id", out _),
             "A trailing-newline event_id must be stripped, exactly like any other malformed shape -- not forwarded, and not treated as valid just because '$' alone would match before the newline.");
     }
 
@@ -40,12 +40,12 @@ public sealed class ClientServerFilterTests
     {
         // Sanity check on the other side of the fix: a genuinely valid 1-64 char id (no
         // newline) must still pass -- the fix must not become overly strict.
-        var message = InputAudioBufferClear("abc123");
+        JsonObject message = InputAudioBufferClear("abc123");
 
-        var filtered = ClientServerFilter.Filter(message, hooksEnabled: false);
+        JsonObject? filtered = ClientServerFilter.Filter(message, hooksEnabled: false);
 
         Assert.NotNull(filtered);
-        Assert.True(filtered!.TryGetPropertyValue("event_id", out var eventId));
+        Assert.True(filtered!.TryGetPropertyValue("event_id", out JsonNode? eventId));
         Assert.Equal("abc123", eventId!.GetValue<string>());
     }
 
@@ -58,7 +58,7 @@ public sealed class ClientServerFilterTests
             ["response_id"] = "resp_abc123\n",
         };
 
-        var filtered = ClientServerFilter.Filter(message, hooksEnabled: false);
+        JsonObject? filtered = ClientServerFilter.Filter(message, hooksEnabled: false);
 
         Assert.Null(filtered);
     }
@@ -73,7 +73,7 @@ public sealed class ClientServerFilterTests
             ["audio"] = "AAA=\n",
         };
 
-        var filtered = ClientServerFilter.Filter(message, hooksEnabled: false);
+        JsonObject? filtered = ClientServerFilter.Filter(message, hooksEnabled: false);
 
         Assert.Null(filtered);
     }

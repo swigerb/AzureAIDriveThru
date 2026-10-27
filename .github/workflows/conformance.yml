@@ -32,7 +32,7 @@ permissions:
 
 env:
   # Keep these two in sync with global.json (repo root).
-  DOTNET_VERSION: "11.0.100-rc.2.26504.105"
+  DOTNET_VERSION: "11.0.100-rc.3.26522.148"
   PYTHON_VERSION: "3.15"
   DOTNET_NOLOGO: "true"
   DOTNET_CLI_TELEMETRY_OPTOUT: "true"

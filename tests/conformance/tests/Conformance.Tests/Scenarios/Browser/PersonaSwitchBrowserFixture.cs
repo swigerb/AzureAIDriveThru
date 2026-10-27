@@ -104,7 +104,7 @@ public sealed class PersonaSwitchBrowserFixture : IAsyncLifetime
             return;
         }
 
-        var filteredBefore = Backend?.UnhandledErrorCount(BrowserConformanceFixture.IsBenignProactorTeardownIncident) ?? 0;
+        int filteredBefore = Backend?.UnhandledErrorCount(BrowserConformanceFixture.IsBenignProactorTeardownIncident) ?? 0;
         try
         {
             await _inner.RunAsync(body).ConfigureAwait(false);

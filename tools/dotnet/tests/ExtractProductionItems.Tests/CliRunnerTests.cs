@@ -15,14 +15,14 @@ public sealed class CliRunnerTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var path in _tempFiles)
+        foreach (string path in _tempFiles)
         {
             if (File.Exists(path))
             {
                 File.Delete(path);
             }
         }
-        foreach (var dir in _tempDirs)
+        foreach (string dir in _tempDirs)
         {
             if (Directory.Exists(dir))
             {
@@ -33,7 +33,7 @@ public sealed class CliRunnerTests : IDisposable
 
     private string WriteTempJson(string prefix, string json)
     {
-        var path = Path.Combine(Path.GetTempPath(), $"squanchy-extract-cli-runner-{prefix}-{Guid.NewGuid():n}.json");
+        string path = Path.Combine(Path.GetTempPath(), $"squanchy-extract-cli-runner-{prefix}-{Guid.NewGuid():n}.json");
         File.WriteAllText(path, json);
         _tempFiles.Add(path);
         return path;
@@ -50,7 +50,7 @@ public sealed class CliRunnerTests : IDisposable
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = CliRunner.Run(["--help"], stdout, stderr);
+        int exitCode = CliRunner.Run(["--help"], stdout, stderr);
 
         Assert.Equal(0, exitCode);
         Assert.Contains("Usage:", stdout.ToString());
@@ -60,13 +60,13 @@ public sealed class CliRunnerTests : IDisposable
     [Fact]
     public void Run_SkipsPersonaDiscoveryEntirely_WhenProductionAndMenuAreGivenExplicitly()
     {
-        var production = WriteTempJson("production", SampleProductionJson);
-        var menu = WriteTempJson("menu", SampleMenuJson);
+        string production = WriteTempJson("production", SampleProductionJson);
+        string menu = WriteTempJson("menu", SampleMenuJson);
 
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = CliRunner.Run(["--production", production, "--menu", menu], stdout, stderr);
+        int exitCode = CliRunner.Run(["--production", production, "--menu", menu], stdout, stderr);
 
         Assert.Equal(0, exitCode);
         Assert.Equal("", stderr.ToString());
@@ -79,20 +79,20 @@ public sealed class CliRunnerTests : IDisposable
         // personas/<id>/menu/source/<id>-menu-items.json -> personas/<id>/menu/menuItems.json,
         // the same convention ProductionExportLocator uses -- exercised here via --production
         // alone, with no --menu and no real persona-discovery glob involved.
-        var personaDir = Path.Combine(Path.GetTempPath(), $"squanchy-extract-cli-runner-persona-{Guid.NewGuid():n}");
-        var menuDir = Path.Combine(personaDir, "menu");
-        var sourceDir = Path.Combine(menuDir, "source");
+        string personaDir = Path.Combine(Path.GetTempPath(), $"squanchy-extract-cli-runner-persona-{Guid.NewGuid():n}");
+        string menuDir = Path.Combine(personaDir, "menu");
+        string sourceDir = Path.Combine(menuDir, "source");
         Directory.CreateDirectory(sourceDir);
         _tempDirs.Add(personaDir);
 
-        var production = Path.Combine(sourceDir, "acme-menu-items.json");
+        string production = Path.Combine(sourceDir, "acme-menu-items.json");
         File.WriteAllText(production, SampleProductionJson);
         File.WriteAllText(Path.Combine(menuDir, "menuItems.json"), SampleMenuJson);
 
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = CliRunner.Run(["--production", production], stdout, stderr);
+        int exitCode = CliRunner.Run(["--production", production], stdout, stderr);
 
         Assert.Equal(0, exitCode);
         Assert.Equal("", stderr.ToString());
@@ -105,18 +105,18 @@ public sealed class CliRunnerTests : IDisposable
         // pointed, via repoRootOverride, at a synthetic repo root with no "personas" directory at
         // all, so discovery deterministically fails here regardless of whatever real persona
         // packs the checked-in repo happens to have today.
-        var emptyRepoRoot = Path.Combine(Path.GetTempPath(), $"squanchy-extract-cli-runner-empty-repo-{Guid.NewGuid():n}");
+        string emptyRepoRoot = Path.Combine(Path.GetTempPath(), $"squanchy-extract-cli-runner-empty-repo-{Guid.NewGuid():n}");
         Directory.CreateDirectory(emptyRepoRoot);
         _tempDirs.Add(emptyRepoRoot);
 
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var exitCode = CliRunner.Run([], stdout, stderr, repoRootOverride: emptyRepoRoot);
+        int exitCode = CliRunner.Run([], stdout, stderr, repoRootOverride: emptyRepoRoot);
 
         Assert.Equal(1, exitCode);
         Assert.Equal("", stdout.ToString());
-        var stderrText = stderr.ToString();
+        string stderrText = stderr.ToString();
         Assert.Contains("No persona production export matched", stderrText);
         // A clean, single-line, actionable message -- not a stack trace.
         Assert.DoesNotContain("   at ", stderrText);
@@ -134,7 +134,7 @@ public sealed class CliRunnerTests : IDisposable
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        var ex = Record.Exception(() => CliRunner.Run(
+        Exception? ex = Record.Exception(() => CliRunner.Run(
             ["--production", Path.Combine(Path.GetTempPath(), $"does-not-exist-{Guid.NewGuid():n}.json")],
             stdout,
             stderr));

@@ -25,7 +25,7 @@ public sealed record GoldenMenuCategoryData(string Description, IReadOnlyList<Me
     // JSON (matching golden-order-pricing.json's money convention), so AllowReadingFromString lets
     // it deserialize straight into `decimal` with no intermediate `double` -- consistent with every
     // other golden money value in this test suite.
-    private static readonly JsonSerializerOptions Options = new()
+    private static readonly JsonSerializerOptions s_options = new()
     {
         PropertyNameCaseInsensitive = true,
         NumberHandling = JsonNumberHandling.AllowReadingFromString,
@@ -33,9 +33,9 @@ public sealed record GoldenMenuCategoryData(string Description, IReadOnlyList<Me
 
     public static GoldenMenuCategoryData Load(string repoRoot)
     {
-        var path = RepoPaths.GoldenMenuCategoriesJsonPath(repoRoot);
-        var json = File.ReadAllText(path);
-        return JsonSerializer.Deserialize<GoldenMenuCategoryData>(json, Options)
+        string path = RepoPaths.GoldenMenuCategoriesJsonPath(repoRoot);
+        string json = File.ReadAllText(path);
+        return JsonSerializer.Deserialize<GoldenMenuCategoryData>(json, s_options)
             ?? throw new InvalidDataException($"Golden menu category dataset at '{path}' deserialized to null.");
     }
 
@@ -48,14 +48,14 @@ public sealed record GoldenMenuCategoryData(string Description, IReadOnlyList<Me
     /// </summary>
     public static IReadOnlySet<string> LoadCurrentlyDownMachines(string repoRoot)
     {
-        var path = Path.Combine(RepoPaths.PersonasDirectory(repoRoot), "sonic", "persona.json");
+        string path = Path.Combine(RepoPaths.PersonasDirectory(repoRoot), "sonic", "persona.json");
         using var doc = JsonDocument.Parse(File.ReadAllText(path));
         var down = new HashSet<string>(StringComparer.Ordinal);
-        if (doc.RootElement.TryGetProperty("machines", out var machines))
+        if (doc.RootElement.TryGetProperty("machines", out JsonElement machines))
         {
-            foreach (var machine in machines.EnumerateObject())
+            foreach (JsonProperty machine in machines.EnumerateObject())
             {
-                if (machine.Value.TryGetProperty("status", out var status) && status.GetString() == "down")
+                if (machine.Value.TryGetProperty("status", out JsonElement status) && status.GetString() == "down")
                 {
                     down.Add(machine.Name);
                 }

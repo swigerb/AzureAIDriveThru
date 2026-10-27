@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Conformance.Fakes;
 using Conformance.Harness;
 using Conformance.Tests.Scenarios.Ordering;
 using Xunit;
@@ -31,31 +30,29 @@ namespace Conformance.Tests;
 [Collection(ConformanceCollection.Name)]
 public sealed class SpokenReadBackConformanceTests(ConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = OrderScenarioHelpers.FrameTimeout;
-
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Get_order_function_call_output_carries_the_server_composed_spoken_read_back() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) =
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) =
             await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        await using RealtimeBrowserClient _ = browser;
 
         // "Tots" is a real, single-size-ambiguous menu item on the default persona, already used by
         // UpdateOrderToolCallTests for the identical reason: on-menu, no combo/bundle
         // complications, so the read-back's grouping logic has exactly one line to describe.
-        var addResult = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult addResult = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
             """{"action":"add","item_name":"Tots","size":"small","quantity":2,"price":2.19}""",
             "call_spoken_readback_add", roundTripIndex, ct);
 
-        var getOrderResult = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult getOrderResult = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "get_order", "{}", "call_spoken_readback_get", addResult.RoundTripIndex, ct);
 
         // The model-facing channel -- not the browser-only JSON -- is the one that actually
         // matters here (#313 finding 3.3).
-        var spokenReadBackText = getOrderResult.FunctionCallOutputText;
+        string spokenReadBackText = getOrderResult.FunctionCallOutputText;
         Assert.False(string.IsNullOrWhiteSpace(spokenReadBackText),
             "get_order's function_call_output text must never be empty once the order has at least one item.");
         // #313 item 2: quantities are spelled out as words on the realtime channel, never bare
@@ -71,8 +68,8 @@ public sealed class SpokenReadBackConformanceTests(ConformanceFixture fixture)
         // The client-only JSON channel still independently carries the same field for the
         // browser's own order-summary UI -- still asserted, just no longer the ONLY assertion.
         Assert.NotNull(getOrderResult.ToolResultJson);
-        using var summary = JsonDocument.Parse(getOrderResult.ToolResultJson!);
-        Assert.True(summary.RootElement.TryGetProperty("spokenReadBack", out var clientSpokenReadBack),
+        using var summary = JsonDocument.Parse(getOrderResult.ToolResultJson);
+        Assert.True(summary.RootElement.TryGetProperty("spokenReadBack", out JsonElement clientSpokenReadBack),
             "Expected get_order's client-facing tool_result to also carry a spokenReadBack field (issue #304).");
         Assert.False(string.IsNullOrWhiteSpace(clientSpokenReadBack.GetString()));
     });
@@ -81,21 +78,21 @@ public sealed class SpokenReadBackConformanceTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Update_order_function_call_output_also_carries_the_mandatory_read_back() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) =
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) =
             await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        await using RealtimeBrowserClient _ = browser;
 
         // #313 finding 1.4: before this fix, ONLY get_order's result included the read-back --
         // update_order's own function_call_output was just the one-line delta ("Added 2 Tots --
         // your total is now $X.XX"), so a guest who kept adding items without ever calling
         // get_order would never hear a read-back at all. This is the regression under test.
-        var addResult = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult addResult = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
             """{"action":"add","item_name":"Tots","size":"small","quantity":1,"price":2.19}""",
             "call_update_order_readback_add", roundTripIndex, ct);
 
-        var text = addResult.FunctionCallOutputText;
+        string text = addResult.FunctionCallOutputText;
         Assert.Contains("Added", text);
         Assert.Contains("Your total is", text);
         Assert.Contains("Tots", text);
@@ -106,10 +103,10 @@ public sealed class SpokenReadBackConformanceTests(ConformanceFixture fixture)
         // the SAME spokenReadBack string get_order's own client-facing JSON carries must be the
         // exact trailing content of update_order's model-facing text too, not merely present
         // somewhere inside it.
-        var getOrderResult = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult getOrderResult = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "get_order", "{}", "call_update_order_readback_get", addResult.RoundTripIndex, ct);
         using var summary = JsonDocument.Parse(getOrderResult.ToolResultJson!);
-        var spokenReadBack = summary.RootElement.GetProperty("spokenReadBack").GetString();
+        string? spokenReadBack = summary.RootElement.GetProperty("spokenReadBack").GetString();
         Assert.False(string.IsNullOrWhiteSpace(spokenReadBack));
         Assert.EndsWith(spokenReadBack!, text, StringComparison.Ordinal);
     });
@@ -133,29 +130,29 @@ public sealed class SpokenReadBackZetaConformanceTests(ZetaConformanceFixture fi
     [Trait("Dotnet", "ready")]
     public Task Zorbs_multi_line_read_back_uses_the_spoken_pronunciation_on_both_lines() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) =
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) =
             await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, persona: ZetaConformanceFixture.PersonaId);
-        await using var _ = browser;
+        await using RealtimeBrowserClient _ = browser;
 
         // Synthetic, guest-facing brand-STYLE item names straight off test-zeta's own
         // menuItems.json -- "ZORBS®"/"Zorbs" raw catalog casing, both of which the
         // case-sensitive pronunciation lexicon and sizes.spokenAs mapping must correct to
         // "Zorbs" on the realtime channel the model actually reads from.
-        var addFirst = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult addFirst = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
             """{"action":"add","item_name":"ZORBS® Bite Treats","size":"10 count","quantity":1,"price":3.99}""",
             "call_zorbs_add_1", roundTripIndex, ct);
 
-        var addSecond = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult addSecond = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
             """{"action":"add","item_name":"Zorbs","size":"25 count","quantity":1,"price":8.99}""",
             "call_zorbs_add_2", addFirst.RoundTripIndex, ct);
 
-        var getOrderResult = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult getOrderResult = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "get_order", "{}", "call_zorbs_get", addSecond.RoundTripIndex, ct);
 
-        var text = getOrderResult.FunctionCallOutputText;
+        string text = getOrderResult.FunctionCallOutputText;
         Assert.DoesNotContain("ZORBS", text);
         Assert.Contains("Zorb", text);
         Assert.Contains("10 Count", text);
@@ -166,22 +163,22 @@ public sealed class SpokenReadBackZetaConformanceTests(ZetaConformanceFixture fi
     [Trait("Dotnet", "ready")]
     public Task Modify_then_readback_reflects_the_new_count_never_the_stale_one() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) =
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) =
             await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, persona: ZetaConformanceFixture.PersonaId);
-        await using var _ = browser;
+        await using RealtimeBrowserClient _ = browser;
 
         // Brian's exact bug report (coordinator brief): a guest adds 25 Count Zorbs, then
         // asks to change it down to 10 Count -- the realtime model spoke "I've upgraded you" and
         // the read-back that followed still described the ORIGINAL count. "Changed" (not
         // "Upgraded") is asserted on the delta line; the read-back below asserts the actual bug.
-        var addResult = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult addResult = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
             """{"action":"add","item_name":"ZORBS® Bite Treats","size":"25 count","quantity":1,"price":8.99}""",
             "call_modify_readback_add", roundTripIndex, ct);
         Assert.Contains("25 Count", addResult.FunctionCallOutputText);
 
-        var modifyResult = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult modifyResult = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "update_order",
             """{"action":"modify","item_name":"ZORBS® Bite Treats","size":"10 count","quantity":1,"price":3.99}""",
             "call_modify_readback_modify", addResult.RoundTripIndex, ct);
@@ -191,10 +188,10 @@ public sealed class SpokenReadBackZetaConformanceTests(ZetaConformanceFixture fi
         Assert.Contains("Changed", modifyResult.FunctionCallOutputText);
         Assert.DoesNotContain("Upgraded", modifyResult.FunctionCallOutputText);
 
-        var getOrderResult = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult getOrderResult = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "get_order", "{}", "call_modify_readback_get", modifyResult.RoundTripIndex, ct);
 
-        var text = getOrderResult.FunctionCallOutputText;
+        string text = getOrderResult.FunctionCallOutputText;
         Assert.Contains("10 Count", text);
         Assert.DoesNotContain("25 Count", text);
     });

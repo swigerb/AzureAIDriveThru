@@ -8,10 +8,10 @@ public sealed class EventIdsTests
     [Fact]
     public void NewEventId_HasPrefixUnderscoreAndTwentyHexChars()
     {
-        var id = EventIds.NewEventId("sonic_bootstrap");
+        string id = EventIds.NewEventId("sonic_bootstrap");
 
         Assert.StartsWith("sonic_bootstrap_", id);
-        var suffix = id["sonic_bootstrap_".Length..];
+        string suffix = id["sonic_bootstrap_".Length..];
         Assert.Equal(20, suffix.Length);
         Assert.Matches("^[0-9a-f]{20}$", suffix);
     }
@@ -19,8 +19,8 @@ public sealed class EventIdsTests
     [Fact]
     public void NewEventId_IsUniqueAcrossCalls()
     {
-        var a = EventIds.NewEventId("sonic_su");
-        var b = EventIds.NewEventId("sonic_su");
+        string a = EventIds.NewEventId("sonic_su");
+        string b = EventIds.NewEventId("sonic_su");
 
         Assert.NotEqual(a, b);
     }

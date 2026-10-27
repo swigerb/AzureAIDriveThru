@@ -1,4 +1,3 @@
-using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 
@@ -30,18 +29,18 @@ public sealed class SpokenTotalTests(HappyHourJustBeforeOpenFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Spoken_total_text_matches_the_exact_final_total_non_half_cent() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var repoRoot = RepoPaths.FindRepoRoot();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string repoRoot = RepoPaths.FindRepoRoot();
         var golden = GoldenOrderPricingData.Load(repoRoot);
-        var spokenCase = golden.SpokenTotalCases.Single(c => c.Tag == "activeNonHalfCent");
+        SpokenTotalCase spokenCase = golden.SpokenTotalCases.Single(c => c.Tag == "activeNonHalfCent");
         Assert.False(spokenCase.HappyHour, "This fixture pins the clock outside the happy-hour window.");
 
-        var mode = OrderScenarioHelpers.MenuModeForItems(repoRoot, spokenCase.Steps.Select(s => s.Item));
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
-        await using var _ = browser;
+        string mode = OrderScenarioHelpers.MenuModeForItems(repoRoot, spokenCase.Steps.Select(s => s.Item));
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
+        await using RealtimeBrowserClient _ = browser;
 
-        var steps = spokenCase.Steps.Select(s => (s.Action, s.Item, s.Size, s.Quantity, s.Price));
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(connection, browser, steps, roundTripIndex, ct);
+        IEnumerable<(string Action, string Item, string Size, int Quantity, decimal Price)> steps = spokenCase.Steps.Select(s => (s.Action, s.Item, s.Size, s.Quantity, s.Price));
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(connection, browser, steps, roundTripIndex, ct);
 
         // Confirms the wire finalTotal is what the golden case expects before checking the spoken
         // text derives from it -- otherwise a failure here could just as easily mean the golden
@@ -66,18 +65,18 @@ public sealed class SpokenTotalTests(HappyHourJustBeforeOpenFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Spoken_total_with_trailing_zero_shows_two_decimal_places() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var repoRoot = RepoPaths.FindRepoRoot();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string repoRoot = RepoPaths.FindRepoRoot();
         var golden = GoldenOrderPricingData.Load(repoRoot);
-        var spokenCase = golden.SpokenTotalCases.Single(c => c.Tag == "trailingZero");
+        SpokenTotalCase spokenCase = golden.SpokenTotalCases.Single(c => c.Tag == "trailingZero");
         Assert.False(spokenCase.HappyHour, "This fixture pins the clock outside the happy-hour window.");
 
-        var mode = OrderScenarioHelpers.MenuModeForItems(repoRoot, spokenCase.Steps.Select(s => s.Item));
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
-        await using var _ = browser;
+        string mode = OrderScenarioHelpers.MenuModeForItems(repoRoot, spokenCase.Steps.Select(s => s.Item));
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
+        await using RealtimeBrowserClient _ = browser;
 
-        var steps = spokenCase.Steps.Select(s => (s.Action, s.Item, s.Size, s.Quantity, s.Price));
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(connection, browser, steps, roundTripIndex, ct);
+        IEnumerable<(string Action, string Item, string Size, int Quantity, decimal Price)> steps = spokenCase.Steps.Select(s => (s.Action, s.Item, s.Size, s.Quantity, s.Price));
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(connection, browser, steps, roundTripIndex, ct);
 
         OrderScenarioHelpers.AssertMoneyEqual(
             spokenCase.ExpectedFinalTotal, OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!));
@@ -92,18 +91,18 @@ public sealed class SpokenTotalTests(HappyHourJustBeforeOpenFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Spoken_total_rounds_up_a_non_midpoint_value() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var repoRoot = RepoPaths.FindRepoRoot();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string repoRoot = RepoPaths.FindRepoRoot();
         var golden = GoldenOrderPricingData.Load(repoRoot);
-        var spokenCase = golden.SpokenTotalCases.Single(c => c.Tag == "roundUpNonMidpoint");
+        SpokenTotalCase spokenCase = golden.SpokenTotalCases.Single(c => c.Tag == "roundUpNonMidpoint");
         Assert.False(spokenCase.HappyHour, "This fixture pins the clock outside the happy-hour window.");
 
-        var mode = OrderScenarioHelpers.MenuModeForItems(repoRoot, spokenCase.Steps.Select(s => s.Item));
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
-        await using var _ = browser;
+        string mode = OrderScenarioHelpers.MenuModeForItems(repoRoot, spokenCase.Steps.Select(s => s.Item));
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
+        await using RealtimeBrowserClient _ = browser;
 
-        var steps = spokenCase.Steps.Select(s => (s.Action, s.Item, s.Size, s.Quantity, s.Price));
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(connection, browser, steps, roundTripIndex, ct);
+        IEnumerable<(string Action, string Item, string Size, int Quantity, decimal Price)> steps = spokenCase.Steps.Select(s => (s.Action, s.Item, s.Size, s.Quantity, s.Price));
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(connection, browser, steps, roundTripIndex, ct);
 
         OrderScenarioHelpers.AssertMoneyEqual(
             spokenCase.ExpectedFinalTotal, OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!));
@@ -123,18 +122,18 @@ public sealed class SpokenTotalHalfCentTests(HappyHourAtOpenFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Spoken_total_text_matches_the_exact_final_total_half_cent() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var repoRoot = RepoPaths.FindRepoRoot();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string repoRoot = RepoPaths.FindRepoRoot();
         var golden = GoldenOrderPricingData.Load(repoRoot);
-        var spokenCase = golden.SpokenTotalCases.Single(c => c.Tag == "halfCent");
+        SpokenTotalCase spokenCase = golden.SpokenTotalCases.Single(c => c.Tag == "halfCent");
         Assert.True(spokenCase.HappyHour, "This fixture pins the clock inside the happy-hour window.");
 
-        var mode = OrderScenarioHelpers.MenuModeForItems(repoRoot, spokenCase.Steps.Select(s => s.Item));
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
-        await using var _ = browser;
+        string mode = OrderScenarioHelpers.MenuModeForItems(repoRoot, spokenCase.Steps.Select(s => s.Item));
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
+        await using RealtimeBrowserClient _ = browser;
 
-        var steps = spokenCase.Steps.Select(s => (s.Action, s.Item, s.Size, s.Quantity, s.Price));
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(connection, browser, steps, roundTripIndex, ct);
+        IEnumerable<(string Action, string Item, string Size, int Quantity, decimal Price)> steps = spokenCase.Steps.Select(s => (s.Action, s.Item, s.Size, s.Quantity, s.Price));
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(connection, browser, steps, roundTripIndex, ct);
 
         OrderScenarioHelpers.AssertMoneyEqual(
             spokenCase.ExpectedFinalTotal, OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!));

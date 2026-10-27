@@ -8,7 +8,7 @@ namespace SearchIndexIngestor.Tests;
 /// </summary>
 public sealed class PersonaTargetingTests
 {
-    private static readonly IReadOnlyList<EnabledPersonaDiscovery.DiscoveredPersona> Catalog =
+    private static readonly IReadOnlyList<EnabledPersonaDiscovery.DiscoveredPersona> s_catalog =
     [
         new("alpha", "alpha-index", "alpha/menu.json"),
         new("bravo", "bravo-index", "bravo/menu.json"),
@@ -18,14 +18,14 @@ public sealed class PersonaTargetingTests
     [Fact]
     public void ResolveTargetPersonas_ReturnsEveryPersona_WhenRequestedIsNull()
     {
-        var result = PersonaTargeting.ResolveTargetPersonas(Catalog, null);
+        IReadOnlyList<EnabledPersonaDiscovery.DiscoveredPersona> result = PersonaTargeting.ResolveTargetPersonas(s_catalog, null);
         Assert.Equal(["alpha", "bravo", "charlie"], result.Select(p => p.PersonaId));
     }
 
     [Fact]
     public void ResolveTargetPersonas_ReturnsEveryPersona_WhenRequestedIsEmpty()
     {
-        var result = PersonaTargeting.ResolveTargetPersonas(Catalog, []);
+        IReadOnlyList<EnabledPersonaDiscovery.DiscoveredPersona> result = PersonaTargeting.ResolveTargetPersonas(s_catalog, []);
         Assert.Equal(["alpha", "bravo", "charlie"], result.Select(p => p.PersonaId));
     }
 
@@ -35,29 +35,29 @@ public sealed class PersonaTargetingTests
         // --persona charlie --persona alpha (repeatable flag): order follows the FLAGS, not the
         // catalog's own sorted order -- matching Python's own
         // "[catalog.get(pid) for pid in ids]" (not sorted again).
-        var result = PersonaTargeting.ResolveTargetPersonas(Catalog, ["charlie", "alpha"]);
+        IReadOnlyList<EnabledPersonaDiscovery.DiscoveredPersona> result = PersonaTargeting.ResolveTargetPersonas(s_catalog, ["charlie", "alpha"]);
         Assert.Equal(["charlie", "alpha"], result.Select(p => p.PersonaId));
     }
 
     [Fact]
     public void ResolveTargetPersonas_SplitsCommaSeparatedEntries()
     {
-        var result = PersonaTargeting.ResolveTargetPersonas(Catalog, ["alpha,bravo"]);
+        IReadOnlyList<EnabledPersonaDiscovery.DiscoveredPersona> result = PersonaTargeting.ResolveTargetPersonas(s_catalog, ["alpha,bravo"]);
         Assert.Equal(["alpha", "bravo"], result.Select(p => p.PersonaId));
     }
 
     [Fact]
     public void ResolveTargetPersonas_TrimsWhitespaceAndSkipsEmptyEntries()
     {
-        var result = PersonaTargeting.ResolveTargetPersonas(Catalog, [" alpha , , bravo "]);
+        IReadOnlyList<EnabledPersonaDiscovery.DiscoveredPersona> result = PersonaTargeting.ResolveTargetPersonas(s_catalog, [" alpha , , bravo "]);
         Assert.Equal(["alpha", "bravo"], result.Select(p => p.PersonaId));
     }
 
     [Fact]
     public void ResolveTargetPersonas_Throws_WhenAnyRequestedIdIsUnknown()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
-            () => PersonaTargeting.ResolveTargetPersonas(Catalog, ["alpha", "nonexistent"]));
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(
+            () => PersonaTargeting.ResolveTargetPersonas(s_catalog, ["alpha", "nonexistent"]));
         Assert.Contains("nonexistent", ex.Message);
         Assert.Contains("alpha", ex.Message);
     }
@@ -65,7 +65,7 @@ public sealed class PersonaTargetingTests
     [Fact]
     public void ResolveTargetPersonas_Throws_WithNoneText_WhenCatalogIsEmpty()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(
             () => PersonaTargeting.ResolveTargetPersonas([], ["anything"]));
         Assert.Contains("(none)", ex.Message);
     }

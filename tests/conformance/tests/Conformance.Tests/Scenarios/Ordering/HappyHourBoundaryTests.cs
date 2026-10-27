@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 
@@ -35,8 +34,8 @@ file static class HappyHourBoundaryTestSupport
 
     public static async Task<ToolCallResult> AddOneDrinkAndReadResultAsync(ConformanceFixture fixture, CancellationToken ct)
     {
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
         return await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
@@ -46,7 +45,7 @@ file static class HappyHourBoundaryTestSupport
 
     public static async Task<decimal> AddOneDrinkAndReadFinalTotalAsync(ConformanceFixture fixture, CancellationToken ct)
     {
-        var result = await AddOneDrinkAndReadResultAsync(fixture, ct);
+        ToolCallResult result = await AddOneDrinkAndReadResultAsync(fixture, ct);
         return OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!);
     }
 
@@ -61,7 +60,7 @@ file static class HappyHourBoundaryTestSupport
 
     public static decimal HappyHourFinalTotal(decimal unitPrice)
     {
-        var rules = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot()).BusinessRules;
+        BusinessRules rules = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot()).BusinessRules;
         return unitPrice * rules.HappyHourDiscount * (1 + rules.TaxRate);
     }
 }
@@ -73,8 +72,8 @@ public sealed class HappyHourJustBeforeOpenTests(HappyHourJustBeforeOpenFixture 
     [Trait("Dotnet", "ready")]
     public Task At_13_59_59_happy_hour_is_not_yet_active() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var finalTotal = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadFinalTotalAsync(fixture, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        decimal finalTotal = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadFinalTotalAsync(fixture, ct);
         OrderScenarioHelpers.AssertMoneyEqual(
             HappyHourBoundaryTestSupport.FullPriceFinalTotal(HappyHourBoundaryTestSupport.DrinkPrice), finalTotal);
     });
@@ -86,8 +85,8 @@ public sealed class HappyHourJustBeforeOpenTests(HappyHourJustBeforeOpenFixture 
     [Trait("Dotnet", "ready")]
     public Task At_13_59_59_the_banner_is_absent() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var result = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadResultAsync(fixture, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        ToolCallResult result = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadResultAsync(fixture, ct);
         Assert.DoesNotContain(
             HappyHourBoundaryTestSupport.SonicHappyHourBanner(), result.FunctionCallOutputText);
         OrderScenarioHelpers.AssertMoneyEqual(
@@ -103,8 +102,8 @@ public sealed class HappyHourAtOpenTests(HappyHourAtOpenFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task At_14_00_00_happy_hour_is_active() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var finalTotal = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadFinalTotalAsync(fixture, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        decimal finalTotal = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadFinalTotalAsync(fixture, ct);
         OrderScenarioHelpers.AssertMoneyEqual(
             HappyHourBoundaryTestSupport.HappyHourFinalTotal(HappyHourBoundaryTestSupport.DrinkPrice), finalTotal);
     });
@@ -117,8 +116,8 @@ public sealed class HappyHourAtOpenTests(HappyHourAtOpenFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task At_14_00_00_an_eligible_drink_announces_Sonics_own_banner_and_is_discounted() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var result = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadResultAsync(fixture, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        ToolCallResult result = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadResultAsync(fixture, ct);
         Assert.Contains(
             HappyHourBoundaryTestSupport.SonicHappyHourBanner(), result.FunctionCallOutputText);
         Assert.Contains(
@@ -133,11 +132,11 @@ public sealed class HappyHourAtOpenTests(HappyHourAtOpenFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task A_combo_drink_component_does_not_emit_a_happy_hour_discount_claim() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [
                 ("add", "SuperSONIC® Double Cheeseburger Combo", "standard", 1, 10.19m),
@@ -157,11 +156,11 @@ public sealed class HappyHourAtOpenTests(HappyHourAtOpenFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task A_non_drink_item_is_unaffected_by_happy_hour_pricing_logic() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", "Tots", "medium", 1, 2.79m)],
             roundTripIndex, ct);
@@ -179,21 +178,21 @@ public sealed class HappyHourAtOpenTests(HappyHourAtOpenFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Ched_R_Peppers_is_full_price_during_happy_hour_despite_the_keyword_pepper() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        const decimal unitPrice = 3.99m; // Small, app/frontend/src/data/menuItems.json
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        const decimal UnitPrice = 3.99m; // Small, app/frontend/src/data/menuItems.json
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
-            [("add", "Ched 'R' Peppers", "small", 1, unitPrice)],
+            [("add", "Ched 'R' Peppers", "small", 1, UnitPrice)],
             roundTripIndex, ct);
 
         // A side must price exactly like this class's own non-drink case above (full price, no
         // happy-hour discount) even though its name contains "pepper" -- unlike an actual drink
         // such as Dr Pepper, which the keyword fallback exists to correctly catch.
         OrderScenarioHelpers.AssertMoneyEqual(
-            HappyHourBoundaryTestSupport.FullPriceFinalTotal(unitPrice),
+            HappyHourBoundaryTestSupport.FullPriceFinalTotal(UnitPrice),
             OrderScenarioHelpers.GetOrderFinalTotal(result.ToolResultJson!));
     });
 }
@@ -205,8 +204,8 @@ public sealed class HappyHourJustBeforeCloseTests(HappyHourJustBeforeCloseFixtur
     [Trait("Dotnet", "ready")]
     public Task At_15_59_59_happy_hour_is_still_active() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var finalTotal = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadFinalTotalAsync(fixture, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        decimal finalTotal = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadFinalTotalAsync(fixture, ct);
         OrderScenarioHelpers.AssertMoneyEqual(
             HappyHourBoundaryTestSupport.HappyHourFinalTotal(HappyHourBoundaryTestSupport.DrinkPrice), finalTotal);
     });
@@ -219,8 +218,8 @@ public sealed class HappyHourAtCloseTests(HappyHourAtCloseFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task At_16_00_00_happy_hour_has_ended() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var finalTotal = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadFinalTotalAsync(fixture, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        decimal finalTotal = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadFinalTotalAsync(fixture, ct);
         OrderScenarioHelpers.AssertMoneyEqual(
             HappyHourBoundaryTestSupport.FullPriceFinalTotal(HappyHourBoundaryTestSupport.DrinkPrice), finalTotal);
     });
@@ -236,8 +235,8 @@ public sealed class HappyHourJustBeforeOpenWinterTests(HappyHourJustBeforeOpenWi
     [Trait("Dotnet", "ready")]
     public Task At_13_59_59_CST_happy_hour_is_not_yet_active() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var finalTotal = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadFinalTotalAsync(fixture, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        decimal finalTotal = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadFinalTotalAsync(fixture, ct);
         OrderScenarioHelpers.AssertMoneyEqual(
             HappyHourBoundaryTestSupport.FullPriceFinalTotal(HappyHourBoundaryTestSupport.DrinkPrice), finalTotal);
     });
@@ -252,8 +251,8 @@ public sealed class HappyHourAtOpenWinterTests(HappyHourAtOpenWinterFixture fixt
     [Trait("Dotnet", "ready")]
     public Task At_14_00_00_CST_happy_hour_is_active() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var finalTotal = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadFinalTotalAsync(fixture, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        decimal finalTotal = await HappyHourBoundaryTestSupport.AddOneDrinkAndReadFinalTotalAsync(fixture, ct);
         OrderScenarioHelpers.AssertMoneyEqual(
             HappyHourBoundaryTestSupport.HappyHourFinalTotal(HappyHourBoundaryTestSupport.DrinkPrice), finalTotal);
     });
@@ -269,9 +268,12 @@ public sealed class TaxToTheCentOffHappyHourTests(HappyHourJustBeforeOpenFixture
     {
         var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
         var data = new TheoryData<int>();
-        for (var i = 0; i < golden.TaxCases.Count; i++)
+        for (int i = 0; i < golden.TaxCases.Count; i++)
         {
-            if (!golden.TaxCases[i].HappyHour) data.Add(i);
+            if (!golden.TaxCases[i].HappyHour)
+            {
+                data.Add(i);
+            }
         }
         return data;
     }
@@ -281,19 +283,19 @@ public sealed class TaxToTheCentOffHappyHourTests(HappyHourJustBeforeOpenFixture
     [MemberData(nameof(OffHappyHourTaxCaseIndexes))]
     public Task Tax_and_totals_match_to_the_cent(int caseIndex) => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var repoRoot = RepoPaths.FindRepoRoot();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string repoRoot = RepoPaths.FindRepoRoot();
         var golden = GoldenOrderPricingData.Load(repoRoot);
-        var taxCase = golden.TaxCases[caseIndex];
+        TaxCase taxCase = golden.TaxCases[caseIndex];
 
-        var mode = OrderScenarioHelpers.MenuModeForItems(repoRoot, taxCase.Items.Select(i => i.Item));
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
-        await using var _ = browser;
+        string mode = OrderScenarioHelpers.MenuModeForItems(repoRoot, taxCase.Items.Select(i => i.Item));
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
+        await using RealtimeBrowserClient _ = browser;
 
-        var steps = taxCase.Items.Select(i => ("add", i.Item, i.Size, i.Quantity, i.UnitPrice));
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(connection, browser, steps, roundTripIndex, ct);
+        IEnumerable<(string, string Item, string Size, int Quantity, decimal UnitPrice)> steps = taxCase.Items.Select(i => ("add", i.Item, i.Size, i.Quantity, i.UnitPrice));
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(connection, browser, steps, roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         OrderScenarioHelpers.AssertMoneyEqual(taxCase.ExpectedSubtotal, order.GetProperty("total").GetDecimal());
         OrderScenarioHelpers.AssertMoneyEqual(taxCase.ExpectedTax, order.GetProperty("tax").GetDecimal());
         OrderScenarioHelpers.AssertMoneyEqual(taxCase.ExpectedFinalTotal, order.GetProperty("finalTotal").GetDecimal());
@@ -307,9 +309,12 @@ public sealed class TaxToTheCentDuringHappyHourTests(HappyHourAtOpenFixture fixt
     {
         var golden = GoldenOrderPricingData.Load(RepoPaths.FindRepoRoot());
         var data = new TheoryData<int>();
-        for (var i = 0; i < golden.TaxCases.Count; i++)
+        for (int i = 0; i < golden.TaxCases.Count; i++)
         {
-            if (golden.TaxCases[i].HappyHour) data.Add(i);
+            if (golden.TaxCases[i].HappyHour)
+            {
+                data.Add(i);
+            }
         }
         return data;
     }
@@ -319,19 +324,19 @@ public sealed class TaxToTheCentDuringHappyHourTests(HappyHourAtOpenFixture fixt
     [MemberData(nameof(OnHappyHourTaxCaseIndexes))]
     public Task Tax_and_totals_match_to_the_cent_during_happy_hour(int caseIndex) => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var repoRoot = RepoPaths.FindRepoRoot();
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string repoRoot = RepoPaths.FindRepoRoot();
         var golden = GoldenOrderPricingData.Load(repoRoot);
-        var taxCase = golden.TaxCases[caseIndex];
+        TaxCase taxCase = golden.TaxCases[caseIndex];
 
-        var mode = OrderScenarioHelpers.MenuModeForItems(repoRoot, taxCase.Items.Select(i => i.Item));
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
-        await using var _ = browser;
+        string mode = OrderScenarioHelpers.MenuModeForItems(repoRoot, taxCase.Items.Select(i => i.Item));
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct, mode: mode);
+        await using RealtimeBrowserClient _ = browser;
 
-        var steps = taxCase.Items.Select(i => ("add", i.Item, i.Size, i.Quantity, i.UnitPrice));
-        var result = await OrderScenarioHelpers.RunOrderStepsAsync(connection, browser, steps, roundTripIndex, ct);
+        IEnumerable<(string, string Item, string Size, int Quantity, decimal UnitPrice)> steps = taxCase.Items.Select(i => ("add", i.Item, i.Size, i.Quantity, i.UnitPrice));
+        ToolCallResult result = await OrderScenarioHelpers.RunOrderStepsAsync(connection, browser, steps, roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         OrderScenarioHelpers.AssertMoneyEqual(taxCase.ExpectedSubtotal, order.GetProperty("total").GetDecimal());
         OrderScenarioHelpers.AssertMoneyEqual(taxCase.ExpectedTax, order.GetProperty("tax").GetDecimal());
         OrderScenarioHelpers.AssertMoneyEqual(taxCase.ExpectedFinalTotal, order.GetProperty("finalTotal").GetDecimal());

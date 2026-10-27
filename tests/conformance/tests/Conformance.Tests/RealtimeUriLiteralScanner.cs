@@ -1,4 +1,3 @@
-using System.IO;
 using System.Text.RegularExpressions;
 
 namespace Conformance.Tests;
@@ -16,15 +15,15 @@ namespace Conformance.Tests;
 /// exemption to an explicit allow-list of the two known-legitimate splice sites, by
 /// <c>(file name, exact trimmed line)</c>, rather than "this file mentions the helper somewhere".
 /// </summary>
-public static class RealtimeUriLiteralScanner
+public static partial class RealtimeUriLiteralScanner
 {
     // Matches a `/realtime` path segment ending a request URI (or the start of one, in an
     // interpolated string) -- immediately followed by `?` (a query string), a closing `"` (the
     // bare path with nothing after it), or `{` (an interpolation hole appended right after it) --
     // but NOT the fake upstream server's own `/openai/v1/realtime` path (a completely different
     // endpoint, on a completely different fake process, that never needs the backend's auth).
-    private static readonly Regex RealtimePathLiteral =
-        new(@"(?<!openai/v1)/realtime(?=[?""{]|$)", RegexOptions.Compiled);
+    [GeneratedRegex(@"(?<!openai/v1)/realtime(?=[?""{]|$)")]
+    private static partial Regex RealtimePathLiteral { get; }
 
     /// <summary>
     /// The only known-legitimate hand-spliced <c>/realtime</c> request lines in the whole
@@ -43,7 +42,7 @@ public static class RealtimeUriLiteralScanner
     /// exact trimmed line text, so a typo'd or credential-less near-miss still fails loudly instead
     /// of silently matching a loose pattern.
     /// </summary>
-    private static readonly IReadOnlyDictionary<string, string> AllowedSpliceSites =
+    private static readonly IReadOnlyDictionary<string, string> s_allowedSpliceSites =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["ModelSelectionConformanceTests.cs"] =
@@ -62,18 +61,18 @@ public static class RealtimeUriLiteralScanner
     /// </summary>
     /// <param name="relativePath">
     /// Path used only for the violation message and to resolve the file name against
-    /// <see cref="AllowedSpliceSites"/>; does not need to exist on disk.
+    /// <see cref="s_allowedSpliceSites"/>; does not need to exist on disk.
     /// </param>
     /// <param name="lines">The file's lines, in order.</param>
     public static IReadOnlyList<string> Scan(string relativePath, IReadOnlyList<string> lines)
     {
         var violations = new List<string>();
-        var fileName = Path.GetFileName(relativePath);
-        var allowedLine = AllowedSpliceSites.GetValueOrDefault(fileName);
+        string fileName = Path.GetFileName(relativePath);
+        string? allowedLine = s_allowedSpliceSites.GetValueOrDefault(fileName);
 
-        for (var i = 0; i < lines.Count; i++)
+        for (int i = 0; i < lines.Count; i++)
         {
-            var line = lines[i];
+            string line = lines[i];
             if (!RealtimePathLiteral.IsMatch(line))
             {
                 continue;

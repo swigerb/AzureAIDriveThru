@@ -32,7 +32,7 @@ internal static class YamlJson
     private static JsonObject ToJsonObject(IDictionary<object, object> map)
     {
         var obj = new JsonObject();
-        foreach (var (key, value) in map)
+        foreach ((object? key, object? value) in map)
         {
             obj[key.ToString() ?? ""] = ToJsonNode(value);
         }
@@ -42,7 +42,7 @@ internal static class YamlJson
     private static JsonArray ToJsonArray(IEnumerable<object> list)
     {
         var array = new JsonArray();
-        foreach (var item in list)
+        foreach (object item in list)
         {
             array.Add(ToJsonNode(item));
         }

@@ -52,7 +52,7 @@ public sealed class ForwardClientFrameOrderingTests
         // disarms itself after firing once: only the ORIGINAL browser frame is racing here -- the
         // retry's own later response.create send must behave completely normally (it has no reply
         // raced against it in this test), not re-trigger the same simulated race recursively.
-        var raceArmed = true;
+        bool raceArmed = true;
         upstreamSocket.OnSendAsync = async bytes =>
         {
             if (!raceArmed)
@@ -60,15 +60,15 @@ public sealed class ForwardClientFrameOrderingTests
                 return;
             }
             raceArmed = false;
-            var sent = System.Text.Encoding.UTF8.GetString(bytes);
+            string sent = System.Text.Encoding.UTF8.GetString(bytes);
             Assert.Contains("response.create", sent, StringComparison.Ordinal);
-            var scheduled = await rateLimit.OnErrorAsync(RateLimitedErrorEvent(), CancellationToken.None);
+            bool scheduled = await rateLimit.OnErrorAsync(RateLimitedErrorEvent(), TestContext.Current.CancellationToken);
             Assert.True(scheduled, "the fake upstream reply must itself be recognised as the rate-limit failure that schedules a retry");
             Assert.True(rateLimit.Busy, "OnErrorAsync must have scheduled a pending retry for this test to be meaningful");
         };
 
         await RealtimeProcessor.ForwardClientFrameAsync(
-            ResponseCreateFrame(), "response.create", echo, rateLimit, upstreamSocket, CancellationToken.None);
+            ResponseCreateFrame(), "response.create", echo, rateLimit, upstreamSocket, TestContext.Current.CancellationToken);
 
         // The fix: OnExternalResponseCreate("browser") ran BEFORE the send, so by the time the
         // upstream's reply schedules the retry (inside the send hook above), there is nothing left
@@ -101,12 +101,12 @@ public sealed class ForwardClientFrameOrderingTests
             logger: NullLogger<RateLimitRecovery>.Instance);
 
         await RealtimeProcessor.ForwardClientFrameAsync(
-            ResponseCreateFrame(), "response.create", echo, rateLimit, upstreamSocket, CancellationToken.None);
+            ResponseCreateFrame(), "response.create", echo, rateLimit, upstreamSocket, TestContext.Current.CancellationToken);
         Assert.Single(upstreamSocket.SentMessages);
         Assert.False(rateLimit.Busy); // nothing failed -- no retry scheduled.
 
         await RealtimeProcessor.ForwardClientFrameAsync(
-            new JsonObject { ["type"] = "response.cancel" }, "response.cancel", echo, rateLimit, upstreamSocket, CancellationToken.None);
+            new JsonObject { ["type"] = "response.cancel" }, "response.cancel", echo, rateLimit, upstreamSocket, TestContext.Current.CancellationToken);
         Assert.Equal(2, upstreamSocket.SentMessages.Count);
     }
 }

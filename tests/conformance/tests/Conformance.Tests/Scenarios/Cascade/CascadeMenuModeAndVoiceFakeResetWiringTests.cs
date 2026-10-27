@@ -1,5 +1,4 @@
 using System.Text.Json.Nodes;
-using Conformance.Fakes;
 using Xunit;
 
 namespace Conformance.Tests.Scenarios.Cascade;
@@ -42,13 +41,13 @@ public sealed class CascadeMenuModeAndVoiceFakeResetWiringTests(CascadeMenuModeA
     [Fact]
     public async Task A_throwing_scenario_that_leaked_a_queued_response_and_an_armed_gate_does_not_hang_the_next_scenario()
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
         // Leak scenario: enqueues a response nobody will ever request, arms a gate nobody will
         // ever claim, then throws before issuing any request at all -- exactly the shape
         // CascadeFakeResetWiringTests' own doc comment describes.
         var marker = new DeliberateLeakScenarioException();
-        var thrown = await Record.ExceptionAsync(() => fixture.RunAsync(() =>
+        Exception? thrown = await Record.ExceptionAsync(() => fixture.RunAsync(() =>
         {
             fixture.Chat.EnqueueMessage(new JsonObject { ["role"] = "assistant", ["content"] = "never requested" });
             fixture.Chat.HoldNextResponse();
@@ -60,7 +59,7 @@ public sealed class CascadeMenuModeAndVoiceFakeResetWiringTests(CascadeMenuModeA
         // null (every fixture here always has a real Backend attached) -- asserting against the
         // wrapper's InnerException, not the wrapper itself, proves the original marker (and
         // therefore this specific scenario body) is what failed.
-        var wrapped = Assert.IsType<InvalidOperationException>(thrown);
+        InvalidOperationException wrapped = Assert.IsType<InvalidOperationException>(thrown);
         Assert.Same(marker, wrapped.InnerException);
 
         // Clean scenario, run immediately after: before this fixture's own Drain() wiring, this
@@ -76,7 +75,7 @@ public sealed class CascadeMenuModeAndVoiceFakeResetWiringTests(CascadeMenuModeA
         // was removed or broken.
         await fixture.RunAsync(async () =>
         {
-            var connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(
+            CascadeConnection connection = await CascadeScenarioHelpers.ConnectPastGreetingAsync(
                 fixture, fixture.Chat, "gpt-5-mini", ct, persona: CascadeMenuModeAndVoiceConformanceFixture.Persona_);
             await connection.Browser.DisposeAsync();
         });

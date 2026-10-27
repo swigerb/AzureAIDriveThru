@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
@@ -22,7 +23,7 @@ namespace Conformance.Tests.Scenarios.RateLimit;
 [Collection(RateLimitTimersConformanceCollection.Name)]
 public sealed class RateLimitRetryTimingTests(RateLimitTimersConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     /// <summary>Enqueues a rate-limited failure with no parseable hint, so retry_delay() falls
     /// through to the profile-overridden default instead of clamping a hint.</summary>
@@ -43,27 +44,27 @@ public sealed class RateLimitRetryTimingTests(RateLimitTimersConformanceFixture 
     private static async Task<FakeRealtimeConnection> ConnectAndGetPastGreetingAsync(
         Task<FakeRealtimeConnection?> connectionTask, RealtimeBrowserClient browser, CancellationToken ct)
     {
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
         await browser.SendStartSessionAsync(cancellationToken: ct);
 
         // Same marker UpdateOrderToolCallTests uses: the greeting's round trip must fully finish
         // (tools_pending cleared, ladder idle) before scripting the scenario's own turn, or the
         // automatic greeting response.create would consume our script instead.
-        var greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        RecordedFrame? greetingRoundTrip = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token", s_frameTimeout, ct);
         Assert.True(greetingRoundTrip is not null, "Greeting round trip never completed.");
-        return connection!;
+        return connection;
     }
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Ladder_runs_silent_then_two_notifications_then_gives_up() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await ConnectAndGetPastGreetingAsync(connectionTask, browser, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection connection = await ConnectAndGetPastGreetingAsync(connectionTask, browser, ct);
 
         // Three response.create frames: the guest's turn, then the first retry, then the second
         // (and final) retry. All three fail, driving the ladder all the way to exhaustion.
@@ -71,34 +72,34 @@ public sealed class RateLimitRetryTimingTests(RateLimitTimersConformanceFixture 
         connection.Script.Enqueue(NoHintRateLimited());
         connection.Script.Enqueue(NoHintRateLimited());
 
-        var turnStart = connection.ReceivedFrames.Count;
+        int turnStart = connection.ReceivedFrames.Count;
         await browser.SendResponseCreateAsync(ct);
 
         // Attempt 0's failure is silent -- no extension.rate_limited at all -- so the *first*
         // thing the browser should observe is directly the {attempt:1} notification, not a
         // {attempt:0} one that would prove attempt 0 wasn't actually silent.
-        var first = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.rate_limited", FrameTimeout, ct);
+        RecordedFrame? first = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.rate_limited", s_frameTimeout, ct);
         Assert.True(first is not null, "Expected extension.rate_limited after the first retry also failed.");
         Assert.Equal(1, first!.Json.GetProperty("attempt").GetInt32());
         Assert.False(first.Json.TryGetProperty("final", out _), "attempt:1 must not carry final:true.");
 
-        var second = await browser.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.rate_limited" && f.Sequence > first.Sequence, FrameTimeout, ct);
+        RecordedFrame? second = await browser.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.rate_limited" && f.Sequence > first.Sequence, s_frameTimeout, ct);
         Assert.True(second is not null, "Expected a second extension.rate_limited after the final retry failed.");
         Assert.Equal(2, second!.Json.GetProperty("attempt").GetInt32());
-        Assert.True(second.Json.TryGetProperty("final", out var finalProp) && finalProp.GetBoolean(),
+        Assert.True(second.Json.TryGetProperty("final", out JsonElement finalProp) && finalProp.GetBoolean(),
             "attempt:2 must carry final:true.");
 
         // No third notification, no fourth response.create -- the ladder must stay exhausted
         // until the guest's next turn. The second retry delay is 0.4s; 2s is generous headroom
         // without ever approaching this actually taking long.
-        var extraNotification = await browser.ReceivedFrames.WaitForAsync(
+        RecordedFrame? extraNotification = await browser.ReceivedFrames.WaitForAsync(
             f => f.Type == "extension.rate_limited" && f.Sequence > second.Sequence,
             TimeSpan.FromSeconds(2), ct);
         Assert.True(extraNotification is null, "Ladder must not notify again after attempt:2/final:true.");
 
-        var responseCreatesSeenByFake = connection.ReceivedFrames.Snapshot()
+        int responseCreatesSeenByFake = connection.ReceivedFrames.Snapshot()
             .Skip(turnStart)
             .Count(f => f.Type == "response.create");
         Assert.Equal(3, responseCreatesSeenByFake);
@@ -114,10 +115,10 @@ public sealed class RateLimitRetryTimingTests(RateLimitTimersConformanceFixture 
     [Trait("Dotnet", "ready")]
     public Task A_service_retry_hint_is_parsed_and_clamped_to_the_production_bounds() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await ConnectAndGetPastGreetingAsync(connectionTask, browser, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection connection = await ConnectAndGetPastGreetingAsync(connectionTask, browser, ct);
 
         // rate_limit.py's FIRST_RETRY_BOUNDS=(0.5, 5.0) are hardcoded and never overridable via
         // CONFORMANCE_TEST_HOOKS. This deliberately proves the *floor* clamp (a hint asking for
@@ -132,7 +133,7 @@ public sealed class RateLimitRetryTimingTests(RateLimitTimersConformanceFixture 
                 ErrorMessage: "Rate limit reached. Please try again in 10ms."),
         ]));
 
-        var turnStart = connection.ReceivedFrames.Count;
+        int turnStart = connection.ReceivedFrames.Count;
         await browser.SendResponseCreateAsync(ct);
 
         // PR #54 review (blocker B1): the previous version anchored on "the first
@@ -144,8 +145,8 @@ public sealed class RateLimitRetryTimingTests(RateLimitTimersConformanceFixture 
         // response.create with Sequence >= turnStart (the guest's own frame, unambiguously), and
         // `retry` is the *next* one after it -- genuinely the ladder's retry, never the turn
         // itself, regardless of exactly when either gets recorded relative to this wait starting.
-        var turn = await connection.ReceivedFrames.WaitForAsync(
-            f => f.Sequence >= turnStart && f.Type == "response.create", FrameTimeout, ct);
+        RecordedFrame? turn = await connection.ReceivedFrames.WaitForAsync(
+            f => f.Sequence >= turnStart && f.Type == "response.create", s_frameTimeout, ct);
         Assert.True(turn is not null, "Expected the guest's own response.create to reach the fake.");
 
         // A dedicated "must not arrive within 0.3s" WaitForAsync (racing its own ~300ms
@@ -164,12 +165,12 @@ public sealed class RateLimitRetryTimingTests(RateLimitTimersConformanceFixture 
         // when the retry arrives doesn't falsify "it was clamped to roughly the floor", only the
         // elapsed-time assertion below does that. RateLimitTimers' 10s idle/grace budget easily
         // outlasts this wait; a retry never touches the idle clock either way.
-        var retry = await connection.ReceivedFrames.WaitForAsync(
-            f => f.Sequence > turn!.Sequence && f.Type == "response.create", FrameTimeout, ct);
+        RecordedFrame? retry = await connection.ReceivedFrames.WaitForAsync(
+            f => f.Sequence > turn!.Sequence && f.Type == "response.create", s_frameTimeout, ct);
         Assert.True(retry is not null,
             "Expected the retry at roughly the 0.5s FIRST_RETRY_BOUNDS floor, clamped up from the " +
             "10ms hint.");
-        var elapsed = retry!.ReceivedAt - turn!.ReceivedAt;
+        TimeSpan elapsed = retry!.ReceivedAt - turn!.ReceivedAt;
         // Lower bound proves the hint was recognised and clamped up to the 0.5s floor: it rules
         // out both the raw, unclamped 0.01s hint and the unhinted 0.2s default (0.35s is
         // comfortably past both). Upper bound is loose (well under the 5s ceiling) -- it only

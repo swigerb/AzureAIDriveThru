@@ -200,7 +200,7 @@ public sealed class ToolFailureTrackerTests
         using var pack = new MinimalPromptPackFixture();
         var loader = new PromptLoader(pack.PersonasDir, "acme");
 
-        var instructions = ToolFailureCapNotice.ResolveInstructions(loader);
+        string instructions = ToolFailureCapNotice.ResolveInstructions(loader);
 
         // Must be the neutral fallback, NOT PromptLoader.RenderError's own
         // "An error occurred (tool_failure_cap_instructions)." placeholder for an unknown key --
@@ -218,7 +218,7 @@ public sealed class ToolFailureTrackerTests
             "Say sorry, carhop-style, and ask the guest to repeat their order.");
         var loader = new PromptLoader(pack.PersonasDir, "acme");
 
-        var instructions = ToolFailureCapNotice.ResolveInstructions(loader);
+        string instructions = ToolFailureCapNotice.ResolveInstructions(loader);
 
         Assert.Equal("Say sorry, carhop-style, and ask the guest to repeat their order.", instructions);
     }
@@ -226,14 +226,14 @@ public sealed class ToolFailureTrackerTests
     [Fact]
     public void BuildMessage_IsAServerAuthoredResponseCreateWithToolChoiceNoneAndNonEmptyInstructions()
     {
-        var json = ToolFailureCapNotice.BuildMessage(promptLoader: null);
+        string json = ToolFailureCapNotice.BuildMessage(promptLoader: null);
 
         using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
+        JsonElement root = doc.RootElement;
         Assert.Equal("response.create", root.GetProperty("type").GetString());
-        var response = root.GetProperty("response");
+        JsonElement response = root.GetProperty("response");
         Assert.Equal("none", response.GetProperty("tool_choice").GetString());
-        var instructions = response.GetProperty("instructions").GetString();
+        string? instructions = response.GetProperty("instructions").GetString();
         Assert.False(string.IsNullOrWhiteSpace(instructions));
         Assert.Equal(ToolFailureCapNotice.InstructionsFallback, instructions);
     }
@@ -249,7 +249,7 @@ public sealed class ToolFailureTrackerTests
         public MinimalPromptPackFixture()
         {
             PersonasDir = Path.Combine(Path.GetTempPath(), "unity-tool-failure-cap-tests-" + Guid.NewGuid().ToString("n"));
-            var promptsDir = Path.Combine(PersonasDir, "acme", "prompts");
+            string promptsDir = Path.Combine(PersonasDir, "acme", "prompts");
             Directory.CreateDirectory(promptsDir);
 
             File.WriteAllText(Path.Combine(promptsDir, "system_prompt.yaml"), """
@@ -288,7 +288,7 @@ public sealed class ToolFailureTrackerTests
         /// error_messages.yaml <c>messages</c> mapping.</summary>
         public void AppendErrorMessage(string personaId, string key, string value)
         {
-            var path = Path.Combine(PersonasDir, personaId, "prompts", "error_messages.yaml");
+            string path = Path.Combine(PersonasDir, personaId, "prompts", "error_messages.yaml");
             File.AppendAllText(path, $"\n  {key}: \"{value}\"\n");
         }
 

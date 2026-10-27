@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 
@@ -14,14 +13,14 @@ public sealed class GetOrderResetOrderTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Get_order_on_a_fresh_session_returns_an_empty_order() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var result = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult result = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "get_order", "{}", "call_get_order_empty", roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(result.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(result.ToolResultJson!);
         Assert.Equal(0, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(0m, order.GetProperty("total").GetDecimal());
         OrderScenarioHelpers.AssertMoneyEqual(0m, order.GetProperty("tax").GetDecimal());
@@ -32,18 +31,18 @@ public sealed class GetOrderResetOrderTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Get_order_after_adding_items_reflects_the_current_order_without_mutating_it() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var added = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult added = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", "Tots", "medium", 2, 2.79m)],
             roundTripIndex, ct);
 
-        var firstGet = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult firstGet = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "get_order", "{}", "call_get_order_1", added.RoundTripIndex, ct);
-        var secondGet = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult secondGet = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "get_order", "{}", "call_get_order_2", firstGet.RoundTripIndex, ct);
 
         // get_order is read-only: calling it twice in a row must return the identical summary.
@@ -56,7 +55,7 @@ public sealed class GetOrderResetOrderTests(ConformanceFixture fixture)
             $"Expected two consecutive get_order calls to return identical order summaries, but they differed:\n" +
             $"first:  {firstGet.ToolResultJson}\nsecond: {secondGet.ToolResultJson}");
 
-        var order = secondGetDoc.RootElement;
+        JsonElement order = secondGetDoc.RootElement;
         Assert.Equal(1, order.GetProperty("items").GetArrayLength());
         Assert.Equal(2, order.GetProperty("items")[0].GetProperty("quantity").GetInt32());
         OrderScenarioHelpers.AssertMoneyEqual(2 * 2.79m, order.GetProperty("total").GetDecimal());
@@ -66,24 +65,24 @@ public sealed class GetOrderResetOrderTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Reset_order_clears_all_items_and_zeroes_the_totals() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var added = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult added = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [
                 ("add", "Tots", "medium", 1, 2.79m),
                 ("add", "Cherry Limeade", "medium", 1, 2.89m),
             ],
             roundTripIndex, ct);
-        var beforeReset = JsonDocument.Parse(added.ToolResultJson!).RootElement;
+        var beforeReset = JsonElement.Parse(added.ToolResultJson!);
         Assert.Equal(2, beforeReset.GetProperty("items").GetArrayLength());
 
-        var reset = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult reset = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "reset_order", "{}", "call_reset_order", added.RoundTripIndex, ct);
 
-        var order = JsonDocument.Parse(reset.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(reset.ToolResultJson!);
         Assert.Equal(0, order.GetProperty("items").GetArrayLength());
         OrderScenarioHelpers.AssertMoneyEqual(0m, order.GetProperty("total").GetDecimal());
         OrderScenarioHelpers.AssertMoneyEqual(0m, order.GetProperty("finalTotal").GetDecimal());
@@ -93,22 +92,22 @@ public sealed class GetOrderResetOrderTests(ConformanceFixture fixture)
     [Trait("Dotnet", "ready")]
     public Task Reset_order_on_an_already_empty_order_is_a_safe_no_op() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var (browser, connection, roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
-        await using var _ = browser;
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        (RealtimeBrowserClient? browser, Fakes.FakeRealtimeConnection? connection, int roundTripIndex) = await OrderScenarioHelpers.ConnectAndGreetAsync(fixture, ct);
+        await using RealtimeBrowserClient _ = browser;
 
-        var reset = await OrderScenarioHelpers.CallToolAsync(
+        ToolCallResult reset = await OrderScenarioHelpers.CallToolAsync(
             connection, browser, "reset_order", "{}", "call_reset_order_on_empty", roundTripIndex, ct);
 
-        var order = JsonDocument.Parse(reset.ToolResultJson!).RootElement;
+        var order = JsonElement.Parse(reset.ToolResultJson!);
         Assert.Equal(0, order.GetProperty("items").GetArrayLength());
 
         // Prove the session is still fully usable afterwards.
-        var afterReset = await OrderScenarioHelpers.RunOrderStepsAsync(
+        ToolCallResult afterReset = await OrderScenarioHelpers.RunOrderStepsAsync(
             connection, browser,
             [("add", "Tots", "medium", 1, 2.79m)],
             reset.RoundTripIndex, ct);
-        var orderAfter = JsonDocument.Parse(afterReset.ToolResultJson!).RootElement;
+        var orderAfter = JsonElement.Parse(afterReset.ToolResultJson!);
         Assert.Equal(1, orderAfter.GetProperty("items").GetArrayLength());
     });
 }

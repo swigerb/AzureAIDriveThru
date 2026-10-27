@@ -1,4 +1,3 @@
-using System.Linq;
 using System.Reflection;
 using Conformance.Harness;
 using Xunit;
@@ -23,11 +22,11 @@ public sealed class RealPackMealNumberCoverageTests
     [Trait("Dotnet", "ready")]
     public void Every_real_pack_discovered_on_disk_has_a_meal_number_theory_row()
     {
-        var discovered = ConformancePersonas.DiscoverFromDisk();
-        var covered = GetTheoryDataValues<string>(
+        IReadOnlyList<string> discovered = ConformancePersonas.DiscoverFromDisk();
+        List<string> covered = GetTheoryDataValues<string>(
             typeof(RealPackMealNumberConformanceTests), nameof(RealPackMealNumberConformanceTests.DiscoveredPersonaIds));
 
-        var missing = discovered.Except(covered).ToArray();
+        string[] missing = [.. discovered.Except(covered)];
         Assert.True(missing.Length == 0,
             $"Persona pack(s) discovered on disk under personas/ have no " +
             $"RealPackMealNumberConformanceTests row: {string.Join(", ", missing)}. Either " +
@@ -44,9 +43,9 @@ public sealed class RealPackMealNumberCoverageTests
     /// Theory itself will run against, not a copy that could drift from it.</summary>
     private static List<T> GetTheoryDataValues<T>(Type declaringType, string methodName)
     {
-        var method = declaringType.GetMethod(methodName, BindingFlags.Public | BindingFlags.Static)
+        MethodInfo method = declaringType.GetMethod(methodName, BindingFlags.Public | BindingFlags.Static)
             ?? throw new InvalidOperationException($"{declaringType.Name}.{methodName} not found.");
         var data = (TheoryData<T>)method.Invoke(null, null)!;
-        return data.Select(row => row.Data).ToList();
+        return [.. data.Select(row => row.Data)];
     }
 }

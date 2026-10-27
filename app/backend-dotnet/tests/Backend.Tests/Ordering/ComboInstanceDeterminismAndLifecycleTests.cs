@@ -63,7 +63,7 @@ public sealed class ComboInstanceDeterminismAndLifecycleTests : IDisposable
         // drink -- determinism, not an arbitrary/first-match pick. Same item ("Delta Classic Meal") at
         // two different sizes gives two independent OrderItem lines, same as two different combo
         // items would.
-        var order = NewOrder();
+        OrderState order = NewOrder();
 
         // Two distinct combo instances (different sizes) -- each its own OrderItem line.
         order.HandleOrderUpdate("add", Combo, "regular", 1, ComboRegularPrice);
@@ -74,8 +74,8 @@ public sealed class ComboInstanceDeterminismAndLifecycleTests : IDisposable
         order.HandleOrderUpdate("add", "Delta Latte", "regular", 1, 3.49m);
 
         Assert.Equal(2, order.Items.Count);
-        var regularCombo = order.Items.Single(i => i.Item == Combo && i.Size == "regular");
-        var largeCombo = order.Items.Single(i => i.Item == Combo && i.Size == "large");
+        OrderItem regularCombo = order.Items.Single(i => i.Item == Combo && i.Size == "regular");
+        OrderItem largeCombo = order.Items.Single(i => i.Item == Combo && i.Size == "large");
         // The MOST RECENTLY added instance (the "large" line) is scanned first for a vacant
         // slot (see FindBundleSlot) -- it absorbs the FIRST-added side/drink of each kind
         // (Delta Fries, Delta Iced Tea), leaving the SECOND-added ones (Delta Onion Rings,
@@ -85,7 +85,7 @@ public sealed class ComboInstanceDeterminismAndLifecycleTests : IDisposable
 
         // Resize the drink that only the "regular" line holds -- must leave the "large" line
         // (and its own, different drink) untouched.
-        var result = order.HandleOrderUpdate("modify", "Delta Latte", "large", 1, 4.29m);
+        OrderUpdateResult result = order.HandleOrderUpdate("modify", "Delta Latte", "large", 1, 4.29m);
         Assert.Equal("drinks", result.ResizedComboComponent);
 
         regularCombo = order.Items.Single(i => i.Item == Combo && i.Size == "regular");
@@ -102,7 +102,7 @@ public sealed class ComboInstanceDeterminismAndLifecycleTests : IDisposable
         // Rick's review, item 2: one quantity-2 combo line has TWO independent slots per
         // component -- filling only one unit's side must leave the combo incomplete (the second
         // unit still needs its own side), not silently count as "done" for both.
-        var order = NewOrder();
+        OrderState order = NewOrder();
         order.HandleOrderUpdate("add", Combo, "regular", 2, ComboRegularPrice);
         order.HandleOrderUpdate("add", "Delta Fries", "regular", 1, 1.99m);
         order.HandleOrderUpdate("add", "Delta Latte", "regular", 1, 3.49m);
@@ -125,7 +125,7 @@ public sealed class ComboInstanceDeterminismAndLifecycleTests : IDisposable
         // Rick's review, item 3: removing a combo line must clear ITS slot state with no extra
         // cleanup code (state lives ON the OrderItem) -- a brand-new combo added afterward (even
         // the identical item/size) must never inherit the old one's filled slots or completeness.
-        var order = NewOrder();
+        OrderState order = NewOrder();
         order.HandleOrderUpdate("add", Combo, "regular", 1, ComboRegularPrice);
         order.HandleOrderUpdate("add", "Delta Fries", "regular", 1, 1.99m);
         order.HandleOrderUpdate("add", "Delta Latte", "regular", 1, 3.49m);
@@ -137,7 +137,7 @@ public sealed class ComboInstanceDeterminismAndLifecycleTests : IDisposable
         // A brand-new combo instance -- same item, same size -- must start incomplete again.
         order.HandleOrderUpdate("add", Combo, "regular", 1, ComboRegularPrice);
         Assert.False(order.GetComboRequirements().IsComplete);
-        var newCombo = order.Items[0];
+        OrderItem newCombo = order.Items[0];
         Assert.DoesNotContain("Delta Fries", newCombo.Display);
         Assert.DoesNotContain("Delta Latte", newCombo.Display);
         Assert.Equal(ComboRegularPrice, order.Summary.Total);
@@ -150,11 +150,11 @@ public sealed class ComboInstanceDeterminismAndLifecycleTests : IDisposable
         // discount must never apply to that absorbed drink, even immediately after the slot is
         // explicitly resized.
         FreezeAt("2026-01-15T21:00:00Z");
-        var order = PersonaOrderFactory.CreateOrderState(DeltaFixture.Load("test-epsilon"));
+        OrderState order = PersonaOrderFactory.CreateOrderState(DeltaFixture.Load("test-epsilon"));
         order.HandleOrderUpdate("add", "Epsilon Snack Meal", "medium", 1, 5.99m);
         order.HandleOrderUpdate("add", "Epsilon Cola", "medium", 1, 1.50m);
 
-        var result = order.HandleOrderUpdate("modify", "Epsilon Cola", "large", 1, 2.00m);
+        OrderUpdateResult result = order.HandleOrderUpdate("modify", "Epsilon Cola", "large", 1, 2.00m);
         Assert.Equal("drinks", result.ResizedComboComponent);
 
         // Whole-bundle resize reprices the meal to Large, with no separate discounted drink line.

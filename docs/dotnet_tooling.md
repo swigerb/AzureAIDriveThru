@@ -224,6 +224,12 @@ print, without spawning a subprocess. Two behaviors `CliRunner.Run` is responsib
   trace. The catch is scoped to `InvalidOperationException` specifically (not a blanket catch-all),
   so a genuine bug elsewhere (e.g. a bad `--production` path the caller supplied explicitly) still
   surfaces as a real, diagnosable exception.
+* **Usage errors exit `2`, like argparse.** All four .NET CLI ports (`UpdateMenuSizes`,
+  `ExtractProductionItems`, `SearchIndexRequestBuilder`, `SearchIndexIngestor`) reject an
+  unrecognized argument (`unrecognized arguments: <arg>`) or a flag missing its value
+  (`argument <flag>: expected one argument`) with a one-line `stderr` message and exit code `2`,
+  instead of silently ignoring it -- so a typo can never fall through to a live Azure run or an
+  in-place `menuItems.json` rewrite.
 
 ### Output-parity test (and the mutation checks)
 
@@ -891,8 +897,8 @@ decision (quoted in full in "What's next" below), **landing this PR closes issue
   mirroring `ingest_plan`'s own `logger.info` calls; every expected/resolvable configuration error
   (unknown persona, no endpoint configured, missing menu file) becomes a single clean stderr line
   plus exit code 1 (`CliRunner`'s one catch block), while the one genuinely unexpected failure mode
-  (`verify_document_count`'s final count mismatch) is deliberately left as an uncaught exception,
-  matching Python's own `RuntimeError`-not-`SystemExit` distinction there.
+  (`verify_document_count`'s final count mismatch, thrown as `DocumentCountMismatchException`) is
+  deliberately left as an uncaught exception, matching Python's own `RuntimeError`-not-`SystemExit` distinction there.
 * **azd env loading**: reuses `AzdEnvLoader`/`OpenAiSettingsResolver` (Batch 2, PR #250) as-is --
   no changes needed to either for this batch. **Accepted divergence (Rick's review, round 2, item
   6):** Python's own `load_azd_env()` RAISES (`RuntimeError("Error loading azd env")` /

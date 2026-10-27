@@ -20,26 +20,26 @@ public sealed class UpsellHintConformanceTests
     /// category names, so no gaps remain -- left as an empty set (rather than deleted) so a
     /// future pre-existing gap in another pack has somewhere to go without re-inventing the
     /// mechanism.</summary>
-    private static readonly HashSet<(string HintKey, string Category)> KnownPreExistingGaps = [];
+    private static readonly HashSet<(string HintKey, string Category)> s_knownPreExistingGaps = [];
 
     [Fact]
     public void EveryPacksUpsellHintTriggerCategories_ExistInThatPacksOwnMenu()
     {
-        var personasDir = Path.Combine(RepoRootLocator.Find(), "personas");
+        string personasDir = Path.Combine(RepoRootLocator.Find(), "personas");
         var catalog = PersonaCatalog.Load(personasDir: personasDir);
         var exemptedPairsSeen = new HashSet<(string HintKey, string Category)>();
 
-        foreach (var personaId in catalog.Ids)
+        foreach (string personaId in catalog.Ids)
         {
-            var persona = catalog.Get(personaId);
+            Persona persona = catalog.Get(personaId);
             var loader = new PromptLoader(personasDir, personaId);
             var menu = MenuCatalog.FromPersona(persona);
             var realCategories = menu.CategoryMap.Values.ToHashSet(StringComparer.Ordinal);
 
-            var triggerCategoriesByHint = TriggerCategoriesByHint(loader.Hints);
-            var stalePairs = UpsellHintStalePairs(triggerCategoriesByHint, realCategories);
-            exemptedPairsSeen.UnionWith(stalePairs.Intersect(KnownPreExistingGaps));
-            var unexempted = stalePairs.Except(KnownPreExistingGaps).ToList();
+            Dictionary<string, IReadOnlyList<string>> triggerCategoriesByHint = TriggerCategoriesByHint(loader.Hints);
+            HashSet<(string HintKey, string Category)> stalePairs = UpsellHintStalePairs(triggerCategoriesByHint, realCategories);
+            exemptedPairsSeen.UnionWith(stalePairs.Intersect(s_knownPreExistingGaps));
+            var unexempted = stalePairs.Except(s_knownPreExistingGaps).ToList();
 
             Assert.True(
                 unexempted.Count == 0,
@@ -47,7 +47,7 @@ public sealed class UpsellHintConformanceTests
                 string.Join(", ", unexempted.Select(p => $"{p.HintKey}:'{p.Category}'")));
         }
 
-        var staleButUnlisted = KnownPreExistingGaps.Except(exemptedPairsSeen).ToList();
+        var staleButUnlisted = s_knownPreExistingGaps.Except(exemptedPairsSeen).ToList();
         Assert.True(
             staleButUnlisted.Count == 0,
             "known gap(s) are no longer stale in any pack -- remove from KnownPreExistingGaps " +
@@ -57,15 +57,15 @@ public sealed class UpsellHintConformanceTests
     [Fact]
     public void NoCategoryAppearsInTwoOfAPacksUpsellHintBuckets()
     {
-        var personasDir = Path.Combine(RepoRootLocator.Find(), "personas");
+        string personasDir = Path.Combine(RepoRootLocator.Find(), "personas");
         var catalog = PersonaCatalog.Load(personasDir: personasDir);
 
-        foreach (var personaId in catalog.Ids)
+        foreach (string personaId in catalog.Ids)
         {
             var loader = new PromptLoader(personasDir, personaId);
-            var triggerCategoriesByHint = TriggerCategoriesByHint(loader.Hints);
+            Dictionary<string, IReadOnlyList<string>> triggerCategoriesByHint = TriggerCategoriesByHint(loader.Hints);
 
-            var errors = DuplicateTriggerCategoryErrors(personaId, triggerCategoriesByHint);
+            List<string> errors = DuplicateTriggerCategoryErrors(personaId, triggerCategoriesByHint);
 
             Assert.True(errors.Count == 0, string.Join(", ", errors));
         }
@@ -80,7 +80,7 @@ public sealed class UpsellHintConformanceTests
         };
         var realCategories = new HashSet<string>(StringComparer.Ordinal) { "burgers & sandwiches", "sweets & treats" };
 
-        var errors = UpsellHintTriggerCategoryErrors("mutant-pack", triggerCategoriesByHint, realCategories);
+        List<string> errors = UpsellHintTriggerCategoryErrors("mutant-pack", triggerCategoriesByHint, realCategories);
 
         Assert.NotEmpty(errors);
     }
@@ -94,7 +94,7 @@ public sealed class UpsellHintConformanceTests
             ["side"] = ["fries, sides & drinks"],
         };
 
-        var errors = DuplicateTriggerCategoryErrors("mutant-pack", triggerCategoriesByHint);
+        List<string> errors = DuplicateTriggerCategoryErrors("mutant-pack", triggerCategoriesByHint);
 
         Assert.NotEmpty(errors);
     }
@@ -105,9 +105,9 @@ public sealed class UpsellHintConformanceTests
         IReadOnlyDictionary<string, IReadOnlyList<string>> triggerCategoriesByHint, IReadOnlySet<string> realCategories)
     {
         var stale = new HashSet<(string, string)>();
-        foreach (var (hintKey, categories) in triggerCategoriesByHint)
+        foreach ((string? hintKey, IReadOnlyList<string>? categories) in triggerCategoriesByHint)
         {
-            foreach (var category in categories)
+            foreach (string category in categories)
             {
                 if (!realCategories.Contains(category))
                 {
@@ -123,16 +123,16 @@ public sealed class UpsellHintConformanceTests
     private static Dictionary<string, IReadOnlyList<string>> TriggerCategoriesByHint(IReadOnlyDictionary<object, object> hints)
     {
         var byHint = new Dictionary<string, IReadOnlyList<string>>();
-        if (hints.TryGetValue("upsell_hints", out var upsellRaw) && upsellRaw is IDictionary<object, object> upsellHints)
+        if (hints.TryGetValue("upsell_hints", out object? upsellRaw) && upsellRaw is IDictionary<object, object> upsellHints)
         {
-            foreach (var entry in upsellHints)
+            foreach (KeyValuePair<object, object> entry in upsellHints)
             {
-                var hintKey = entry.Key?.ToString() ?? "";
-                var categories = entry.Value is IDictionary<object, object> info &&
-                    info.TryGetValue("trigger_categories", out var triggersRaw) &&
+                string hintKey = entry.Key?.ToString() ?? "";
+                List<string> categories = entry.Value is IDictionary<object, object> info &&
+                    info.TryGetValue("trigger_categories", out object? triggersRaw) &&
                     triggersRaw is IEnumerable<object> triggers
-                        ? triggers.Select(t => t?.ToString() ?? "").ToList()
-                        : new List<string>();
+                        ? [.. triggers.Select(t => t?.ToString() ?? "")]
+                        : [];
                 byHint[hintKey] = categories;
             }
         }
@@ -146,13 +146,12 @@ public sealed class UpsellHintConformanceTests
         string personaId, IReadOnlyDictionary<string, IReadOnlyList<string>> triggerCategoriesByHint,
         IReadOnlySet<string> realCategories)
     {
-        var stale = UpsellHintStalePairs(triggerCategoriesByHint, realCategories);
-        return stale
+        HashSet<(string HintKey, string Category)> stale = UpsellHintStalePairs(triggerCategoriesByHint, realCategories);
+        return [.. stale
             .Select(p =>
                 $"{personaId}'s hints.yaml upsell_hints.{p.HintKey}.trigger_categories references " +
                 $"'{p.Category}', which is not one of this pack's own menu categories " +
-                $"[{string.Join(", ", realCategories.OrderBy(c => c, StringComparer.Ordinal))}]")
-            .ToList();
+                $"[{string.Join(", ", realCategories.OrderBy(c => c, StringComparer.Ordinal))}]")];
     }
 
     /// <summary>Pure helper: every category that appears in more
@@ -163,11 +162,11 @@ public sealed class UpsellHintConformanceTests
         string personaId, IReadOnlyDictionary<string, IReadOnlyList<string>> triggerCategoriesByHint)
     {
         var bucketsByCategory = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-        foreach (var (hintKey, categories) in triggerCategoriesByHint)
+        foreach ((string? hintKey, IReadOnlyList<string>? categories) in triggerCategoriesByHint)
         {
-            foreach (var category in categories)
+            foreach (string category in categories)
             {
-                if (!bucketsByCategory.TryGetValue(category, out var buckets))
+                if (!bucketsByCategory.TryGetValue(category, out List<string>? buckets))
                 {
                     buckets = [];
                     bucketsByCategory[category] = buckets;
@@ -176,11 +175,10 @@ public sealed class UpsellHintConformanceTests
             }
         }
 
-        return bucketsByCategory
+        return [.. bucketsByCategory
             .Where(kv => kv.Value.Count > 1)
             .Select(kv =>
                 $"{personaId}'s hints.yaml category '{kv.Key}' appears in more than one " +
-                $"upsell_hints bucket's trigger_categories: {string.Join(", ", kv.Value)}")
-            .ToList();
+                $"upsell_hints bucket's trigger_categories: {string.Join(", ", kv.Value)}")];
     }
 }

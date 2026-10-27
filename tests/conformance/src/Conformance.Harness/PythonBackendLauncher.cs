@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Globalization;
-using System.Net.Http;
 using System.Text.RegularExpressions;
 
 namespace Conformance.Harness;
@@ -8,7 +7,7 @@ namespace Conformance.Harness;
 /// <summary>Thrown by <see cref="BackendLauncherFactory"/> for CONFORMANCE_BACKEND=dotnet when
 /// <see cref="DotnetPlaceholderPolicy.ShouldSkip"/> allows skipping (PR #22 review item 15:
 /// CONFORMANCE_ALLOW_SKIP=1 and not CI) — a placeholder until the S2 .NET backend exists.
-/// <see cref="ConformanceFixture"/> catches only this specific type and turns it into a skip; any
+/// <c>ConformanceFixture</c> catches only this specific type and turns it into a skip; any
 /// other exception type (see <see cref="ConformanceBackendUnavailableException"/>) fails the
 /// suite normally.</summary>
 public sealed class ConformanceBackendNotImplementedException(string message) : Exception(message);
@@ -16,7 +15,7 @@ public sealed class ConformanceBackendNotImplementedException(string message) : 
 /// <summary>Thrown by <see cref="BackendLauncherFactory"/> for CONFORMANCE_BACKEND=dotnet when
 /// <see cref="DotnetPlaceholderPolicy.ShouldSkip"/> does not allow skipping (the default, and
 /// always in CI) -- deliberately a *different* type than
-/// <see cref="ConformanceBackendNotImplementedException"/> so <see cref="ConformanceFixture"/>'s
+/// <see cref="ConformanceBackendNotImplementedException"/> so <c>ConformanceFixture</c>'s
 /// narrow catch clause never accidentally swallows it: it propagates out of
 /// <c>InitializeAsync</c> and fails every test in the collection (PR #22 review item 15 --
 /// CI must never silently skip real backend coverage just because the S2 .NET backend doesn't
@@ -30,10 +29,10 @@ public sealed class ConformanceBackendUnavailableException(string message) : Exc
 internal sealed class PortBindRaceException(string message) : Exception(message);
 
 /// <summary>Starts the Python backend (app/backend, via .venv) on a free port, pointed at the fakes.</summary>
-public static class PythonBackendLauncher
+public static partial class PythonBackendLauncher
 {
-    private static readonly TimeSpan HealthTimeout = TimeSpan.FromSeconds(60);
-    private static readonly TimeSpan HealthPollInterval = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan s_healthTimeout = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan s_healthPollInterval = TimeSpan.FromMilliseconds(250);
 
     /// <summary>
     /// Issue #259: matches aiohttp's own `web.run_app` startup banner (a plain `print()` to
@@ -45,8 +44,8 @@ public static class PythonBackendLauncher
     /// resolves to the real OS-assigned port once bound, even when 0 was requested -- so this
     /// banner always names the actual listening port, never the literal "0" that was asked for.
     /// </summary>
-    private static readonly Regex RunningOnPortPattern = new(
-        @"Running on https?://[^\s:]+:(\d+)", RegexOptions.Compiled);
+    [GeneratedRegex(@"Running on https?://[^\s:]+:(\d+)")]
+    private static partial Regex RunningOnPortPattern { get; }
 
     /// <summary>
     /// Bounded so a genuinely unbindable environment (e.g. loopback sockets exhausted) fails
@@ -59,13 +58,13 @@ public static class PythonBackendLauncher
     /// <summary>
     /// Refs #259 (Rick's #267 review, required item (b)): injectable test-only seam -- a hook
     /// into the exact <see cref="ProcessStartInfo"/> (including its <c>Environment["PORT"]</c>)
-    /// this launcher is about to hand to <see cref="Process.Start"/> for a given attempt,
+    /// this launcher is about to hand to <see cref="Process.Start()"/> for a given attempt,
     /// invoked once per attempt (first attempt and every retry). Lets a test assert directly on
     /// what was actually launched -- e.g. that a forced-collision first attempt used the
     /// caller-requested port while every subsequent retry always requested port 0, never a fresh
     /// <see cref="NetworkUtils.GetFreeTcpPort"/> reservation (reintroducing the exact TOCTOU race
     /// port 0 exists to remove) -- instead of only proving the retry loop recovers *some* way
-    /// (already covered end-to-end by <see cref="DotnetBackendLauncherPortRaceTests"/>'s
+    /// (already covered end-to-end by <c>DotnetBackendLauncherPortRaceTests</c>'s
     /// counterpart). Backed by <see cref="AsyncLocal{T}"/> (not a plain static field) so a test
     /// that sets this is only ever observed by launches reachable from that same test's own async
     /// call chain -- many other fixtures across many xunit collections launch the Python backend
@@ -75,18 +74,18 @@ public static class PythonBackendLauncher
     /// </summary>
     internal static Action<ProcessStartInfo>? TestOnlyProcessStartInfoObserver
     {
-        get => TestOnlyProcessStartInfoObserverLocal.Value;
-        set => TestOnlyProcessStartInfoObserverLocal.Value = value;
+        get => s_testOnlyProcessStartInfoObserverLocal.Value;
+        set => s_testOnlyProcessStartInfoObserverLocal.Value = value;
     }
 
-    private static readonly AsyncLocal<Action<ProcessStartInfo>?> TestOnlyProcessStartInfoObserverLocal = new();
+    private static readonly AsyncLocal<Action<ProcessStartInfo>?> s_testOnlyProcessStartInfoObserverLocal = new();
 
     public static async Task<IBackendUnderTest> StartAsync(
         BackendContract contract, PythonBackendOptions options, CancellationToken cancellationToken = default)
     {
-        var repoRoot = RepoPaths.FindRepoRoot();
-        var backendDir = RepoPaths.BackendDirectory(repoRoot);
-        var pythonExe = RepoPaths.PythonExecutable(repoRoot);
+        string repoRoot = RepoPaths.FindRepoRoot();
+        string backendDir = RepoPaths.BackendDirectory(repoRoot);
+        string pythonExe = RepoPaths.PythonExecutable(repoRoot);
         if (!File.Exists(pythonExe))
         {
             throw new FileNotFoundException(
@@ -94,7 +93,7 @@ public static class PythonBackendLauncher
                 $"{Path.Combine(repoRoot, ".venv")} (see the repo README for setup).", pythonExe);
         }
 
-        var staticIndexHtml = RepoPaths.FrontendStaticIndexHtmlPath(repoRoot);
+        string staticIndexHtml = RepoPaths.FrontendStaticIndexHtmlPath(repoRoot);
         if (!File.Exists(staticIndexHtml))
         {
             throw new InvalidOperationException(
@@ -108,8 +107,8 @@ public static class PythonBackendLauncher
                 "\"backend exited early\" failure.");
         }
 
-        var attemptContract = contract;
-        for (var attempt = 1; ; attempt++)
+        BackendContract attemptContract = contract;
+        for (int attempt = 1; ; attempt++)
         {
             try
             {
@@ -136,7 +135,7 @@ public static class PythonBackendLauncher
         BackendContract contract, PythonBackendOptions options, string backendDir, string pythonExe,
         CancellationToken cancellationToken)
     {
-        var env = BackendEnvironment.Build(contract, options);
+        Dictionary<string, string> env = BackendEnvironment.Build(contract, options);
         var startInfo = new ProcessStartInfo(pythonExe, "app.py")
         {
             WorkingDirectory = backendDir,
@@ -155,7 +154,7 @@ public static class PythonBackendLauncher
         // categories either comes from `env` (explicit, known-good) or wasn't set at all.
         InheritedEnvironmentFilter.Apply(startInfo);
 
-        foreach (var (key, value) in env)
+        foreach ((string? key, string? value) in env)
         {
             startInfo.Environment[key] = value;
         }
@@ -169,49 +168,77 @@ public static class PythonBackendLauncher
         // retry loop computed in isolation. Never set outside tests; a no-op in production.
         TestOnlyProcessStartInfoObserver?.Invoke(startInfo);
 
-        var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-        var output = new CapturedProcessOutput();
-        output.Attach(process);
-
-        var startedAt = DateTimeOffset.UtcNow;
-        if (!process.Start())
-        {
-            throw new InvalidOperationException($"Failed to start Python backend process '{pythonExe} app.py'.");
-        }
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-
-        // Defence-in-depth against orphaned python.exe processes (PR #22 review item 17): if this
-        // .NET test process itself is killed forcibly (Stop-Process, a crash, a CI runner reaping
-        // an orphaned job) with no chance to run IAsyncDisposable/ProcessExit cleanup, Windows
-        // closes every handle the killed process owned -- including this job handle -- which
-        // (because of KILL_ON_JOB_CLOSE) makes the OS itself kill the Python process tree. No-op
-        // on non-Windows (see WindowsJobObject's own docs for why).
-        var jobObject = WindowsJobObject.TryCreateAndAssign(process.Id);
-
-        // Belt-and-suspenders for the *graceful* exit paths that skip normal disposal (e.g. an
-        // unhandled exception unwinding past IAsyncDisposable, or a hard Environment.Exit call
-        // elsewhere in the process) -- runs on every platform, unlike the job object.
+        // Ownership of the process, its job object and its ProcessExit handler passes to the
+        // returned ProcessBackend only on success; every failure path (a failed Start, an early
+        // exit, a port-bind race that StartAsync retries, a health timeout, cancellation)
+        // unhooks the handler and kills the process tree in the catch below, then disposes the
+        // Process and job object in the finally, so a retried attempt never leaves its
+        // predecessor's Process handle or job object behind.
+        Process? process = new();
+        WindowsJobObject? jobObject = null;
         EventHandler? processExitHandler = null;
-        processExitHandler = (_, _) => TryKill(process);
-        AppDomain.CurrentDomain.ProcessExit += processExitHandler;
-
-        Uri baseUri;
-
         try
         {
-            baseUri = await WaitForListeningAndHealthyAsync(process, output, startedAt, cancellationToken)
+            process.StartInfo = startInfo;
+            process.EnableRaisingEvents = true;
+
+            var output = new CapturedProcessOutput();
+            output.Attach(process);
+
+            DateTimeOffset startedAt = DateTimeOffset.UtcNow;
+            if (!process.Start())
+            {
+                throw new InvalidOperationException($"Failed to start Python backend process '{pythonExe} app.py'.");
+            }
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            // Defence-in-depth against orphaned python.exe processes (PR #22 review item 17): if this
+            // .NET test process itself is killed forcibly (Stop-Process, a crash, a CI runner reaping
+            // an orphaned job) with no chance to run IAsyncDisposable/ProcessExit cleanup, Windows
+            // closes every handle the killed process owned -- including this job handle -- which
+            // (because of KILL_ON_JOB_CLOSE) makes the OS itself kill the Python process tree. No-op
+            // on non-Windows (see WindowsJobObject's own docs for why).
+            jobObject = WindowsJobObject.TryCreateAndAssign(process.Id);
+
+            // Belt-and-suspenders for the *graceful* exit paths that skip normal disposal (e.g. an
+            // unhandled exception unwinding past IAsyncDisposable, or a hard Environment.Exit call
+            // elsewhere in the process) -- runs on every platform, unlike the job object.
+            Process launched = process;
+            processExitHandler = (_, _) => TryKill(launched);
+            AppDomain.CurrentDomain.ProcessExit += processExitHandler;
+
+            Uri baseUri = await WaitForListeningAndHealthyAsync(process, output, startedAt, cancellationToken)
                 .ConfigureAwait(false);
+
+            var backend = new ProcessBackend(process, baseUri, output, jobObject, processExitHandler);
+            process = null;
+            jobObject = null;
+            processExitHandler = null;
+            return backend;
         }
         catch
         {
-            AppDomain.CurrentDomain.ProcessExit -= processExitHandler;
-            TryKill(process);
-            jobObject?.Dispose();
+            if (processExitHandler is not null)
+            {
+                AppDomain.CurrentDomain.ProcessExit -= processExitHandler;
+            }
+
+            if (process is not null)
+            {
+                TryKill(process);
+            }
+
             throw;
         }
-
-        return new ProcessBackend(process, baseUri, output, jobObject, processExitHandler);
+        finally
+        {
+            // Unconditional (and separate from the kill above), so an unexpected Kill failure
+            // (e.g. Win32Exception) still can't leak the Process handle or the job object. Both
+            // locals are null on the success path, where ProcessBackend now owns them.
+            process?.Dispose();
+            jobObject?.Dispose();
+        }
     }
 
     /// <summary>
@@ -222,7 +249,7 @@ public static class PythonBackendLauncher
     /// ephemeral port atomically at bind time), the real listening address is only known once
     /// aiohttp has actually bound it and printed its "Running on" banner (see
     /// <see cref="RunningOnPortPattern"/>) -- so this method discovers that address AND waits for
-    /// `/health` to come up, under one shared <see cref="HealthTimeout"/> deadline, returning the
+    /// `/health` to come up, under one shared <see cref="s_healthTimeout"/> deadline, returning the
     /// discovered <see cref="Uri"/> once both are satisfied.
     /// </summary>
     private static async Task<Uri> WaitForListeningAndHealthyAsync(
@@ -230,7 +257,7 @@ public static class PythonBackendLauncher
         CancellationToken cancellationToken)
     {
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-        var deadline = DateTimeOffset.UtcNow + HealthTimeout;
+        DateTimeOffset deadline = DateTimeOffset.UtcNow + s_healthTimeout;
         Uri? baseUri = null;
 
         while (DateTimeOffset.UtcNow < deadline)
@@ -250,10 +277,10 @@ public static class PythonBackendLauncher
 
             if (baseUri is null)
             {
-                var match = RunningOnPortPattern.Match(output.Dump());
+                Match match = RunningOnPortPattern.Match(output.Dump());
                 if (match.Success)
                 {
-                    var boundPort = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+                    int boundPort = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
                     baseUri = new Uri($"http://{BackendContract.Host}:{boundPort}/");
                 }
             }
@@ -262,7 +289,7 @@ public static class PythonBackendLauncher
             {
                 try
                 {
-                    using var response = await http.GetAsync(new Uri(baseUri, "/health"), cancellationToken)
+                    using HttpResponseMessage response = await http.GetAsync(new Uri(baseUri, "/health"), cancellationToken)
                         .ConfigureAwait(false);
                     if (response.StatusCode == System.Net.HttpStatusCode.OK)
                     {
@@ -279,11 +306,11 @@ public static class PythonBackendLauncher
                 }
             }
 
-            await Task.Delay(HealthPollInterval, cancellationToken).ConfigureAwait(false);
+            await Task.Delay(s_healthPollInterval, cancellationToken).ConfigureAwait(false);
         }
 
         throw new TimeoutException(
-            $"Python backend did not report listening/healthy within {HealthTimeout.TotalSeconds:F0}s " +
+            $"Python backend did not report listening/healthy within {s_healthTimeout.TotalSeconds:F0}s " +
             $"(bound port {(baseUri is null ? "never discovered" : baseUri.Port.ToString(CultureInfo.InvariantCulture))}).\n" +
             $"--- backend stdout/stderr ---\n{output.Dump()}");
     }
@@ -322,9 +349,9 @@ internal sealed class ProcessBackend(
     public Task<bool> WaitForDiagnosticsAsync(
         Func<string, bool> predicate,
         TimeSpan timeout,
-        CancellationToken cancellationToken = default,
-        int sinceWatermark = 0) =>
-        output.WaitForDiagnosticsAsync(predicate, timeout, cancellationToken, sinceWatermark);
+        int sinceWatermark = 0,
+        CancellationToken cancellationToken = default) =>
+        output.WaitForDiagnosticsAsync(predicate, timeout, sinceWatermark, cancellationToken);
 
     public int DiagnosticsWatermark => output.Watermark;
 

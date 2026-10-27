@@ -18,7 +18,7 @@ public sealed class RetryHandlerTests
     [Fact]
     public async Task SearchRetryHandler_RetriesOn503_ThenReturnsTheEventualSuccess()
     {
-        var attempts = 0;
+        int attempts = 0;
         var inner = new FakeHttpMessageHandler(_ =>
         {
             attempts++;
@@ -29,7 +29,7 @@ public sealed class RetryHandlerTests
         var delays = new List<TimeSpan>();
         using var http = new HttpClient(new SearchRetryHandler(inner, (span, _) => { delays.Add(span); return Task.CompletedTask; }));
 
-        var response = await http.SendAsync(NewRequest(), TestContext.Current.CancellationToken);
+        HttpResponseMessage response = await http.SendAsync(NewRequest(), TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(3, attempts);
@@ -46,7 +46,7 @@ public sealed class RetryHandlerTests
     [InlineData(HttpStatusCode.GatewayTimeout)]
     public async Task SearchRetryHandler_RetriesEveryAzureCoreRetriableStatusCode(HttpStatusCode statusCode)
     {
-        var attempts = 0;
+        int attempts = 0;
         var inner = new FakeHttpMessageHandler(_ =>
         {
             attempts++;
@@ -56,7 +56,7 @@ public sealed class RetryHandlerTests
         });
         using var http = new HttpClient(new SearchRetryHandler(inner, (_, _) => Task.CompletedTask));
 
-        var response = await http.SendAsync(NewRequest(), TestContext.Current.CancellationToken);
+        HttpResponseMessage response = await http.SendAsync(NewRequest(), TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(2, attempts);
@@ -65,11 +65,11 @@ public sealed class RetryHandlerTests
     [Fact]
     public async Task SearchRetryHandler_DoesNotRetry_OnANonRetriableStatusCode()
     {
-        var attempts = 0;
+        int attempts = 0;
         var inner = new FakeHttpMessageHandler(_ => { attempts++; return FakeHttpMessageHandler.PlainText(HttpStatusCode.Forbidden, "nope"); });
         using var http = new HttpClient(new SearchRetryHandler(inner, (_, _) => Task.CompletedTask));
 
-        var response = await http.SendAsync(NewRequest(), TestContext.Current.CancellationToken);
+        HttpResponseMessage response = await http.SendAsync(NewRequest(), TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         Assert.Equal(1, attempts);
@@ -78,11 +78,11 @@ public sealed class RetryHandlerTests
     [Fact]
     public async Task SearchRetryHandler_GivesUp_AfterRetryTotalAttempts()
     {
-        var attempts = 0;
+        int attempts = 0;
         var inner = new FakeHttpMessageHandler(_ => { attempts++; return FakeHttpMessageHandler.PlainText(HttpStatusCode.ServiceUnavailable, "busy"); });
         using var http = new HttpClient(new SearchRetryHandler(inner, (_, _) => Task.CompletedTask));
 
-        var response = await http.SendAsync(NewRequest(), TestContext.Current.CancellationToken);
+        HttpResponseMessage response = await http.SendAsync(NewRequest(), TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         Assert.Equal(SearchRetryHandler.RetryTotal, attempts);
@@ -91,7 +91,7 @@ public sealed class RetryHandlerTests
     [Fact]
     public async Task SearchRetryHandler_HonoursRetryAfterDeltaSeconds_OverTheComputedBackoff()
     {
-        var attempts = 0;
+        int attempts = 0;
         var inner = new FakeHttpMessageHandler(_ =>
         {
             attempts++;
@@ -114,7 +114,7 @@ public sealed class RetryHandlerTests
     [Fact]
     public async Task SearchRetryHandler_RetriesOnATransportLevelConnectionError()
     {
-        var attempts = 0;
+        int attempts = 0;
         var inner = new FakeHttpMessageHandler(_ =>
         {
             attempts++;
@@ -126,7 +126,7 @@ public sealed class RetryHandlerTests
         });
         using var http = new HttpClient(new SearchRetryHandler(inner, (_, _) => Task.CompletedTask));
 
-        var response = await http.SendAsync(NewRequest(), TestContext.Current.CancellationToken);
+        HttpResponseMessage response = await http.SendAsync(NewRequest(), TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(2, attempts);
@@ -135,7 +135,7 @@ public sealed class RetryHandlerTests
     [Fact]
     public async Task OpenAiRetryHandler_RetriesOn429_ThenReturnsTheEventualSuccess()
     {
-        var attempts = 0;
+        int attempts = 0;
         var inner = new FakeHttpMessageHandler(_ =>
         {
             attempts++;
@@ -146,7 +146,7 @@ public sealed class RetryHandlerTests
         var delays = new List<TimeSpan>();
         using var http = new HttpClient(new OpenAiRetryHandler(inner, (span, _) => { delays.Add(span); return Task.CompletedTask; }));
 
-        var response = await http.SendAsync(NewRequest(), TestContext.Current.CancellationToken);
+        HttpResponseMessage response = await http.SendAsync(NewRequest(), TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(2, attempts);
@@ -162,7 +162,7 @@ public sealed class RetryHandlerTests
     [InlineData(HttpStatusCode.ServiceUnavailable)]
     public async Task OpenAiRetryHandler_RetriesEveryOpenAiSdkRetriableStatusCode(HttpStatusCode statusCode)
     {
-        var attempts = 0;
+        int attempts = 0;
         var inner = new FakeHttpMessageHandler(_ =>
         {
             attempts++;
@@ -172,7 +172,7 @@ public sealed class RetryHandlerTests
         });
         using var http = new HttpClient(new OpenAiRetryHandler(inner, (_, _) => Task.CompletedTask));
 
-        var response = await http.SendAsync(NewRequest(), TestContext.Current.CancellationToken);
+        HttpResponseMessage response = await http.SendAsync(NewRequest(), TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(2, attempts);
@@ -181,11 +181,11 @@ public sealed class RetryHandlerTests
     [Fact]
     public async Task OpenAiRetryHandler_DoesNotRetry_OnANonRetriableStatusCode()
     {
-        var attempts = 0;
+        int attempts = 0;
         var inner = new FakeHttpMessageHandler(_ => { attempts++; return FakeHttpMessageHandler.PlainText(HttpStatusCode.Unauthorized, "denied"); });
         using var http = new HttpClient(new OpenAiRetryHandler(inner, (_, _) => Task.CompletedTask));
 
-        var response = await http.SendAsync(NewRequest(), TestContext.Current.CancellationToken);
+        HttpResponseMessage response = await http.SendAsync(NewRequest(), TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.Equal(1, attempts);
@@ -194,11 +194,11 @@ public sealed class RetryHandlerTests
     [Fact]
     public async Task OpenAiRetryHandler_GivesUp_AfterMaxRetriesPlusOneAttempts()
     {
-        var attempts = 0;
+        int attempts = 0;
         var inner = new FakeHttpMessageHandler(_ => { attempts++; return FakeHttpMessageHandler.PlainText(HttpStatusCode.ServiceUnavailable, "busy"); });
         using var http = new HttpClient(new OpenAiRetryHandler(inner, (_, _) => Task.CompletedTask));
 
-        var response = await http.SendAsync(NewRequest(), TestContext.Current.CancellationToken);
+        HttpResponseMessage response = await http.SendAsync(NewRequest(), TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         Assert.Equal(OpenAiRetryHandler.MaxRetries + 1, attempts);
@@ -209,7 +209,7 @@ public sealed class RetryHandlerTests
     {
         // Matches the pinned SDK's own guard (_base_client.py): a Retry-After over 60s is NOT
         // honoured, falling back to the computed backoff instead.
-        var attempts = 0;
+        int attempts = 0;
         var inner = new FakeHttpMessageHandler(_ =>
         {
             attempts++;
@@ -232,7 +232,7 @@ public sealed class RetryHandlerTests
     [Fact]
     public async Task OpenAiRetryHandler_RetriesOnATransportLevelConnectionError()
     {
-        var attempts = 0;
+        int attempts = 0;
         var inner = new FakeHttpMessageHandler(_ =>
         {
             attempts++;
@@ -244,7 +244,7 @@ public sealed class RetryHandlerTests
         });
         using var http = new HttpClient(new OpenAiRetryHandler(inner, (_, _) => Task.CompletedTask));
 
-        var response = await http.SendAsync(NewRequest(), TestContext.Current.CancellationToken);
+        HttpResponseMessage response = await http.SendAsync(NewRequest(), TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(2, attempts);

@@ -41,7 +41,7 @@ permissions:
 
 env:
   # Keep in sync with global.json (repo root) and conformance.yml's identical env var.
-  DOTNET_VERSION: "11.0.100-rc.2.26504.105"
+  DOTNET_VERSION: "11.0.100-rc.3.26522.148"
   # Batch 2 (#16): PythonParityTests for SearchIndexRequestBuilder subprocess-invokes the real
   # app/backend/setup_search_index.py (via its persona_loader.py import), which needs the backend's
   # full requirements.txt -- unlike update_menu_sizes.py/extract_production_items.py's parity tests,

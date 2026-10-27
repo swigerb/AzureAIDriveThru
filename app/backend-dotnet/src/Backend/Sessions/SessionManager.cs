@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Net.WebSockets;
 using System.Security.Cryptography;
@@ -82,24 +83,24 @@ internal sealed class SessionManager
         "The guest reconnected mid-order after a brief connection drop. Do not greet them again or " +
         "restart the conversation -- just continue helping with their order where it left off.";
 
-    private static readonly CompositeFormat NudgeTextTemplate = CompositeFormat.Parse(
+    private static readonly CompositeFormat s_nudgeTextTemplate = CompositeFormat.Parse(
         "The guest has been silent for a while after reconnecting. As {0}, briefly check in once " +
         "(e.g. \"Still there? Let me know if you'd like to add anything else or if you're ready to pay.\") " +
         "without repeating the full order back.");
-
-    private readonly SessionsConfig _config;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<SessionManager> _logger;
     private readonly ILogger<ContextMonitor> _contextMonitorLogger;
+    [SuppressMessage("Style", "IDE0032:Use auto property",
+        Justification = "_sync is the registry lock every member takes; SyncRootForTests is only a test-facing alias, so the field keeps its production name.")]
     private readonly Lock _sync = new();
-    private readonly Dictionary<string, SessionRecord> _sessions = new();
-    private readonly Dictionary<string, string> _resumeIndex = new(); // digest -> sessionId
+    private readonly Dictionary<string, SessionRecord> _sessions = [];
+    private readonly Dictionary<string, string> _resumeIndex = []; // digest -> sessionId
     private readonly LinkedList<string> _detachedLru = new(); // oldest first
-    private readonly Dictionary<string, LinkedListNode<string>> _detachedNodes = new();
+    private readonly Dictionary<string, LinkedListNode<string>> _detachedNodes = [];
     /// <summary>Port of session_manager.py's `self._context_monitors` dict. Kept independent of
     /// <see cref="_sessions"/> (rather than a field on <see cref="SessionRecord"/>), mirroring
     /// Python. Created in <see cref="CreateSession"/>, removed in <see cref="EndSession"/>.</summary>
-    private readonly Dictionary<string, ContextMonitor> _contextMonitors = new();
+    private readonly Dictionary<string, ContextMonitor> _contextMonitors = [];
 
     public SessionManager(
         SessionsConfig config,
@@ -107,13 +108,13 @@ internal sealed class SessionManager
         ILogger<SessionManager> logger,
         ILogger<ContextMonitor> contextMonitorLogger)
     {
-        _config = config;
+        Config = config;
         _timeProvider = timeProvider;
         _logger = logger;
         _contextMonitorLogger = contextMonitorLogger;
     }
 
-    public SessionsConfig Config => _config;
+    public SessionsConfig Config { get; }
 
     /// <summary>Test-only: exposes the internal lock object for the same reason
     /// <see cref="Backend.Realtime.NudgeScheduler.SyncRootForTests"/> does -- holding it (via
@@ -193,8 +194,8 @@ internal sealed class SessionManager
     }
 
     private ContextMonitor CreateContextMonitorLocked(string sessionId) =>
-        new(sessionId, _contextMonitorLogger, _config.ContextMaxTokens, _config.ContextWarningThresholdPct,
-            _config.ContextCriticalThresholdPct);
+        new(sessionId, _contextMonitorLogger, Config.ContextMaxTokens, Config.ContextWarningThresholdPct,
+            Config.ContextCriticalThresholdPct);
 
     /// <summary>Port of session_manager.py's `get_context_monitor`: returns null for a null/unknown
     /// session id, never throws.</summary>
@@ -214,7 +215,7 @@ internal sealed class SessionManager
     {
         lock (_sync)
         {
-            if (_sessions.TryGetValue(sessionId, out var record))
+            if (_sessions.TryGetValue(sessionId, out SessionRecord? record))
             {
                 record.LastActivity = _timeProvider.GetUtcNow();
             }
@@ -225,7 +226,7 @@ internal sealed class SessionManager
     {
         lock (_sync)
         {
-            if (_sessions.TryGetValue(sessionId, out var record))
+            if (_sessions.TryGetValue(sessionId, out SessionRecord? record))
             {
                 record.ConversationStarted = true;
             }
@@ -236,7 +237,7 @@ internal sealed class SessionManager
     {
         lock (_sync)
         {
-            return _sessions.TryGetValue(sessionId, out var record) ? record.Voice : "";
+            return _sessions.TryGetValue(sessionId, out SessionRecord? record) ? record.Voice : "";
         }
     }
 
@@ -244,7 +245,7 @@ internal sealed class SessionManager
     {
         lock (_sync)
         {
-            if (_sessions.TryGetValue(sessionId, out var record))
+            if (_sessions.TryGetValue(sessionId, out SessionRecord? record))
             {
                 record.Voice = voice;
             }
@@ -255,7 +256,7 @@ internal sealed class SessionManager
     {
         lock (_sync)
         {
-            return _sessions.TryGetValue(sessionId, out var record)
+            return _sessions.TryGetValue(sessionId, out SessionRecord? record)
                 && record.ToolExecutor is IOrderSessionSettings settings
                 ? settings.GetMachineOverrides()
                 : new Dictionary<string, string>(StringComparer.Ordinal);
@@ -266,7 +267,7 @@ internal sealed class SessionManager
     {
         lock (_sync)
         {
-            return _sessions.TryGetValue(sessionId, out var record)
+            return _sessions.TryGetValue(sessionId, out SessionRecord? record)
                 && record.ToolExecutor is IOrderSessionSettings settings
                 && settings.SetMachineOverride(machine, status);
         }
@@ -276,7 +277,7 @@ internal sealed class SessionManager
     {
         lock (_sync)
         {
-            return _sessions.TryGetValue(sessionId, out var record)
+            return _sessions.TryGetValue(sessionId, out SessionRecord? record)
                 && record.ToolExecutor is IOrderSessionSettings settings
                 ? settings.GetHappyHourMode()
                 : "auto";
@@ -287,7 +288,7 @@ internal sealed class SessionManager
     {
         lock (_sync)
         {
-            return _sessions.TryGetValue(sessionId, out var record)
+            return _sessions.TryGetValue(sessionId, out SessionRecord? record)
                 && record.ToolExecutor is IOrderSessionSettings settings
                 && settings.SetHappyHourMode(mode);
         }
@@ -304,7 +305,7 @@ internal sealed class SessionManager
     {
         lock (_sync)
         {
-            return _sessions.TryGetValue(sessionId, out var record) && record.ToolExecutor is IOrderTicketSource ticketSource
+            return _sessions.TryGetValue(sessionId, out SessionRecord? record) && record.ToolExecutor is IOrderTicketSource ticketSource
                 ? ticketSource.CurrentOrderSummaryJson
                 : null;
         }
@@ -316,19 +317,19 @@ internal sealed class SessionManager
     /// 0`).</summary>
     public void RecordTurn(string sessionId, string role, string? text)
     {
-        if (_config.HistoryTurns <= 0 || string.IsNullOrWhiteSpace(text))
+        if (Config.HistoryTurns <= 0 || string.IsNullOrWhiteSpace(text))
         {
             return;
         }
-        var capped = text.Length > _config.HistoryChars ? text[..Math.Max(_config.HistoryChars, 0)] : text;
+        string capped = text.Length > Config.HistoryChars ? text[..Math.Max(Config.HistoryChars, 0)] : text;
         lock (_sync)
         {
-            if (!_sessions.TryGetValue(sessionId, out var record))
+            if (!_sessions.TryGetValue(sessionId, out SessionRecord? record))
             {
                 return;
             }
             record.Transcript.Enqueue((role, capped));
-            while (record.Transcript.Count > _config.HistoryTurns)
+            while (record.Transcript.Count > Config.HistoryTurns)
             {
                 record.Transcript.Dequeue();
             }
@@ -343,15 +344,15 @@ internal sealed class SessionManager
     /// stored anywhere else. Returns null when resume is disabled.</summary>
     public string? IssueResumeId(string sessionId)
     {
-        if (!_config.ResumeEnabled)
+        if (!Config.ResumeEnabled)
         {
             return null;
         }
-        var resumeId = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32)); // 64 chars, in [32,128]
-        var digest = Digest(resumeId);
+        string resumeId = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32)); // 64 chars, in [32,128]
+        string digest = Digest(resumeId);
         lock (_sync)
         {
-            if (!_sessions.TryGetValue(sessionId, out var record))
+            if (!_sessions.TryGetValue(sessionId, out SessionRecord? record))
             {
                 return null;
             }
@@ -388,7 +389,7 @@ internal sealed class SessionManager
         CancellationTokenSource? attachedCts = null,
         SupersededFlag? attachedSupersededFlag = null)
     {
-        if (!_config.ResumeEnabled)
+        if (!Config.ResumeEnabled)
         {
             return new ResumeOutcome(false, Reason: "disabled");
         }
@@ -397,22 +398,22 @@ internal sealed class SessionManager
             return new ResumeOutcome(false, Reason: "malformed");
         }
 
-        var digest = Digest(presentedId);
+        string digest = Digest(presentedId);
         ResumeOutcome? outcome;
 
         lock (_sync)
         {
-            if (!_resumeIndex.TryGetValue(digest, out var sessionId) || !_sessions.TryGetValue(sessionId, out var record)
+            if (!_resumeIndex.TryGetValue(digest, out string? sessionId) || !_sessions.TryGetValue(sessionId, out SessionRecord? record)
                 || record.ResumeDigest is null || !FixedTimeEquals(record.ResumeDigest, digest))
             {
                 outcome = new ResumeOutcome(false, Reason: "unknown");
             }
             else
             {
-                var now = _timeProvider.GetUtcNow();
-                var idleDeadline = record.LastActivity + TimeSpan.FromSeconds(_config.IdleTimeoutSeconds);
+                DateTimeOffset now = _timeProvider.GetUtcNow();
+                DateTimeOffset idleDeadline = record.LastActivity + TimeSpan.FromSeconds(Config.IdleTimeoutSeconds);
                 DateTimeOffset? expires = record.DetachedAt is { } detachedAt
-                    ? Min(detachedAt + TimeSpan.FromSeconds(_config.GraceSeconds), idleDeadline)
+                    ? Min(detachedAt + TimeSpan.FromSeconds(Config.GraceSeconds), idleDeadline)
                     : null;
                 if (now > idleDeadline || (expires is { } exp && now >= exp))
                 {
@@ -442,7 +443,7 @@ internal sealed class SessionManager
             }
         }
 
-        return outcome!;
+        return outcome;
     }
 
     private ResumeOutcome AttachResumedSessionLocked(
@@ -453,7 +454,7 @@ internal sealed class SessionManager
         _resumeIndex.Remove(digest);
         record.ResumeDigest = null;
 
-        var staleWs = record.AttachedSocket;
+        WebSocket? staleWs = record.AttachedSocket;
         if (ReferenceEquals(staleWs, ws))
         {
             staleWs = null;
@@ -462,7 +463,7 @@ internal sealed class SessionManager
         // overwriting it with this (new, winning) connection's -- null whenever there
         // is no still-attached socket to steal from (staleWs is also null then), same
         // condition as staleWs itself.
-        var staleCts = staleWs is not null ? record.AttachedCts : null;
+        CancellationTokenSource? staleCts = staleWs is not null ? record.AttachedCts : null;
         // Rick's #244 round-2 review, issue 1: mark the STALE connection's own flag
         // SYNCHRONOUSLY, right here under the lock -- not deferred to whenever the
         // background supersede-close (started by the caller afterward) happens to run
@@ -485,8 +486,8 @@ internal sealed class SessionManager
         record.AttachedSupersededFlag = attachedSupersededFlag;
         record.LastActivity = now;
 
-        var newId = IssueResumeIdLocked(record);
-        var staleReason = staleWs is not null ? "; superseding a still-attached socket" : "";
+        string? newId = IssueResumeIdLocked(record);
+        string staleReason = staleWs is not null ? "; superseding a still-attached socket" : "";
         _logger?.SessionResumed(sessionId, staleReason);
 
         return new ResumeOutcome(
@@ -514,12 +515,12 @@ internal sealed class SessionManager
     /// same lock acquisition as the rest of the resume transition.</summary>
     private string? IssueResumeIdLocked(SessionRecord record)
     {
-        if (!_config.ResumeEnabled)
+        if (!Config.ResumeEnabled)
         {
             return null;
         }
-        var resumeId = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
-        var digest = Digest(resumeId);
+        string resumeId = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
+        string digest = Digest(resumeId);
         if (record.ResumeDigest is not null)
         {
             _resumeIndex.Remove(record.ResumeDigest);
@@ -533,15 +534,15 @@ internal sealed class SessionManager
 
     private List<(string Role, string Text)> RecentTurnsLocked(SessionRecord record)
     {
-        var budget = Math.Max(_config.HistoryChars, 0);
+        int budget = Math.Max(Config.HistoryChars, 0);
         var kept = new List<(string Role, string Text)>();
-        foreach (var (role, text) in record.Transcript.Reverse())
+        foreach ((string? role, string? text) in record.Transcript.Reverse())
         {
             if (budget <= 0)
             {
                 break;
             }
-            var trimmed = text;
+            string trimmed = text;
             if (trimmed.Length > budget)
             {
                 trimmed = "…" + trimmed[(trimmed.Length - budget + 1)..];
@@ -562,15 +563,15 @@ internal sealed class SessionManager
     public static string BuildRehydrationText(
         string orderSummaryJson, IReadOnlyList<(string Role, string Text)> recentTurns, string roleName)
     {
-        var roleLabel = char.ToUpperInvariant(roleName[0]) + roleName[1..];
-        var history = string.Join(
+        string roleLabel = char.ToUpperInvariant(roleName[0]) + roleName[1..];
+        string history = string.Join(
             "\n", recentTurns.Select(t => $"{(t.Role == "guest" ? "Guest" : roleLabel)}: {t.Text}"));
         return $"{RehydrationPreamble}\n\nCurrent order (JSON): {orderSummaryJson}\n\n" +
                $"Recent conversation (oldest first):\n{(history.Length > 0 ? history : "(none recorded)")}";
     }
 
     public static string BuildNudgeText(string roleName) =>
-        string.Format(CultureInfo.InvariantCulture, NudgeTextTemplate, roleName);
+        string.Format(CultureInfo.InvariantCulture, s_nudgeTextTemplate, roleName);
 
     // ── End / detach ──
 
@@ -591,7 +592,7 @@ internal sealed class SessionManager
 
     private void EndSessionLocked(string sessionId, string reason)
     {
-        if (!_sessions.Remove(sessionId, out var record))
+        if (!_sessions.Remove(sessionId, out SessionRecord? record))
         {
             return;
         }
@@ -606,7 +607,7 @@ internal sealed class SessionManager
 
     private void RemoveFromDetachedLocked(string sessionId)
     {
-        if (_detachedNodes.Remove(sessionId, out var node))
+        if (_detachedNodes.Remove(sessionId, out LinkedListNode<string>? node))
         {
             _detachedLru.Remove(node);
         }
@@ -624,25 +625,25 @@ internal sealed class SessionManager
     {
         lock (_sync)
         {
-            if (!_sessions.TryGetValue(sessionId, out var record) || !ReferenceEquals(record.AttachedSocket, ws))
+            if (!_sessions.TryGetValue(sessionId, out SessionRecord? record) || !ReferenceEquals(record.AttachedSocket, ws))
             {
                 return;
             }
             record.AttachedSocket = null;
 
-            if (!_config.ResumeEnabled || _config.GraceSeconds <= 0)
+            if (!Config.ResumeEnabled || Config.GraceSeconds <= 0)
             {
                 EndSessionLocked(sessionId, $"{reason}; resume disabled");
                 return;
             }
 
-            var now = _timeProvider.GetUtcNow();
+            DateTimeOffset now = _timeProvider.GetUtcNow();
             record.DetachedAt = now;
             RemoveFromDetachedLocked(sessionId);
             _detachedNodes[sessionId] = _detachedLru.AddLast(sessionId);
 
-            var idleDeadline = record.LastActivity + TimeSpan.FromSeconds(_config.IdleTimeoutSeconds);
-            var expires = Min(now + TimeSpan.FromSeconds(_config.GraceSeconds), idleDeadline);
+            DateTimeOffset idleDeadline = record.LastActivity + TimeSpan.FromSeconds(Config.IdleTimeoutSeconds);
+            DateTimeOffset expires = Min(now + TimeSpan.FromSeconds(Config.GraceSeconds), idleDeadline);
             if (expires <= now)
             {
                 EndSessionLocked(sessionId, $"{reason}; idle budget exhausted");
@@ -650,9 +651,9 @@ internal sealed class SessionManager
             }
             _logger?.SessionDetached(sessionId, reason, (expires - now).TotalSeconds);
 
-            while (_detachedLru.Count > Math.Max(_config.MaxDetached, 0))
+            while (_detachedLru.Count > Math.Max(Config.MaxDetached, 0))
             {
-                var oldest = _detachedLru.First!.Value;
+                string oldest = _detachedLru.First!.Value;
                 EndSessionLocked(oldest, "evicted: max_detached reached");
             }
         }
@@ -666,15 +667,15 @@ internal sealed class SessionManager
     {
         lock (_sync)
         {
-            var now = _timeProvider.GetUtcNow();
+            DateTimeOffset now = _timeProvider.GetUtcNow();
             var expired = _detachedLru.Where(sid =>
             {
-                var record = _sessions[sid];
-                var idleDeadline = record.LastActivity + TimeSpan.FromSeconds(_config.IdleTimeoutSeconds);
-                var expires = Min(record.DetachedAt!.Value + TimeSpan.FromSeconds(_config.GraceSeconds), idleDeadline);
+                SessionRecord record = _sessions[sid];
+                DateTimeOffset idleDeadline = record.LastActivity + TimeSpan.FromSeconds(Config.IdleTimeoutSeconds);
+                DateTimeOffset expires = Min(record.DetachedAt!.Value + TimeSpan.FromSeconds(Config.GraceSeconds), idleDeadline);
                 return now >= expires;
             }).ToList();
-            foreach (var sid in expired)
+            foreach (string? sid in expired)
             {
                 EndSessionLocked(sid, "grace hold expired");
             }
@@ -693,26 +694,27 @@ internal sealed class SessionManager
     /// 1009 path) sending the close frame and returning immediately -- without also waiting here for
     /// the peer's close handshake reply -- avoids contending with that pending receive.
     /// </summary>
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Best-effort idle close from the background sweep: the peer may already have torn the socket down, and one bad socket must not stop the sweep.")]
     public async Task CloseIdleSessionsAsync(CancellationToken ct)
     {
         List<(WebSocket Socket, string SessionId)> idle;
         lock (_sync)
         {
-            var now = _timeProvider.GetUtcNow();
-            idle = _sessions.Values
+            DateTimeOffset now = _timeProvider.GetUtcNow();
+            idle = [.. _sessions.Values
                 .Where(r => r.AttachedSocket is not null &&
-                            now - r.LastActivity > TimeSpan.FromSeconds(_config.IdleTimeoutSeconds))
-                .Select(r => (r.AttachedSocket!, r.SessionId))
-                .ToList();
-            foreach (var (_, sessionId) in idle)
+                            now - r.LastActivity > TimeSpan.FromSeconds(Config.IdleTimeoutSeconds))
+                .Select(r => (r.AttachedSocket!, r.SessionId))];
+            foreach ((WebSocket _, string? sessionId) in idle)
             {
                 EndSessionLocked(sessionId, IdleCloseReason);
             }
         }
 
-        foreach (var (socket, sessionId) in idle)
+        foreach ((WebSocket? socket, string? sessionId) in idle)
         {
-            _logger?.ClosingIdleSession(sessionId, _config.IdleTimeoutSeconds);
+            _logger?.ClosingIdleSession(sessionId, Config.IdleTimeoutSeconds);
             try
             {
                 if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
@@ -749,7 +751,7 @@ internal sealed class SessionManager
             }
             try
             {
-                await Task.Delay(TimeSpan.FromSeconds(_config.SweepIntervalSeconds), _timeProvider, ct)
+                await Task.Delay(TimeSpan.FromSeconds(Config.SweepIntervalSeconds), _timeProvider, ct)
                     .ConfigureAwait(false);
             }
             catch (OperationCanceledException)

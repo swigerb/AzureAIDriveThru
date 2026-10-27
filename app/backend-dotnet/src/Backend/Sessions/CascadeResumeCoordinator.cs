@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net.WebSockets;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -15,14 +16,14 @@ internal sealed class CascadeResumeCoordinator(CascadeSessionContext context)
 {
     public async Task<JsonObject?> NegotiateAsync()
     {
-        var firstFrame = await ReadFirstFrameAsync().ConfigureAwait(false);
-        var (resumeData, leftover) = ParseFirstFrame(firstFrame);
+        WebSocketFrame? firstFrame = await ReadFirstFrameAsync().ConfigureAwait(false);
+        (JsonObject? resumeData, JsonObject? leftover) = ParseFirstFrame(firstFrame);
         if (resumeData is not null && await TryResumeAsync(resumeData).ConfigureAwait(false))
         {
             return null;
         }
-        var resumeId = context.SessionManager!.IssueResumeId(context.SessionId);
-        var metadataFrame = ResumeEnvelope.BuildSessionMetadataFrame(context.Identifiers, resumeId);
+        string? resumeId = context.SessionManager!.IssueResumeId(context.SessionId);
+        JsonObject metadataFrame = ResumeEnvelope.BuildSessionMetadataFrame(context.Identifiers, resumeId);
         await context.NotifyClientAsync(metadataFrame, context.CancellationToken).ConfigureAwait(false);
         SetGreetingTurn();
         return leftover;
@@ -31,12 +32,12 @@ internal sealed class CascadeResumeCoordinator(CascadeSessionContext context)
     private async Task<WebSocketFrame?> ReadFirstFrameAsync()
     {
         WebSocketFrame? firstFrame = null;
-        var timeoutSeconds = context.SessionManager!.Config.FirstFrameTimeoutSeconds;
+        double timeoutSeconds = context.SessionManager!.Config.FirstFrameTimeoutSeconds;
         if (timeoutSeconds > 0)
         {
             context.PendingFirstFrameTask = WebSocketFrameReader.ReadMessageAsync(
                 context.BrowserSocket, context.CancellationToken);
-            var winner = await Task.WhenAny(
+            Task winner = await Task.WhenAny(
                     context.PendingFirstFrameTask,
                     Task.Delay(TimeSpan.FromSeconds(timeoutSeconds), context.TimeProvider, context.CancellationToken))
                 .ConfigureAwait(false);
@@ -80,8 +81,8 @@ internal sealed class CascadeResumeCoordinator(CascadeSessionContext context)
 
     private async Task<bool> TryResumeAsync(JsonObject resumeData)
     {
-        var presentedId = CascadeProcessor.GetString(resumeData, "resume_id");
-        var outcome = context.SessionManager!.TryResume(
+        string? presentedId = CascadeProcessor.GetString(resumeData, "resume_id");
+        ResumeOutcome outcome = context.SessionManager!.TryResume(
             context.BrowserSocket,
             presentedId,
             context.Persona.Id,
@@ -102,11 +103,11 @@ internal sealed class CascadeResumeCoordinator(CascadeSessionContext context)
             {
                 Task.Run(
                     () => FramePump.CloseSupersededStaleConnectionAsync(
-                        staleWs, outcome.StaleCts, FramePump.SupersededCloseTimeout, context.Logger),
+                        staleWs, outcome.StaleCts, FramePump.s_supersededCloseTimeout, context.Logger),
                     CancellationToken.None).FireAndForget(
                         context.Logger, nameof(FramePump.CloseSupersededStaleConnectionAsync));
             }
-            var orderSummaryJson = context.ToolExecutor is IOrderTicketSource ticketSource
+            string orderSummaryJson = context.ToolExecutor is IOrderTicketSource ticketSource
                 ? SafeOrderSummaryJson(ticketSource)
                 : "{}";
             await CascadeProcessor.SendTextAsync(
@@ -120,7 +121,7 @@ internal sealed class CascadeResumeCoordinator(CascadeSessionContext context)
             {
                 context.State.Messages.Add(CascadeChatMessage.System(SessionManager.BuildRehydrationText(
                     orderSummaryJson,
-                    outcome.RecentTurns ?? Array.Empty<(string Role, string Text)>(),
+                    outcome.RecentTurns ?? [],
                     context.State.RoleName)));
                 if (context.SessionManager.Config.NudgeAfterSeconds > 0)
                 {
@@ -145,6 +146,8 @@ internal sealed class CascadeResumeCoordinator(CascadeSessionContext context)
         return false;
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types",
+        Justification = "Best-effort order read through IOrderTicketSource, whose implementations can fail in any way; the failure is logged and an empty summary is used.")]
     private string SafeOrderSummaryJson(IOrderTicketSource source)
     {
         try
@@ -160,7 +163,7 @@ internal sealed class CascadeResumeCoordinator(CascadeSessionContext context)
 
     private void SetGreetingTurn()
     {
-        var (greetingCts, greetingTask) = context.TurnCoordinator.Spawn(context.SendGreetingAsync, "greeting");
+        (CancellationTokenSource? greetingCts, Task? greetingTask) = context.TurnCoordinator.Spawn(context.SendGreetingAsync, "greeting");
         context.State.CurrentTurnCts = greetingCts;
         context.State.CurrentTurnTask = greetingTask;
     }

@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using System.Text.Json;
 using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
@@ -33,7 +34,7 @@ namespace Conformance.Tests;
 /// stream does not commit changes under app/backend/) turns this test red: the resumed session is
 /// forcibly ended by the sweep partway through the wait, so the final tool round trip's
 /// <c>response.create</c> either never produces <c>extension.middle_tier_tool_response</c> before
-/// <see cref="FrameTimeout"/>, or the socket itself has already transitioned out of
+/// <see cref="s_frameTimeout"/>, or the socket itself has already transitioned out of
 /// <see cref="WebSocketState.Open"/> by the time the post-wait assertion runs. Restoring the
 /// <c>pop</c> call makes it pass reliably again. See the PR #52 CI follow-up report for the full
 /// revert/restore run log.
@@ -41,7 +42,7 @@ namespace Conformance.Tests;
 [Collection(ResumeMarginConformanceCollection.Name)]
 public sealed class ResumeSurvivesGraceWindowTests(ResumeMarginConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     /// <summary>
     /// <see cref="BackendProfiles.ResumeMargin"/>'s grace_seconds (5s) plus a comfortable margin
@@ -50,46 +51,46 @@ public sealed class ResumeSurvivesGraceWindowTests(ResumeMarginConformanceFixtur
     /// take (both start their own clock no earlier than the detach), and for scheduling jitter
     /// when this runs alongside the rest of the suite in parallel.
     /// </summary>
-    private static readonly TimeSpan PastGraceMargin = TimeSpan.FromMilliseconds(6000);
+    private static readonly TimeSpan s_pastGraceMargin = TimeSpan.FromMilliseconds(6000);
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Resumed_session_survives_past_the_original_detachs_grace_window_with_a_working_tool_round_trip() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
 
         // ── First connection: start a conversation and let the greeting complete. ──
-        var firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        var first = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var firstConnection = await firstConnectionTask;
+        Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        RealtimeBrowserClient first = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? firstConnection = await firstConnectionTask;
         Assert.True(firstConnection is not null, "No upstream connection was accepted for the first browser socket.");
 
         await first.SendStartSessionAsync(cancellationToken: ct);
 
-        var metadata = await first.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        RecordedFrame? metadata = await first.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_metadata", s_frameTimeout, ct);
         Assert.True(metadata is not null, "Expected extension.session_metadata on the first connection.");
-        var resumeId = metadata!.Json.GetProperty("resumeId").GetString();
+        string? resumeId = metadata!.Json.GetProperty("resumeId").GetString();
         Assert.False(string.IsNullOrEmpty(resumeId), "extension.session_metadata must carry a non-empty resumeId.");
 
-        var greetingDone = await first.ReceivedFrames.WaitForAsync(f => f.Type == "response.done", FrameTimeout, ct);
+        RecordedFrame? greetingDone = await first.ReceivedFrames.WaitForAsync(f => f.Type == "response.done", s_frameTimeout, ct);
         Assert.True(greetingDone is not null, "Expected the greeting's response.done on the first connection.");
 
         // ── Detach: a plain transport close, exactly like a dropped connection. This is what
         // starts session_manager.py's grace clock (detached_at = now). ──
-        var detachStartedAt = DateTimeOffset.UtcNow;
+        DateTimeOffset detachStartedAt = DateTimeOffset.UtcNow;
         await first.CloseAsync(cancellationToken: ct);
-        await first.WaitForCloseAsync(FrameTimeout, ct);
+        await first.WaitForCloseAsync(s_frameTimeout, ct);
         await first.DisposeAsync();
 
         // ── Resume immediately, well within the grace window. ──
-        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var second = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var secondConnection = await secondConnectionTask;
+        Task<FakeRealtimeConnection?> secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient second = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? secondConnection = await secondConnectionTask;
         Assert.True(secondConnection is not null, "No upstream connection was accepted for the resumed browser socket.");
 
         await second.SendExtensionResumeAsync(resumeId!, ct);
 
-        var resumed = await second.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_resumed", FrameTimeout, ct);
+        RecordedFrame? resumed = await second.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_resumed", s_frameTimeout, ct);
         Assert.True(resumed is not null, "Expected extension.session_resumed on the resumed connection.");
 
         // ── The actual regression check: wait past the *original* detach's grace deadline with
@@ -99,8 +100,8 @@ public sealed class ResumeSurvivesGraceWindowTests(ResumeMarginConformanceFixtur
         // resume() that leaves session_id in _detached will have the sweep end this session out
         // from under the resumed socket once real time reaches detachStartedAt + grace_seconds,
         // regardless of this activity, since detached_at is never refreshed. ──
-        await using var keepAlive = KeepAlive.RunAsync(second, TimeSpan.FromMilliseconds(300), ct);
-        var remaining = PastGraceMargin - (DateTimeOffset.UtcNow - detachStartedAt);
+        await using KeepAliveLoop keepAlive = KeepAlive.RunAsync(second, TimeSpan.FromMilliseconds(300), ct);
+        TimeSpan remaining = s_pastGraceMargin - (DateTimeOffset.UtcNow - detachStartedAt);
         if (remaining > TimeSpan.Zero)
         {
             await Task.Delay(remaining, ct);
@@ -114,7 +115,7 @@ public sealed class ResumeSurvivesGraceWindowTests(ResumeMarginConformanceFixtur
         // ── The resumed session must still be functionally alive, not merely not-yet-torn-down:
         // a normal tool round trip, exactly like UpdateOrderToolCallTests / WholeSessionLeakTests'
         // own tool round trip. ──
-        const string callId = "call_resume_survives_grace_1";
+        const string CallId = "call_resume_survives_grace_1";
         // #73: "Small Fries" is off-menu ("Fries" is not a menuItems.json item; the real side is
         // "Tots") and would now be rejected TO_SERVER-only, so the `extension.middle_tier_tool_response`
         // wait below would time out. This test's subject matter is session-resume plumbing, not
@@ -123,28 +124,28 @@ public sealed class ResumeSurvivesGraceWindowTests(ResumeMarginConformanceFixtur
             new FunctionCallEvent(
                 Name: "update_order",
                 ArgumentsJson: """{"action":"add","item_name":"Tots","size":"small","quantity":1,"price":2.19}""",
-                CallId: callId),
+                CallId: CallId),
             new DoneEvent(),
         ]));
         await second.SendResponseCreateAsync(ct);
 
-        var functionCallOutput = await secondConnection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? functionCallOutput = await secondConnection.ReceivedFrames.WaitForAsync(
             f => f.Type == "conversation.item.create" &&
-                 f.Json.TryGetProperty("item", out var item) &&
-                 item.TryGetProperty("type", out var itemType) &&
+                 f.Json.TryGetProperty("item", out JsonElement item) &&
+                 item.TryGetProperty("type", out JsonElement itemType) &&
                  itemType.GetString() == "function_call_output" &&
-                 item.TryGetProperty("call_id", out var respondedCallId) &&
-                 respondedCallId.GetString() == callId,
-            FrameTimeout, ct);
+                 item.TryGetProperty("call_id", out JsonElement respondedCallId) &&
+                 respondedCallId.GetString() == CallId,
+            s_frameTimeout, ct);
         Assert.True(functionCallOutput is not null,
-            $"Expected a conversation.item.create(function_call_output) for call_id={callId} upstream -- " +
+            $"Expected a conversation.item.create(function_call_output) for call_id={CallId} upstream -- " +
             "the resumed session must still be able to round-trip a tool call after surviving the original detach's grace window.");
 
-        var toolResponse = await second.ReceivedFrames.WaitForAsync(
+        RecordedFrame? toolResponse = await second.ReceivedFrames.WaitForAsync(
             f => f.Type == "extension.middle_tier_tool_response" &&
-                 f.Json.TryGetProperty("tool_name", out var toolName) &&
+                 f.Json.TryGetProperty("tool_name", out JsonElement toolName) &&
                  toolName.GetString() == "update_order",
-            FrameTimeout, ct);
+            s_frameTimeout, ct);
         Assert.True(toolResponse is not null,
             "Expected extension.middle_tier_tool_response for update_order on the resumed browser socket.");
     });

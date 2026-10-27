@@ -24,7 +24,7 @@ internal interface IUpstreamBearerTokenProvider
 internal sealed class DefaultAzureCredentialTokenProvider : IUpstreamBearerTokenProvider
 {
     // Matches rtmt.py's get_bearer_token_provider(credentials, "https://cognitiveservices.azure.com/.default").
-    private static readonly string[] Scopes = ["https://cognitiveservices.azure.com/.default"];
+    private static readonly string[] s_scopes = ["https://cognitiveservices.azure.com/.default"];
 
     private readonly TokenCredential _credential;
 
@@ -35,8 +35,8 @@ internal sealed class DefaultAzureCredentialTokenProvider : IUpstreamBearerToken
 
     public async Task<string> GetTokenAsync(CancellationToken cancellationToken)
     {
-        var token = await _credential
-            .GetTokenAsync(new TokenRequestContext(Scopes), cancellationToken)
+        AccessToken token = await _credential
+            .GetTokenAsync(new TokenRequestContext(s_scopes), cancellationToken)
             .ConfigureAwait(false);
         return token.Token;
     }

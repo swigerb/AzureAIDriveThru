@@ -1,4 +1,11 @@
 *.sh text eol=lf
+# .NET sources: .editorconfig requires end_of_line = lf and the build enforces code style
+*.cs text eol=lf
+*.csproj text eol=lf
+*.props text eol=lf
+*.targets text eol=lf
+*.slnx text eol=lf
+.editorconfig text eol=lf
 # Squad: union merge for append-only team state files
 .squad/decisions.md merge=union
 .squad/agents/*/history.md merge=union

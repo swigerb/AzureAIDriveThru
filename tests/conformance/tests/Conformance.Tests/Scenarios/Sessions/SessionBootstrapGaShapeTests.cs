@@ -1,3 +1,5 @@
+using System.Text.Json;
+using Conformance.Fakes;
 using Conformance.Harness;
 using Xunit;
 
@@ -16,36 +18,36 @@ namespace Conformance.Tests;
 [Collection(ConformanceCollection.Name)]
 public sealed class SessionBootstrapGaShapeTests(ConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     [Fact]
     [Trait("Dotnet", "ready")]
     public Task Bootstrap_session_update_carries_the_full_ga_shape() => fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
-        var noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(FrameTimeout, ct);
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        bool noneOpen = await fixture.Realtime.WaitForNoOpenConnectionsAsync(s_frameTimeout, ct);
         Assert.True(noneOpen, $"Expected no open upstream connections at test start, but " +
             $"{fixture.Realtime.OpenConnectionCount} are still open — a previous test leaked a connection.");
 
-        var connectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var connection = await connectionTask;
-        Assert.True(connection is not null, $"No upstream connection was accepted within {FrameTimeout}.");
+        Task<FakeRealtimeConnection?> connectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient browser = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? connection = await connectionTask;
+        Assert.True(connection is not null, $"No upstream connection was accepted within {s_frameTimeout}.");
 
-        var bootstrap = await connection!.ReceivedFrames.WaitForAsync(f => f.Sequence == 0, FrameTimeout, ct);
+        RecordedFrame? bootstrap = await connection!.ReceivedFrames.WaitForAsync(f => f.Sequence == 0, s_frameTimeout, ct);
         Assert.True(bootstrap is not null, "Bootstrap session.update never arrived.");
 
-        var session = bootstrap!.Json.GetProperty("session");
+        JsonElement session = bootstrap!.Json.GetProperty("session");
         Assert.Equal("realtime", session.GetProperty("type").GetString());
         Assert.False(string.IsNullOrWhiteSpace(session.GetProperty("instructions").GetString()));
 
-        var audio = session.GetProperty("audio");
+        JsonElement audio = session.GetProperty("audio");
         // Pinned to the exact default -- this collection's backend process never runs
         // extension.set_voice (see VoicePickerConformanceFixture's docs: that scenario now runs
         // on its own dedicated collection/backend process specifically so this pin stays valid).
         Assert.Equal(BackendContract.DefaultVoice, audio.GetProperty("output").GetProperty("voice").GetString());
 
-        var input = audio.GetProperty("input");
+        JsonElement input = audio.GetProperty("input");
         Assert.True(input.TryGetProperty("turn_detection", out _), "Expected session.audio.input.turn_detection on the bootstrap.");
         Assert.True(input.TryGetProperty("transcription", out _), "Expected session.audio.input.transcription (GA's renamed input_audio_transcription) on the bootstrap.");
     });

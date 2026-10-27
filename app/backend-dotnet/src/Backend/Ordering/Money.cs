@@ -16,13 +16,13 @@ namespace Backend.Ordering;
 /// </summary>
 internal static class Money
 {
-    private static readonly string[] Ones =
+    private static readonly string[] s_ones =
     [
         "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
         "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen",
         "nineteen",
     ];
-    private static readonly string[] Tens =
+    private static readonly string[] s_tens =
         ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
 
     /// <summary>Formats <paramref name="value"/> as "$X.XX", rounding the exact half-cent case UP
@@ -31,7 +31,7 @@ internal static class Money
     /// fractional cent. Mirrors money_utils.py's <c>format_money</c> exactly.</summary>
     public static string Format(decimal value)
     {
-        var rounded = Math.Round(value, 2, MidpointRounding.AwayFromZero);
+        decimal rounded = Math.Round(value, 2, MidpointRounding.AwayFromZero);
         return "$" + rounded.ToString("F2", CultureInfo.InvariantCulture);
     }
 
@@ -39,12 +39,12 @@ internal static class Money
     {
         if (n < 20)
         {
-            return Ones[n];
+            return s_ones[n];
         }
-        var tens = n / 10;
-        var ones = n % 10;
-        var word = Tens[tens];
-        return ones > 0 ? $"{word}-{Ones[ones]}" : word;
+        int tens = n / 10;
+        int ones = n % 10;
+        string word = s_tens[tens];
+        return ones > 0 ? $"{word}-{s_ones[ones]}" : word;
     }
 
     private static string BelowThousandWords(int n)
@@ -53,9 +53,9 @@ internal static class Money
         {
             return BelowHundredWords(n);
         }
-        var hundreds = n / 100;
-        var rest = n % 100;
-        var word = $"{Ones[hundreds]} hundred";
+        int hundreds = n / 100;
+        int rest = n % 100;
+        string word = $"{s_ones[hundreds]} hundred";
         return rest > 0 ? $"{word} {BelowHundredWords(rest)}" : word;
     }
 
@@ -74,12 +74,12 @@ internal static class Money
             return "zero";
         }
         var parts = new List<string>();
-        var remaining = n;
-        foreach (var (scale, word) in new[] { (1_000_000, "million"), (1_000, "thousand") })
+        int remaining = n;
+        foreach ((int scale, string? word) in new[] { (1_000_000, "million"), (1_000, "thousand") })
         {
             if (remaining >= scale)
             {
-                var count = remaining / scale;
+                int count = remaining / scale;
                 remaining %= scale;
                 parts.Add($"{BelowThousandWords(count)} {word}");
             }
@@ -97,13 +97,13 @@ internal static class Money
     /// disagree on the rounded amount, only on whether it's rendered as digits or words.</summary>
     public static string FormatMoneySpoken(decimal value)
     {
-        var rounded = Math.Round(value, 2, MidpointRounding.AwayFromZero);
-        var negative = rounded < 0;
-        var centsTotal = (long)Math.Round(Math.Abs(rounded) * 100m, MidpointRounding.AwayFromZero);
-        var dollars = (int)(centsTotal / 100);
-        var cents = (int)(centsTotal % 100);
-        var dollarWord = $"{NumberToWords(dollars)} dollar{(dollars == 1 ? "" : "s")}";
-        var centWord = $"{NumberToWords(cents)} cent{(cents == 1 ? "" : "s")}";
+        decimal rounded = Math.Round(value, 2, MidpointRounding.AwayFromZero);
+        bool negative = rounded < 0;
+        long centsTotal = (long)Math.Round(Math.Abs(rounded) * 100m, MidpointRounding.AwayFromZero);
+        int dollars = (int)(centsTotal / 100);
+        int cents = (int)(centsTotal % 100);
+        string dollarWord = $"{NumberToWords(dollars)} dollar{(dollars == 1 ? "" : "s")}";
+        string centWord = $"{NumberToWords(cents)} cent{(cents == 1 ? "" : "s")}";
         string spoken;
         if (cents == 0)
         {

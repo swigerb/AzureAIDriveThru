@@ -41,7 +41,7 @@ public sealed class PyJwtInteropPolicyTests
     [Fact]
     public void BuildMessage_offers_the_install_command_when_skipping_locally()
     {
-        var message = PyJwtInteropPolicy.BuildMessage(interpreterFound: false, isCi: false);
+        string message = PyJwtInteropPolicy.BuildMessage(interpreterFound: false, isCi: false);
 
         Assert.Contains("Skipping because this doesn't look like CI", message);
         Assert.Contains("requirements-harness.txt", message);
@@ -51,7 +51,7 @@ public sealed class PyJwtInteropPolicyTests
     [Fact]
     public void BuildMessage_demands_a_hard_failure_in_CI()
     {
-        var message = PyJwtInteropPolicy.BuildMessage(interpreterFound: false, isCi: true);
+        string message = PyJwtInteropPolicy.BuildMessage(interpreterFound: false, isCi: true);
 
         Assert.Contains("FAILS the test", message);
         Assert.Contains(PyJwtInteropPolicy.ReasonPrefix, message);

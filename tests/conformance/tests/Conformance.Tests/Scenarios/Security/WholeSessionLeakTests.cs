@@ -1,4 +1,3 @@
-using System.Net.WebSockets;
 using System.Text.Json;
 using Conformance.Fakes;
 using Conformance.Harness;
@@ -71,7 +70,7 @@ namespace Conformance.Tests.Scenarios.Security;
 [Collection(ResumeMarginConformanceCollection.Name)]
 public sealed class WholeSessionLeakTests(ResumeMarginConformanceFixture fixture)
 {
-    private static readonly TimeSpan FrameTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_frameTimeout = TimeSpan.FromSeconds(30);
 
     /// <summary>Any run of 32 or more identical characters is treated as a leaked secret; shorter
     /// overlaps (word fragments, punctuation, etc.) are allowed to avoid false positives.</summary>
@@ -82,18 +81,18 @@ public sealed class WholeSessionLeakTests(ResumeMarginConformanceFixture fixture
     public Task Browser_never_receives_any_substring_of_operator_only_text_across_the_whole_session() =>
         fixture.RunAsync(async () =>
     {
-        var ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.Current.CancellationToken;
         var secretWindows = new HashSet<string>(StringComparer.Ordinal);
 
         // ── Bootstrap + browser handshake (first connection). ──
-        var firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        var first = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var firstConnection = await firstConnectionTask;
+        Task<FakeRealtimeConnection?> firstConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        RealtimeBrowserClient first = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? firstConnection = await firstConnectionTask;
         Assert.True(firstConnection is not null, "No upstream connection was accepted for the first browser socket.");
 
-        var bootstrap = await firstConnection!.ReceivedFrames.WaitForAsync(f => f.Sequence == 0, FrameTimeout, ct);
+        RecordedFrame? bootstrap = await firstConnection!.ReceivedFrames.WaitForAsync(f => f.Sequence == 0, s_frameTimeout, ct);
         Assert.True(bootstrap is not null, "Bootstrap session.update never arrived upstream.");
-        var instructions = bootstrap!.Json.GetProperty("session").GetProperty("instructions").GetString();
+        string? instructions = bootstrap!.Json.GetProperty("session").GetProperty("instructions").GetString();
         Assert.False(string.IsNullOrEmpty(instructions), "Bootstrap session.update must carry non-empty instructions.");
         AddSecretWindows(instructions, secretWindows);
 
@@ -103,13 +102,13 @@ public sealed class WholeSessionLeakTests(ResumeMarginConformanceFixture fixture
         // fresh allow-listed dict that never includes a `tools` key at all, not by anything
         // role- or authorship-based, so this is the one proof in the suite that specifically
         // exercises *that* mechanism rather than the conversation-item drop logic. ──
-        var bootstrapTools = bootstrap.Json.GetProperty("session").GetProperty("tools");
+        JsonElement bootstrapTools = bootstrap.Json.GetProperty("session").GetProperty("tools");
         Assert.True(bootstrapTools.GetArrayLength() > 0, "Bootstrap session.update must carry at least one tool.");
-        foreach (var tool in bootstrapTools.EnumerateArray())
+        foreach (JsonElement tool in bootstrapTools.EnumerateArray())
         {
-            var toolDescription = tool.TryGetProperty("description", out var descProp) ? descProp.GetString() : null;
+            string? toolDescription = tool.TryGetProperty("description", out JsonElement descProp) ? descProp.GetString() : null;
             AddSecretWindows(toolDescription, secretWindows);
-            if (tool.TryGetProperty("parameters", out var parameters))
+            if (tool.TryGetProperty("parameters", out JsonElement parameters))
             {
                 AddSecretWindows(parameters.GetRawText(), secretWindows);
             }
@@ -118,18 +117,18 @@ public sealed class WholeSessionLeakTests(ResumeMarginConformanceFixture fixture
         // ── Voice change: sent as the very first client frame (before SendStartSessionAsync),
         // so it lands before any assistant audio and isn't silently ignored as voice-locked. ──
         await first.SendExtensionSetVoiceAsync("marin", ct);
-        var voiceUpdate = await firstConnection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? voiceUpdate = await firstConnection.ReceivedFrames.WaitForAsync(
             f => f.Sequence > 0 && f.Type == "session.update" &&
-                 f.Json.GetProperty("session").TryGetProperty("audio", out var audio) &&
-                 audio.TryGetProperty("output", out var output) &&
-                 output.TryGetProperty("voice", out var voice) &&
+                 f.Json.GetProperty("session").TryGetProperty("audio", out JsonElement audio) &&
+                 audio.TryGetProperty("output", out JsonElement output) &&
+                 output.TryGetProperty("voice", out JsonElement voice) &&
                  voice.GetString() == "marin",
-            FrameTimeout, ct);
+            s_frameTimeout, ct);
         Assert.True(voiceUpdate is not null, "Expected the voice-change session.update to reach the fake upstream.");
 
-        var metadata = await first.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_metadata", FrameTimeout, ct);
+        RecordedFrame? metadata = await first.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_metadata", s_frameTimeout, ct);
         Assert.True(metadata is not null, "Expected extension.session_metadata on the first connection.");
-        var resumeId = metadata!.Json.GetProperty("resumeId").GetString();
+        string? resumeId = metadata!.Json.GetProperty("resumeId").GetString();
         Assert.False(string.IsNullOrEmpty(resumeId), "extension.session_metadata must carry a non-empty resumeId.");
 
         // ── Starting the session fires the greeting: a client-authored (role: "user")
@@ -137,17 +136,17 @@ public sealed class WholeSessionLeakTests(ResumeMarginConformanceFixture fixture
         // browser. Its text is the one secret the role=="system" backstop alone can't catch. ──
         await first.SendStartSessionAsync(cancellationToken: ct);
 
-        var greetingItem = await firstConnection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? greetingItem = await firstConnection.ReceivedFrames.WaitForAsync(
             f => f.Type == "conversation.item.create" &&
-                 f.Json.TryGetProperty("item", out var item) &&
-                 item.TryGetProperty("role", out var role) &&
+                 f.Json.TryGetProperty("item", out JsonElement item) &&
+                 item.TryGetProperty("role", out JsonElement role) &&
                  role.GetString() == "user",
-            FrameTimeout, ct);
+            s_frameTimeout, ct);
         Assert.True(greetingItem is not null, "Expected the greeting item to reach the fake upstream.");
         AddSecretWindows(GreetingText(greetingItem!.Json.GetProperty("item")), secretWindows);
 
-        var greetingRoundTrip = await first.ReceivedFrames.WaitForAsync(
-            f => f.Type == "extension.round_trip_token", FrameTimeout, ct);
+        RecordedFrame? greetingRoundTrip = await first.ReceivedFrames.WaitForAsync(
+            f => f.Type == "extension.round_trip_token", s_frameTimeout, ct);
         Assert.True(greetingRoundTrip is not null, "Greeting round trip never completed.");
 
         // ── Tool round trip: realistic mid-conversation traffic, per UpdateOrderToolCallTests.
@@ -155,38 +154,38 @@ public sealed class WholeSessionLeakTests(ResumeMarginConformanceFixture fixture
         // see the class doc comment -- but its function_call *arguments* (raw tool-call JSON) are
         // added below (swigerb/SonicAIDriveThru#32), since those must never reach the browser via
         // response.done's output array. ──
-        const string callId = "call_whole_session_leak_1";
+        const string CallId = "call_whole_session_leak_1";
         // #73: "Small Fries" is off-menu ("Fries" is not a menuItems.json item; the real side is
         // "Tots") and would now be rejected TO_SERVER-only, so the `extension.middle_tier_tool_response`
         // wait below would time out. This test's subject matter is cross-session leak detection,
         // not menu lookup, so it must use a real on-menu item.
-        const string updateOrderArgumentsJson =
+        const string UpdateOrderArgumentsJson =
             """{"action":"add","item_name":"Tots","size":"small","quantity":1,"price":2.19}""";
         firstConnection.Script.Enqueue(new ResponseScript([
             new FunctionCallEvent(
                 Name: "update_order",
-                ArgumentsJson: updateOrderArgumentsJson,
-                CallId: callId),
+                ArgumentsJson: UpdateOrderArgumentsJson,
+                CallId: CallId),
             new DoneEvent(),
         ]));
         await first.SendResponseCreateAsync(ct);
 
-        var functionCallOutput = await firstConnection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? functionCallOutput = await firstConnection.ReceivedFrames.WaitForAsync(
             f => f.Type == "conversation.item.create" &&
-                 f.Json.TryGetProperty("item", out var item) &&
-                 item.TryGetProperty("type", out var itemType) &&
+                 f.Json.TryGetProperty("item", out JsonElement item) &&
+                 item.TryGetProperty("type", out JsonElement itemType) &&
                  itemType.GetString() == "function_call_output" &&
-                 item.TryGetProperty("call_id", out var respondedCallId) &&
-                 respondedCallId.GetString() == callId,
-            FrameTimeout, ct);
+                 item.TryGetProperty("call_id", out JsonElement respondedCallId) &&
+                 respondedCallId.GetString() == CallId,
+            s_frameTimeout, ct);
         Assert.True(functionCallOutput is not null,
-            $"Expected a conversation.item.create(function_call_output) for call_id={callId} upstream.");
+            $"Expected a conversation.item.create(function_call_output) for call_id={CallId} upstream.");
 
-        var toolResponse = await first.ReceivedFrames.WaitForAsync(
+        RecordedFrame? toolResponse = await first.ReceivedFrames.WaitForAsync(
             f => f.Type == "extension.middle_tier_tool_response" &&
-                 f.Json.TryGetProperty("tool_name", out var toolName) &&
+                 f.Json.TryGetProperty("tool_name", out JsonElement toolName) &&
                  toolName.GetString() == "update_order",
-            FrameTimeout, ct);
+            s_frameTimeout, ct);
         Assert.True(toolResponse is not null, "Expected extension.middle_tier_tool_response for update_order on the browser.");
 
         // ── swigerb/SonicAIDriveThru#32: the raw function_call arguments (tool name + JSON args)
@@ -197,7 +196,7 @@ public sealed class WholeSessionLeakTests(ResumeMarginConformanceFixture fixture
         // the other four secrets -- excludes that specific legitimate overlap while still
         // catching a leak of the raw arguments JSON through any other frame type. ──
         AddSecretWindowsExcludingLegitimateOverlap(
-            updateOrderArgumentsJson, first.ReceivedFrames.Snapshot(), secretWindows);
+            UpdateOrderArgumentsJson, first.ReceivedFrames.Snapshot(), secretWindows);
 
         // ── Search tool round trip (PR #30 review round 3, item 4, "S2b"): unlike
         // update_order's, `search`'s result is model-only -- `tools.py`'s `search()` always
@@ -206,44 +205,44 @@ public sealed class WholeSessionLeakTests(ResumeMarginConformanceFixture fixture
         // Uses the S2c generic helper (not a hand-picked substring) so any future legitimate
         // overlap -- e.g. the model reading a matched item's name back to the guest in a
         // transcript -- is excluded by proof against this run's real frames, not assumed away. ──
-        const string searchCallId = "call_whole_session_leak_search";
+        const string SearchCallId = "call_whole_session_leak_search";
         firstConnection.Script.Enqueue(new ResponseScript([
             new FunctionCallEvent(
                 Name: "search",
                 ArgumentsJson: """{"query":"Angus"}""",
-                CallId: searchCallId),
+                CallId: SearchCallId),
             new DoneEvent(),
         ]));
         await first.SendResponseCreateAsync(ct);
 
-        var searchFunctionCallOutput = await firstConnection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? searchFunctionCallOutput = await firstConnection.ReceivedFrames.WaitForAsync(
             f => f.Type == "conversation.item.create" &&
-                 f.Json.TryGetProperty("item", out var item) &&
-                 item.TryGetProperty("type", out var itemType) &&
+                 f.Json.TryGetProperty("item", out JsonElement item) &&
+                 item.TryGetProperty("type", out JsonElement itemType) &&
                  itemType.GetString() == "function_call_output" &&
-                 item.TryGetProperty("call_id", out var respondedCallId) &&
-                 respondedCallId.GetString() == searchCallId,
-            FrameTimeout, ct);
+                 item.TryGetProperty("call_id", out JsonElement respondedCallId) &&
+                 respondedCallId.GetString() == SearchCallId,
+            s_frameTimeout, ct);
         Assert.True(searchFunctionCallOutput is not null,
-            $"Expected a conversation.item.create(function_call_output) for call_id={searchCallId} upstream.");
-        var searchOutput = searchFunctionCallOutput!.Json.GetProperty("item").GetProperty("output").GetString();
+            $"Expected a conversation.item.create(function_call_output) for call_id={SearchCallId} upstream.");
+        string? searchOutput = searchFunctionCallOutput!.Json.GetProperty("item").GetProperty("output").GetString();
         Assert.False(string.IsNullOrEmpty(searchOutput), "Expected FakeSearchServer to return non-empty search results.");
         AddSecretWindowsExcludingLegitimateOverlap(searchOutput, first.ReceivedFrames.Snapshot(), secretWindows);
 
         // ── Disconnect; the session detaches and is held for the (shortened) grace period. ──
         await first.CloseAsync(cancellationToken: ct);
-        await first.WaitForCloseAsync(FrameTimeout, ct);
+        await first.WaitForCloseAsync(s_frameTimeout, ct);
         await first.DisposeAsync();
 
         // ── Resume on a fresh socket within the grace hold. ──
-        var secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(FrameTimeout, ct);
-        await using var second = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
-        var secondConnection = await secondConnectionTask;
+        Task<FakeRealtimeConnection?> secondConnectionTask = fixture.Realtime.WaitForNextConnectionAsync(s_frameTimeout, ct);
+        await using RealtimeBrowserClient second = await RealtimeBrowserClient.ConnectAsync(fixture.Backend!.BaseUri, cancellationToken: ct);
+        FakeRealtimeConnection? secondConnection = await secondConnectionTask;
         Assert.True(secondConnection is not null, "No upstream connection was accepted for the resumed browser socket.");
 
         await second.SendExtensionResumeAsync(resumeId!, ct);
 
-        var resumed = await second.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_resumed", FrameTimeout, ct);
+        RecordedFrame? resumed = await second.ReceivedFrames.WaitForAsync(f => f.Type == "extension.session_resumed", s_frameTimeout, ct);
         Assert.True(resumed is not null, "Expected extension.session_resumed on the resumed connection.");
 
         // #181: the post-resume silence nudge only arms once THIS socket's own client proves
@@ -252,12 +251,12 @@ public sealed class WholeSessionLeakTests(ResumeMarginConformanceFixture fixture
         // leaked-secret risk) it's actually testing.
         await second.SendStartSessionAsync(cancellationToken: ct);
 
-        var rehydrationItem = await secondConnection!.ReceivedFrames.WaitForAsync(
+        RecordedFrame? rehydrationItem = await secondConnection!.ReceivedFrames.WaitForAsync(
             f => f.Type == "conversation.item.create" &&
-                 f.Json.TryGetProperty("item", out var item) &&
-                 item.TryGetProperty("role", out var role) &&
+                 f.Json.TryGetProperty("item", out JsonElement item) &&
+                 item.TryGetProperty("role", out JsonElement role) &&
                  role.GetString() == "system",
-            FrameTimeout, ct);
+            s_frameTimeout, ct);
         Assert.True(rehydrationItem is not null,
             "Precondition failed: the backend never sent the rehydration item upstream on the resumed connection.");
         // PR #30 review round 3, item 5 ("S2c"): capture the *full* rehydration text (preamble +
@@ -269,7 +268,7 @@ public sealed class WholeSessionLeakTests(ResumeMarginConformanceFixture fixture
         // legitimate duplicate data instead of proving the actual overlap is legitimate, and
         // wouldn't generalize to another secret (S2b's search result) with a differently-shaped
         // legitimate-overlap risk.
-        var legitimateBrowserFrames = first.ReceivedFrames.Snapshot().Concat(second.ReceivedFrames.Snapshot());
+        IEnumerable<RecordedFrame> legitimateBrowserFrames = first.ReceivedFrames.Snapshot().Concat(second.ReceivedFrames.Snapshot());
         AddSecretWindowsExcludingLegitimateOverlap(
             GreetingText(rehydrationItem!.Json.GetProperty("item")), legitimateBrowserFrames, secretWindows);
 
@@ -280,18 +279,18 @@ public sealed class WholeSessionLeakTests(ResumeMarginConformanceFixture fixture
         // KeepAlive helper (PR #52 CI follow-up round 5, Rick's review S2) so this scenario and
         // ResumeRehydrationClientVisibilityTests can't silently diverge from what the self-test in
         // BrowserClientLifecycleTests actually exercises. ──
-        await using var keepAlive = KeepAlive.RunAsync(second, TimeSpan.FromMilliseconds(200), ct);
+        await using KeepAliveLoop keepAlive = KeepAlive.RunAsync(second, TimeSpan.FromMilliseconds(200), ct);
 
-        var nudgeItem = await secondConnection.ReceivedFrames.WaitForAsync(
+        RecordedFrame? nudgeItem = await secondConnection.ReceivedFrames.WaitForAsync(
             f => f.Type == "conversation.item.create" &&
                  f.Sequence > rehydrationItem.Sequence &&
-                 f.Json.TryGetProperty("item", out var item) &&
-                 item.TryGetProperty("role", out var role) &&
+                 f.Json.TryGetProperty("item", out JsonElement item) &&
+                 item.TryGetProperty("role", out JsonElement role) &&
                  role.GetString() == "system",
-            FrameTimeout, ct);
+            s_frameTimeout, ct);
 
-        var nudgeResponseCreated = await second.ReceivedFrames.WaitForAsync(
-            f => f.Type == "response.created", FrameTimeout, ct);
+        RecordedFrame? nudgeResponseCreated = await second.ReceivedFrames.WaitForAsync(
+            f => f.Type == "response.created", s_frameTimeout, ct);
 
         await keepAlive.StopAsync();
 
@@ -315,9 +314,9 @@ public sealed class WholeSessionLeakTests(ResumeMarginConformanceFixture fixture
 
         // ── The actual assertion: across every frame of every type on both browser connections,
         // no >=32-char substring of any of the four secrets ever reached the browser. ──
-        var allBrowserFrames = first.ReceivedFrames.Snapshot().Concat(second.ReceivedFrames.Snapshot());
+        IEnumerable<RecordedFrame> allBrowserFrames = first.ReceivedFrames.Snapshot().Concat(second.ReceivedFrames.Snapshot());
         RecordedFrame? leaked = null;
-        foreach (var frame in allBrowserFrames)
+        foreach (RecordedFrame? frame in allBrowserFrames)
         {
             if (ContainsAnySecretWindow(frame.Json, secretWindows))
             {
@@ -346,16 +345,16 @@ public sealed class WholeSessionLeakTests(ResumeMarginConformanceFixture fixture
     private static void AssertNoRepeatedItemId(FakeRealtimeConnection connection)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var frame in connection.ReceivedFrames.Snapshot())
+        foreach (RecordedFrame frame in connection.ReceivedFrames.Snapshot())
         {
             if (frame.Type != "conversation.item.create" ||
-                !frame.Json.TryGetProperty("item", out var item) ||
-                !item.TryGetProperty("id", out var idProp) ||
+                !frame.Json.TryGetProperty("item", out JsonElement item) ||
+                !item.TryGetProperty("id", out JsonElement idProp) ||
                 idProp.ValueKind != JsonValueKind.String)
             {
                 continue;
             }
-            var id = idProp.GetString()!;
+            string id = idProp.GetString()!;
             Assert.True(seen.Add(id),
                 $"The backend sent conversation.item.create with id '{id}' more than once on the same " +
                 "upstream connection -- GA would reject the second one with item_create_duplicate_item_id.");
@@ -366,8 +365,8 @@ public sealed class WholeSessionLeakTests(ResumeMarginConformanceFixture fixture
     /// (greeting, rehydration and nudge items all use it) carry -- named generically because the
     /// same extraction applies to all three.</summary>
     private static string? GreetingText(JsonElement item) =>
-        item.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array &&
-        content.GetArrayLength() > 0 && content[0].TryGetProperty("text", out var text)
+        item.TryGetProperty("content", out JsonElement content) && content.ValueKind == JsonValueKind.Array &&
+        content.GetArrayLength() > 0 && content[0].TryGetProperty("text", out JsonElement text)
             ? text.GetString()
             : null;
 
@@ -389,24 +388,25 @@ public sealed class WholeSessionLeakTests(ResumeMarginConformanceFixture fixture
     /// deliberately absent: its result is model-only (`TO_SERVER`), so it must never legitimize
     /// overlap through this frame type -- if it ever appeared here, that *is* the leak "S2b"
     /// exists to catch, not something to explain away.</summary>
-    private static readonly HashSet<string> ToolsWithLegitimateBrowserEcho = new(StringComparer.Ordinal)
-    {
+    private static readonly HashSet<string> s_toolsWithLegitimateBrowserEcho =
+    [
+        with(StringComparer.Ordinal),
         "update_order", "get_order", "reset_order",
-    };
+    ];
 
     /// <summary>Frame-aware companion to <see cref="IsLegitimateBrowserFrameType"/>: an
     /// `extension.middle_tier_tool_response` frame only counts as legitimate overlap when its
     /// `tool_name` is one the middle tier genuinely echoes to the browser
-    /// (<see cref="ToolsWithLegitimateBrowserEcho"/>) -- scoping by *frame type alone* would let
+    /// (<see cref="s_toolsWithLegitimateBrowserEcho"/>) -- scoping by *frame type alone* would let
     /// a leaked `search` result (routed onto the same frame type by a hypothetical regression)
     /// silently launder itself as "legitimate" just because *some* tool's response uses that
     /// type this run.</summary>
     private static bool IsLegitimateBrowserFrame(RecordedFrame frame) =>
         IsLegitimateBrowserFrameType(frame.Type) ||
         (frame.Type == "extension.middle_tier_tool_response" &&
-         frame.Json.TryGetProperty("tool_name", out var toolName) &&
+         frame.Json.TryGetProperty("tool_name", out JsonElement toolName) &&
          toolName.GetString() is string name &&
-         ToolsWithLegitimateBrowserEcho.Contains(name));
+         s_toolsWithLegitimateBrowserEcho.Contains(name));
 
     /// <summary>Generic replacement for hand-narrowing a secret's text to only its "safe" prose
     /// (PR #30 review round 3, item 5, "S2c"): takes every 32-char window of the *full* secret
@@ -420,13 +420,13 @@ public sealed class WholeSessionLeakTests(ResumeMarginConformanceFixture fixture
     {
         Assert.False(string.IsNullOrEmpty(fullText), "Test bug: expected non-empty operator-only text to capture as a secret.");
         var candidateWindows = new HashSet<string>(StringComparer.Ordinal);
-        for (var i = 0; i <= fullText!.Length - MinLeakSubstringLength; i++)
+        for (int i = 0; i <= fullText.Length - MinLeakSubstringLength; i++)
         {
             candidateWindows.Add(fullText.Substring(i, MinLeakSubstringLength));
         }
 
         var legitimateWindows = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var frame in browserFrames)
+        foreach (RecordedFrame frame in browserFrames)
         {
             if (IsLegitimateBrowserFrame(frame))
             {
@@ -448,24 +448,24 @@ public sealed class WholeSessionLeakTests(ResumeMarginConformanceFixture fixture
         switch (element.ValueKind)
         {
             case JsonValueKind.String:
-                var text = element.GetString();
+                string? text = element.GetString();
                 if (string.IsNullOrEmpty(text))
                 {
                     return;
                 }
-                for (var i = 0; i <= text.Length - MinLeakSubstringLength; i++)
+                for (int i = 0; i <= text.Length - MinLeakSubstringLength; i++)
                 {
                     windows.Add(text.Substring(i, MinLeakSubstringLength));
                 }
                 return;
             case JsonValueKind.Object:
-                foreach (var property in element.EnumerateObject())
+                foreach (JsonProperty property in element.EnumerateObject())
                 {
                     CollectStringWindows(property.Value, windows);
                 }
                 return;
             case JsonValueKind.Array:
-                foreach (var item in element.EnumerateArray())
+                foreach (JsonElement item in element.EnumerateArray())
                 {
                     CollectStringWindows(item, windows);
                 }
@@ -476,7 +476,7 @@ public sealed class WholeSessionLeakTests(ResumeMarginConformanceFixture fixture
     private static void AddSecretWindows(string? text, HashSet<string> windows)
     {
         Assert.False(string.IsNullOrEmpty(text), "Test bug: expected non-empty operator-only text to capture as a secret.");
-        for (var i = 0; i <= text!.Length - MinLeakSubstringLength; i++)
+        for (int i = 0; i <= text.Length - MinLeakSubstringLength; i++)
         {
             windows.Add(text.Substring(i, MinLeakSubstringLength));
         }
@@ -489,12 +489,12 @@ public sealed class WholeSessionLeakTests(ResumeMarginConformanceFixture fixture
         switch (element.ValueKind)
         {
             case JsonValueKind.String:
-                var text = element.GetString();
+                string? text = element.GetString();
                 if (string.IsNullOrEmpty(text) || text.Length < MinLeakSubstringLength)
                 {
                     return false;
                 }
-                for (var i = 0; i <= text.Length - MinLeakSubstringLength; i++)
+                for (int i = 0; i <= text.Length - MinLeakSubstringLength; i++)
                 {
                     if (secretWindows.Contains(text.Substring(i, MinLeakSubstringLength)))
                     {
@@ -503,7 +503,7 @@ public sealed class WholeSessionLeakTests(ResumeMarginConformanceFixture fixture
                 }
                 return false;
             case JsonValueKind.Object:
-                foreach (var property in element.EnumerateObject())
+                foreach (JsonProperty property in element.EnumerateObject())
                 {
                     if (ContainsAnySecretWindow(property.Value, secretWindows))
                     {
@@ -512,7 +512,7 @@ public sealed class WholeSessionLeakTests(ResumeMarginConformanceFixture fixture
                 }
                 return false;
             case JsonValueKind.Array:
-                foreach (var item in element.EnumerateArray())
+                foreach (JsonElement item in element.EnumerateArray())
                 {
                     if (ContainsAnySecretWindow(item, secretWindows))
                     {

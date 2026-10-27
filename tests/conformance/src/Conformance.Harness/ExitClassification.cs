@@ -7,7 +7,7 @@ namespace Conformance.Harness;
 /// classify" step both <see cref="DotnetBackendLauncher"/> and <see cref="PythonBackendLauncher"/>
 /// run the instant their process's <see cref="Process.HasExited"/> flips true while waiting for
 /// `/health`. Factored out of both launchers (which used to each inline an identical copy) so that
-/// <see cref="Conformance.Tests.OutputDrainAfterExitTests"/> can assert against this one method
+/// <c>Conformance.Tests.OutputDrainAfterExitTests</c> can assert against this one method
 /// instead of a hand-rolled re-implementation of the pattern: removing the drain from here now
 /// fails that test directly, instead of only proving the general <see cref="Process.WaitForExit()"/>
 /// contract in isolation.
@@ -20,7 +20,7 @@ internal static class ExitClassification
     /// cref="PortBindRaceException"/>) or a genuine early exit (<see
     /// cref="InvalidOperationException"/>), returning the exception to throw rather than throwing
     /// it directly -- callers decide whether/how to surface it (both launchers throw it
-    /// immediately, but <see cref="Conformance.Tests.OutputDrainAfterExitTests"/> only inspects its
+    /// immediately, but <c>Conformance.Tests.OutputDrainAfterExitTests</c> only inspects its
     /// message).
     ///
     /// <para>
@@ -46,15 +46,15 @@ internal static class ExitClassification
         Process process, CapturedProcessOutput output, DateTimeOffset startedAt, DateTimeOffset deadline,
         string backendName)
     {
-        var remaining = deadline - DateTimeOffset.UtcNow;
+        TimeSpan remaining = deadline - DateTimeOffset.UtcNow;
         if (remaining > TimeSpan.Zero)
         {
             var drain = Task.Run(process.WaitForExit);
-            await Task.WhenAny(drain, Task.Delay(remaining)).ConfigureAwait(false);
+            await drain.WaitAsync(remaining).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }
 
-        var elapsed = DateTimeOffset.UtcNow - startedAt;
-        var dump = output.Dump();
+        TimeSpan elapsed = DateTimeOffset.UtcNow - startedAt;
+        string dump = output.Dump();
 
         if (PortRaceDetection.ShouldRetry(elapsed, dump))
         {

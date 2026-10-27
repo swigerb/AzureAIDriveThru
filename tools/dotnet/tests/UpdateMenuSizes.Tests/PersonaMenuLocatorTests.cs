@@ -33,8 +33,8 @@ public sealed class PersonaMenuLocatorTests : IDisposable
     /// matching the real persona-pack layout PersonaMenuLocator globs for.</summary>
     private void CreatePersona(string personaId, bool optIn)
     {
-        var menuDir = Path.Combine(_repoRoot, "personas", personaId, "menu");
-        var sourceDir = Path.Combine(menuDir, "source");
+        string menuDir = Path.Combine(_repoRoot, "personas", personaId, "menu");
+        string sourceDir = Path.Combine(menuDir, "source");
         Directory.CreateDirectory(sourceDir);
         File.WriteAllText(Path.Combine(sourceDir, $"{personaId}-menu-items.json"), "[]");
         if (optIn)
@@ -49,7 +49,7 @@ public sealed class PersonaMenuLocatorTests : IDisposable
         // personas/ exists but is otherwise empty -- the 0-persona layout.
         Directory.CreateDirectory(Path.Combine(_repoRoot, "personas"));
 
-        var ex = Assert.Throws<InvalidOperationException>(() => PersonaMenuLocator.Locate(_repoRoot));
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => PersonaMenuLocator.Locate(_repoRoot));
 
         Assert.Contains("No persona production export matched", ex.Message);
     }
@@ -57,7 +57,7 @@ public sealed class PersonaMenuLocatorTests : IDisposable
     [Fact]
     public void Locate_ThrowsCleanError_WhenPersonasDirectoryDoesNotExistAtAll()
     {
-        var ex = Assert.Throws<InvalidOperationException>(() => PersonaMenuLocator.Locate(_repoRoot));
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => PersonaMenuLocator.Locate(_repoRoot));
 
         Assert.Contains("No persona production export matched", ex.Message);
     }
@@ -71,7 +71,7 @@ public sealed class PersonaMenuLocatorTests : IDisposable
         // pack(s) happen to be checked into the repo.
         CreatePersona("acme", optIn: true);
 
-        var discovery = PersonaMenuLocator.Locate(_repoRoot);
+        PersonaMenuLocator.Discovery discovery = PersonaMenuLocator.Locate(_repoRoot);
 
         Assert.Equal("acme", discovery.PersonaId);
         Assert.Equal(
@@ -90,7 +90,7 @@ public sealed class PersonaMenuLocatorTests : IDisposable
     {
         CreatePersona("acme", optIn: false);
 
-        var ex = Assert.Throws<InvalidOperationException>(() => PersonaMenuLocator.Locate(_repoRoot));
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => PersonaMenuLocator.Locate(_repoRoot));
 
         Assert.Contains("No persona has opted into this tool", ex.Message);
     }
@@ -105,7 +105,7 @@ public sealed class PersonaMenuLocatorTests : IDisposable
         CreatePersona("acme", optIn: true);
         CreatePersona("globex", optIn: false);
 
-        var discovery = PersonaMenuLocator.Locate(_repoRoot);
+        PersonaMenuLocator.Discovery discovery = PersonaMenuLocator.Locate(_repoRoot);
 
         Assert.Equal("acme", discovery.PersonaId);
     }
@@ -116,7 +116,7 @@ public sealed class PersonaMenuLocatorTests : IDisposable
         CreatePersona("acme", optIn: true);
         CreatePersona("globex", optIn: true);
 
-        var ex = Assert.Throws<InvalidOperationException>(() => PersonaMenuLocator.Locate(_repoRoot));
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => PersonaMenuLocator.Locate(_repoRoot));
 
         Assert.Contains("More than one persona has opted into this tool", ex.Message);
     }

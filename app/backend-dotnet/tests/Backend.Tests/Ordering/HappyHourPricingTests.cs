@@ -53,7 +53,7 @@ public sealed class HappyHourPricingTests : IDisposable
     {
         // 13:00 America/Chicago (CST, -06:00) -- one hour before the 14:00 window opens.
         FreezeAt("2026-01-15T19:00:00Z");
-        var order = PersonaOrderFactory.CreateOrderState(Alpha());
+        OrderState order = PersonaOrderFactory.CreateOrderState(Alpha());
 
         order.HandleOrderUpdate("add", "Alpha Cola", "small", 2, 1.99m);
 
@@ -67,7 +67,7 @@ public sealed class HappyHourPricingTests : IDisposable
     {
         // 15:00 America/Chicago (CST, -06:00) -- inside the 14:00-16:00 window.
         FreezeAt("2026-01-15T21:00:00Z");
-        var order = PersonaOrderFactory.CreateOrderState(Alpha());
+        OrderState order = PersonaOrderFactory.CreateOrderState(Alpha());
 
         order.HandleOrderUpdate("add", "Alpha Cola", "small", 2, 1.99m);
 
@@ -80,7 +80,7 @@ public sealed class HappyHourPricingTests : IDisposable
     public void InsideHappyHourWindow_NonDiscountedItemIsUnaffected()
     {
         FreezeAt("2026-01-15T21:00:00Z");
-        var order = PersonaOrderFactory.CreateOrderState(Alpha());
+        OrderState order = PersonaOrderFactory.CreateOrderState(Alpha());
 
         order.HandleOrderUpdate("add", "Alpha Burger", "small", 1, 3.99m);
 
@@ -93,7 +93,7 @@ public sealed class HappyHourPricingTests : IDisposable
     public void TaxIsAlwaysComputedFromThisPersonasOwnRateAfterAnyHappyHourDiscount()
     {
         FreezeAt("2026-01-15T21:00:00Z"); // inside window
-        var order = PersonaOrderFactory.CreateOrderState(Alpha());
+        OrderState order = PersonaOrderFactory.CreateOrderState(Alpha());
 
         order.HandleOrderUpdate("add", "Alpha Cola", "small", 2, 1.99m); // 1.99 after discount
 

@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Backend.Configuration;
 using Backend.Models;
 using Backend.Personas;
@@ -61,18 +62,18 @@ public sealed class ModelDispatchTests
     /// env-var key itself (see ModelCatalogTests.DeploymentMap_MapsIdsToDeploymentNames).</summary>
     private static ModelCatalog RealCatalog(IReadOnlyDictionary<string, string> deployments)
     {
-        var json = System.Text.Json.JsonSerializer.Serialize(deployments);
+        string json = System.Text.Json.JsonSerializer.Serialize(deployments);
         var env = new Dictionary<string, string> { ["AZURE_AI_MODEL_DEPLOYMENTS"] = json };
         return ModelCatalog.FromConfig(AppConfig.Load(), env);
     }
 
     /// <summary>Loads a throwaway copy of the real sonic pack (never the shared tree) with its
-    /// `models.realtime` block replaced by <paramref name="realtime"/>.</summary>
+    /// `models.realtime` block replaced by a <c>realtime</c> block built from <paramref name="defaultModelId"/> and <paramref name="allowed"/>.</summary>
     private static Persona SonicWithRealtimeBlock(PersonaPackFixture fixture, string defaultModelId, params string[] allowed)
     {
         fixture.MutatePersonaJson("sonic", obj =>
         {
-            var models = obj["models"]!.AsObject();
+            JsonObject models = obj["models"]!.AsObject();
             models["realtime"] = new System.Text.Json.Nodes.JsonObject
             {
                 ["default"] = defaultModelId,
@@ -87,12 +88,12 @@ public sealed class ModelDispatchTests
     public void Unknown_model_id_throws()
     {
         using var fixture = new PersonaPackFixture();
-        var persona = SonicWithRealtimeBlock(fixture, "gpt-realtime-2.1", "gpt-realtime-2.1", "gpt-realtime-2.1-mini");
-        var catalog = RealCatalog(new Dictionary<string, string> { ["gpt-realtime-2.1"] = "rt-deploy" });
+        Persona persona = SonicWithRealtimeBlock(fixture, "gpt-realtime-2.1", "gpt-realtime-2.1", "gpt-realtime-2.1-mini");
+        ModelCatalog catalog = RealCatalog(new Dictionary<string, string> { ["gpt-realtime-2.1"] = "rt-deploy" });
         var registry = new ProcessorRegistry();
         registry.Register(new FakeProcessor("realtime"));
 
-        var exc = Assert.Throws<ModelSelectionException>(
+        ModelSelectionException exc = Assert.Throws<ModelSelectionException>(
             () => ModelDispatch.DispatchProcessor(persona, "totally-unknown-model", catalog, registry));
         Assert.Contains("totally-unknown-model", exc.Message);
     }
@@ -101,15 +102,15 @@ public sealed class ModelDispatchTests
     public void Models_pipeline_with_no_registered_processor_throws()
     {
         using var fixture = new PersonaPackFixture();
-        var persona = SonicWithRealtimeBlock(fixture, "gpt-realtime-2.1", "gpt-realtime-2.1");
-        var catalog = RealCatalog(new Dictionary<string, string> { ["gpt-realtime-2.1"] = "rt-deploy" });
+        Persona persona = SonicWithRealtimeBlock(fixture, "gpt-realtime-2.1", "gpt-realtime-2.1");
+        ModelCatalog catalog = RealCatalog(new Dictionary<string, string> { ["gpt-realtime-2.1"] = "rt-deploy" });
         var registry = new ProcessorRegistry();
         registry.Register(new FakeProcessor("realtime"));
         // gpt-5-mini is catalogued for "cascade" in the real config.yaml catalog, but no processor
         // is registered for that pipeline in this registry -- 404, same as an unknown model.
         Assert.True(catalog.IsCataloguedFor("gpt-5-mini", "cascade"));
 
-        var exc = Assert.Throws<ModelSelectionException>(
+        ModelSelectionException exc = Assert.Throws<ModelSelectionException>(
             () => ModelDispatch.DispatchProcessor(persona, "gpt-5-mini", catalog, registry));
         Assert.Contains("gpt-5-mini", exc.Message);
     }
@@ -118,13 +119,13 @@ public sealed class ModelDispatchTests
     public void Omitted_model_dispatches_on_the_personas_realtime_default()
     {
         using var fixture = new PersonaPackFixture();
-        var persona = SonicWithRealtimeBlock(fixture, "gpt-realtime-2.1", "gpt-realtime-2.1", "gpt-realtime-2.1-mini");
-        var catalog = RealCatalog(new Dictionary<string, string> { ["gpt-realtime-2.1"] = "rt-deploy" });
+        Persona persona = SonicWithRealtimeBlock(fixture, "gpt-realtime-2.1", "gpt-realtime-2.1", "gpt-realtime-2.1-mini");
+        ModelCatalog catalog = RealCatalog(new Dictionary<string, string> { ["gpt-realtime-2.1"] = "rt-deploy" });
         var registry = new ProcessorRegistry();
         var realtimeProcessor = new FakeProcessor("realtime");
         registry.Register(realtimeProcessor);
 
-        var (pipelineName, processor) = ModelDispatch.DispatchProcessor(persona, requestedModelId: null, catalog, registry);
+        (string? pipelineName, IPipelineProcessor? processor) = ModelDispatch.DispatchProcessor(persona, requestedModelId: null, catalog, registry);
 
         Assert.Equal("realtime", pipelineName);
         Assert.Same(realtimeProcessor, processor);
@@ -137,11 +138,11 @@ public sealed class ModelDispatchTests
         // gpt-realtime-2.1-mini IS catalogued for realtime in the real config.yaml, but this test's
         // own deployment map deliberately leaves it unmapped -- the persona's OWN default, so the
         // AZURE_OPENAI_REALTIME_DEPLOYMENT back-compat fallback applies.
-        var persona = SonicWithRealtimeBlock(fixture, "gpt-realtime-2.1-mini", "gpt-realtime-2.1-mini");
-        var catalog = RealCatalog(new Dictionary<string, string>());
+        Persona persona = SonicWithRealtimeBlock(fixture, "gpt-realtime-2.1-mini", "gpt-realtime-2.1-mini");
+        ModelCatalog catalog = RealCatalog(new Dictionary<string, string>());
         var logger = new RecordingLogger();
 
-        var resolved = ModelDispatch.ResolveRealtimeModel(
+        ResolvedModel resolved = ModelDispatch.ResolveRealtimeModel(
             persona, requestedModelId: null, catalog, defaultDeployment: "fallback-deployment", logger);
 
         Assert.Equal("gpt-realtime-2.1-mini", resolved.Id);
@@ -163,11 +164,11 @@ public sealed class ModelDispatchTests
     public void A_non_default_model_with_no_deployment_throws()
     {
         using var fixture = new PersonaPackFixture();
-        var persona = SonicWithRealtimeBlock(fixture, "gpt-realtime-2.1", "gpt-realtime-2.1", "gpt-realtime-2.1-mini");
+        Persona persona = SonicWithRealtimeBlock(fixture, "gpt-realtime-2.1", "gpt-realtime-2.1", "gpt-realtime-2.1-mini");
         // gpt-realtime-2.1 (the default) IS deployed; gpt-realtime-2.1-mini (merely allowed) is not.
-        var catalog = RealCatalog(new Dictionary<string, string> { ["gpt-realtime-2.1"] = "rt-deploy" });
+        ModelCatalog catalog = RealCatalog(new Dictionary<string, string> { ["gpt-realtime-2.1"] = "rt-deploy" });
 
-        var exc = Assert.Throws<ModelSelectionException>(() => ModelDispatch.ResolveRealtimeModel(
+        ModelSelectionException exc = Assert.Throws<ModelSelectionException>(() => ModelDispatch.ResolveRealtimeModel(
             persona, requestedModelId: "gpt-realtime-2.1-mini", catalog, defaultDeployment: "fallback-deployment",
             NullLogger<RealtimeProcessor>.Instance));
         Assert.Contains("gpt-realtime-2.1-mini", exc.Message);
@@ -177,8 +178,8 @@ public sealed class ModelDispatchTests
     public void Reasoning_comes_from_the_catalog_entry_not_a_hardcoded_default()
     {
         using var fixture = new PersonaPackFixture();
-        var persona = SonicWithRealtimeBlock(fixture, "gpt-realtime-2.1", "gpt-realtime-2.1", "gpt-realtime-2.1-mini");
-        var catalog = RealCatalog(new Dictionary<string, string>
+        Persona persona = SonicWithRealtimeBlock(fixture, "gpt-realtime-2.1", "gpt-realtime-2.1", "gpt-realtime-2.1-mini");
+        ModelCatalog catalog = RealCatalog(new Dictionary<string, string>
         {
             ["gpt-realtime-2.1"] = "rt-deploy",
             ["gpt-realtime-2.1-mini"] = "rt-mini-deploy",
@@ -191,9 +192,9 @@ public sealed class ModelDispatchTests
         // model to contrast against. ResolvedModel.Reasoning must still reflect the catalog's own
         // per-model flag, not a single fixed value -- both resolve to the SAME catalog-sourced
         // true here, rather than one hardcoded default being reused for both ids.
-        var reasoningModel = ModelDispatch.ResolveRealtimeModel(
+        ResolvedModel reasoningModel = ModelDispatch.ResolveRealtimeModel(
             persona, "gpt-realtime-2.1", catalog, "unused-fallback", NullLogger<RealtimeProcessor>.Instance);
-        var miniReasoningModel = ModelDispatch.ResolveRealtimeModel(
+        ResolvedModel miniReasoningModel = ModelDispatch.ResolveRealtimeModel(
             persona, "gpt-realtime-2.1-mini", catalog, "unused-fallback", NullLogger<RealtimeProcessor>.Instance);
 
         Assert.True(reasoningModel.Reasoning);

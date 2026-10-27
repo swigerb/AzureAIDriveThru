@@ -1,4 +1,3 @@
-using System.Linq;
 using System.Reflection;
 using Conformance.Harness;
 using Xunit;
@@ -28,10 +27,10 @@ public sealed class PersonaSmokeCoverageTests
     [Fact]
     public void Every_real_pack_discovered_on_disk_has_a_persona_smoke_theory_row()
     {
-        var discovered = ConformancePersonas.DiscoverFromDisk();
-        var covered = GetTheoryDataValues<string>(typeof(RealPackPersonaSmokeTests), nameof(RealPackPersonaSmokeTests.DiscoveredPersonaIds));
+        IReadOnlyList<string> discovered = ConformancePersonas.DiscoverFromDisk();
+        List<string> covered = GetTheoryDataValues<string>(typeof(RealPackPersonaSmokeTests), nameof(RealPackPersonaSmokeTests.DiscoveredPersonaIds));
 
-        var missing = discovered.Except(covered).ToArray();
+        string[] missing = [.. discovered.Except(covered)];
         Assert.True(missing.Length == 0,
             $"Persona pack(s) discovered on disk under personas/ have no RealPackPersonaSmokeTests " +
             $"row: {string.Join(", ", missing)}. Either RealPackPersonaSmokeTests.DiscoveredPersonaIds() " +
@@ -44,13 +43,13 @@ public sealed class PersonaSmokeCoverageTests
     [Fact]
     public void Every_fixture_pack_discovered_on_disk_has_a_persona_smoke_theory_row()
     {
-        var discovered = ConformancePersonas.DiscoverFromDisk(RepoPaths.FixturePersonasDirectory(RepoPaths.FindRepoRoot()));
-        var covered = GetTheoryDataValues<string>(typeof(FixturePackPersonaSmokeTests), nameof(FixturePackPersonaSmokeTests.FixturePersonaIds));
+        IReadOnlyList<string> discovered = ConformancePersonas.DiscoverFromDisk(RepoPaths.FixturePersonasDirectory(RepoPaths.FindRepoRoot()));
+        List<string> covered = GetTheoryDataValues<string>(typeof(FixturePackPersonaSmokeTests), nameof(FixturePackPersonaSmokeTests.FixturePersonaIds));
 
         // Rick's PR #108 round 4 review item 2: a pack may instead be listed in
         // FixturePersonaExclusions with a reason (e.g. test-gamma/#106 -- scoped to a different
         // fixture entirely) rather than getting its own smoke row, so it's subtracted here too.
-        var missing = discovered.Except(covered).Except(FixturePackPersonaSmokeTests.FixturePersonaExclusions.Keys).ToArray();
+        string[] missing = [.. discovered.Except(covered).Except(FixturePackPersonaSmokeTests.FixturePersonaExclusions.Keys)];
         Assert.True(missing.Length == 0,
             $"Persona pack(s) discovered on disk under app/backend/tests/fixtures/personas/ have " +
             $"no FixturePackPersonaSmokeTests row: {string.Join(", ", missing)}. Either " +
@@ -68,9 +67,9 @@ public sealed class PersonaSmokeCoverageTests
     /// Theory itself will run against, not a copy that could drift from it.</summary>
     private static List<T> GetTheoryDataValues<T>(Type declaringType, string methodName)
     {
-        var method = declaringType.GetMethod(methodName, BindingFlags.Public | BindingFlags.Static)
+        MethodInfo method = declaringType.GetMethod(methodName, BindingFlags.Public | BindingFlags.Static)
             ?? throw new InvalidOperationException($"{declaringType.Name}.{methodName} not found.");
         var data = (TheoryData<T>)method.Invoke(null, null)!;
-        return data.Select(row => row.Data).ToList();
+        return [.. data.Select(row => row.Data)];
     }
 }
