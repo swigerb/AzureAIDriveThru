@@ -90,7 +90,8 @@ class DiagnosticCapture:
             self.stopped = True
             logger.warning("Synthetic model diagnostic capture stopped: expiry or event limit reached.")
             return
-        document = dict(payload, sessionId=self.session_id, responseId=self.response_id,
+        document = dict(payload, sessionId=self.session_id,
+                        responseIdHash=digest(self.response_id) if self.response_id else None,
                         sequence=self.sequence, stage=stage, requestIndex=self.request_index, guestIndex=self.guest_index)
         encoded = json.dumps(document, separators=(",", ":"))
         if len(encoded) > 16000:

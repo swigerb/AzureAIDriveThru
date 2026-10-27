@@ -154,10 +154,12 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(requests[2]["messages"][-1]["contentLength"], len('{"checkedIn":true,"balance":500}'))
         records = [json.loads(line) for line in lines]
         committed = next(r for r in records if r["stage"] == "guest.committed")
-        self.assertIsNone(committed["responseId"])
+        self.assertIsNone(committed["responseIdHash"])
         self.assertEqual(committed["guestIndex"], 1)
         self.assertEqual(requests[1]["guestIndex"], 1)
-        self.assertIsNotNone(requests[1]["responseId"])
+        self.assertEqual(requests[1]["responseIdHash"], digest(state.diagnostic.response_id))
+        self.assertNotIn(state.diagnostic.response_id, "\n".join(lines))
+        self.assertTrue(all("responseId" not in record for record in records))
         self.assertNotIn("I've checked in now.", "\n".join(lines))
         self.assertNotIn('"checkedIn"', "\n".join(lines))
 
@@ -230,12 +232,19 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
             entered.set()
             await asyncio.Event().wait()
         processor._get_chat_client = AsyncMock(return_value=SimpleNamespace(complete=complete))
+        ws = helpers._make_mock_ws()
         state.current_turn_task = asyncio.create_task(
-            processor._run_turn_and_speak(helpers._make_mock_ws(), "one", state))
+            processor._run_turn_and_speak(ws, "one", state))
         await asyncio.wait_for(entered.wait(), 2)
         await processor._cancel_current_turn(state, "guest interruption")
         stages = [json.loads(line)["stage"] for line in lines]
         self.assertEqual(stages, ["response.created", "request", "request.cancelled", "cancelled"])
+        emitted_id = next(call.args[0]["response"]["id"] for call in ws.send_json.await_args_list
+                          if call.args[0].get("type") == "response.created")
+        self.assertEqual(capture.response_id, emitted_id)
+        self.assertTrue(all(json.loads(line)["responseIdHash"] == digest(emitted_id) for line in lines))
+        self.assertNotIn(emitted_id, "\n".join(lines))
+        self.assertTrue(all("responseId" not in json.loads(line) for line in lines))
         self.assertEqual([m.as_dict()["role"] for m in state.messages], ["user"])
 
     async def test_real_handle_only_binds_authenticated_fresh_scope(self):
