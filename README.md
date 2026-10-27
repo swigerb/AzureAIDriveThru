@@ -1,5 +1,11 @@
 # Azure AI Drive-Thru
 
+[![Build](https://img.shields.io/github/actions/workflow/status/swigerb/AzureAIDriveThru/conformance.yml?branch=dev&label=build&style=flat)](https://github.com/swigerb/AzureAIDriveThru/actions/workflows/conformance.yml?query=branch%3Adev)
+[![Python 3.15](https://img.shields.io/badge/Python-3.15-3776AB?style=flat)](https://github.com/swigerb/AzureAIDriveThru/blob/dev/app/Dockerfile)
+[![.NET 11.0 RC3 (prerelease)](https://img.shields.io/badge/.NET-11.0_RC3-512BD4?style=flat)](https://github.com/swigerb/AzureAIDriveThru/blob/dev/global.json)
+[![React 19.3.1](https://img.shields.io/badge/React-19.3.1-149ECA?style=flat)](https://github.com/swigerb/AzureAIDriveThru/blob/dev/app/frontend/package.json)
+[![MIT license](https://img.shields.io/badge/license-MIT-green?style=flat)](https://github.com/swigerb/AzureAIDriveThru/blob/dev/LICENSE)
+
 Microsoft Foundry AI Drive Thru is a multi-persona voice ordering demo for drive-thru and counter-service scenarios. One React frontend and the production Python backend serve the current `sonic`, `dunkin`, and `mcdonalds` personas, each with its own menu, prompt, theme, search index, pricing rules, dayparts, bundle rules, and demo script. The app supports a low-latency realtime voice pipeline and a cascade speech-to-text, reasoning, text-to-speech pipeline on Microsoft Foundry.
 
 > This is a non-commercial demo application created for educational and illustrative purposes only. It is not affiliated with, endorsed by, or sponsored by the referenced brands or trademark owners. Brand references, colors, menu terms, and themes are used solely to demonstrate persona-specific voice ordering patterns and do not represent an official product.
