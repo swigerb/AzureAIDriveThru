@@ -13,18 +13,18 @@
       },
       "JsonSchema.Net": {
         "type": "Direct",
-        "requested": "[9.4.1, )",
-        "resolved": "9.4.1",
-        "contentHash": "7Nh0XyIse3a5nsc1nJJTECZVjxqHVE5jANGEPpQc2H+/M7u2sLueL93X6ZUuJLkLYy/pYzFmJhKYEpVIctaUZw==",
+        "requested": "[9.6.0, )",
+        "resolved": "9.6.0",
+        "contentHash": "bwHvTUy4gsSfMwncWT4w1OeKiZJ/yw0W1mtQq4iO6vVJdX/8xj+5Kf6q180C6yDPlRm3PS9UXTB/MecXAkdEVw==",
         "dependencies": {
-          "JsonPointer.Net": "7.0.3"
+          "JsonPointer.Net": "7.0.4"
         }
       },
       "Microsoft.AspNetCore.Authentication.JwtBearer": {
         "type": "Direct",
-        "requested": "[11.0.0-rc.3.26522.148, )",
-        "resolved": "11.0.0-rc.3.26522.148",
-        "contentHash": "ZAdY1XmFxNOp3ZN6x25tI7BrpBiYSNiD7dEJiUIQoOY43AA4b+MfJD1clvW0OMuDF3NiA6SNveVkBFA7mVfFyg==",
+        "requested": "[11.0.0, )",
+        "resolved": "11.0.0",
+        "contentHash": "iWIWAOw3TGa8OxAForwBWlkp/VCelVTYbSc633I6E8zfpjG456xOtSMGIiSEU2E6rdSfJS1vf+EySP19efab8g==",
         "dependencies": {
           "Microsoft.IdentityModel.Protocols.OpenIdConnect": "8.19.2"
         }
@@ -47,8 +47,8 @@
       },
       "JsonPointer.Net": {
         "type": "Transitive",
-        "resolved": "7.0.3",
-        "contentHash": "It/10weZ3oA+BGL+Gqyw9M6wsi4Tc16vWwU+u7x6LBwty57Y3aUh7bfcn2VWAzgVTAfGuCPb5KUpsH6IFjR08A==",
+        "resolved": "7.0.4",
+        "contentHash": "HjP+Y8HxtbMMcLgci0/iR+UQ3dDQifS6TFZgXxO2ilqHQ97DjhdCFNMcbxN+68XqzxDmyIPvU+rn2TJQl1vc5A==",
         "dependencies": {
           "Humanizer.Core": "3.0.10",
           "Json.More.Net": "3.0.1"
