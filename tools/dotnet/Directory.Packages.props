@@ -18,9 +18,9 @@
       repo's one shared root global.json's "test.runner" key, which would silently change the
       test-execution mode for tests/conformance and app/backend-dotnet too.
     -->
-    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.12.0" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.1" />
-    <PackageVersion Include="xunit.v3.mtp-off" Version="4.0.2" />
+    <PackageVersion Include="xunit.v3.mtp-off" Version="4.0.3" />
     <!--
       Fix #16: SearchIndexIngestor's one new dependency - DefaultAzureCredential bearer tokens for
       its raw-HttpClient Azure AI Search/Azure OpenAI REST calls. Pinned to the SAME version
